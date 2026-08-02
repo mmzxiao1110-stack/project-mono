@@ -76,6 +76,7 @@ export const defaultTheme = () => ({
   ...stripLabel(PRESETS.slate),
   shape: "soft",
   gap: 2,
+  frame: false, // false = only the slots, no board behind them
   colorblind: false,
   motion: true,
   haptics: true,

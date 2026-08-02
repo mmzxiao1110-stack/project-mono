@@ -15,6 +15,8 @@ import {
   RANKS, PLACEMENT_GAMES, rankIndexFor, rankMin, rankProgress,
 } from "../shared/glicko.js";
 import { net, SERVER_URL, IS_SECURE, GOOGLE_CLIENT_ID } from "./net.js";
+import { music, TRACKS, sfx } from "./audio.js";
+import { FX } from "./tuning.js";
 import {
   PRESETS, INKS, SHAPES, GRID_GAPS,
   loadTheme, saveTheme, applyPreset, editTheme, themeVars, isLight,
@@ -29,6 +31,9 @@ const GAP = 2;
 const REVEAL_MS = 1100;
 const AI_THINK_MS = 550;
 const TOUCH_LIFT = 2;
+// Google sign-in is built and verified server-side, but parked until launch.
+const SHOW_GOOGLE = false;
+
 const GOLD = "var(--tb-special)";
 const GOLD_SOFT = "color-mix(in srgb, var(--tb-special) 40%, transparent)";
 
@@ -90,26 +95,8 @@ const saveLoadout = (l) => store.set("tb:loadout", JSON.stringify(l));
 /* ============================================================
    AUDIO
    ============================================================ */
-let audioCtx = null;
-function blip(freq, vol, dur = 0.09) {
-  if (!vol) return;
-  try {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === "suspended") audioCtx.resume();
-    const t = audioCtx.currentTime;
-    const o = audioCtx.createOscillator();
-    const g = audioCtx.createGain();
-    o.type = "triangle";
-    o.frequency.setValueAtTime(freq, t);
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, vol * 0.12), t + 0.012);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(g);
-    g.connect(audioCtx.destination);
-    o.start(t);
-    o.stop(t + dur + 0.03);
-  } catch (e) {}
-}
+/** Every sound in the game routes through the piano synth in audio.js. */
+const blip = (kind, vol) => sfx(kind, vol);
 
 /* ============================================================
    AI — client only. Ranked opponents are real people.
@@ -352,6 +339,199 @@ function BlockGlyph({ blockId, box = 40, color, gap = 1 }) {
   );
 }
 
+/**
+ * The battle backdrop: a hex lattice that breathes with the soundtrack.
+ *
+ * One CSS variable drives every tile. Each tile carries its own weight and a
+ * transition-delay proportional to its distance from centre, so a change in the
+ * variable travels outward as a ring rather than snapping in unison. Updating
+ * ~20 times a second instead of every frame keeps it cheap on a phone.
+ */
+
+function PulseField({ colors, theme }) {
+  const wrapRef = useRef(null);
+  const glowRef = useRef(null);
+  const cellRefs = useRef([]);
+  const pointer = useRef({ x: -9999, y: -9999, at: 0 });
+  const animate = theme.motion;
+
+  const H = FX.hex, R = FX.ripple;
+  const RINGS = R.rings;
+
+  const hexes = useMemo(() => {
+    const cols = H.columns, rows = H.rows;
+    const w = 100 / (cols - 1);
+    const h = w * 1.1547;
+    const vStep = h * 0.75;
+    const totalH = (rows - 1) * vStep + h;
+    const out = [];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const left = c * w + (r % 2 ? w / 2 : 0) - w / 2;
+        const top = r * vStep + (100 - totalH) / 2;
+        const cx = left + w / 2 - 50;
+        const cy = top + h / 2 - 50;
+        const dist = Math.min(1, Math.sqrt(cx * cx + cy * cy) / 50);
+        if (dist >= 0.99) continue;
+        // Thin out with distance so the clump dissolves rather than ending.
+        if (Math.random() > 1 - Math.pow(dist, 1.5) * H.thinning) continue;
+        const fall = 1 - dist;
+        out.push({
+          left, top, w, h,
+          cx: left + w / 2, cy: top + h / 2,
+          ring: Math.min(RINGS - 1, Math.floor(dist * RINGS)),
+          weight: +(Math.pow(fall, 1.1) * (0.65 + Math.random() * 0.55)).toFixed(3),
+          base: +(0.05 + fall * 0.18).toFixed(3),
+          rival: Math.random() < H.rivalShare,
+        });
+      }
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    if (!animate) {
+      for (let k = 0; k < RINGS; k++) el.style.setProperty(`--p${k}`, "0.5");
+      return;
+    }
+
+    const onMove = (e) => { pointer.current = { x: e.clientX, y: e.clientY, at: performance.now() }; };
+    window.addEventListener("pointermove", onMove, { passive: true });
+
+    const near = new Array(hexes.length).fill(0);
+    const ripples = [];
+    let avg = 0.3;
+    let lastOnset = 0;
+    let lastBeat = 0;
+    let raf, last = 0;
+
+    const tick = (t) => {
+      raf = requestAnimationFrame(tick);
+      if (t - last < 30) return;
+      last = t;
+
+      const lvl = music.level();
+      avg += (lvl - avg) * 0.05;
+
+      // A guaranteed heartbeat, so the field always ripples...
+      if (t - lastBeat > R.beatMs) {
+        lastBeat = t;
+        ripples.push({ t0: t, amp: R.beatAmp + lvl * 0.5 });
+      }
+      // ...with extra ripples fired by peaks in the music on top of it.
+      if (lvl > avg * 1.18 + 0.03 && t - lastOnset > 150) {
+        lastOnset = t;
+        ripples.push({ t0: t, amp: Math.min(1.6, (lvl - avg) * R.onsetAmp + 0.5) });
+      }
+      while (ripples.length && t - ripples[0].t0 > R.travelMs * 1.5) ripples.shift();
+
+      for (let k = 0; k < RINGS; k++) {
+        const d = (k + 0.5) / RINGS;
+        let p = 0.14 + lvl * 0.9 * (1 - d * 0.3);
+        for (const rp of ripples) {
+          const x = (d - (t - rp.t0) / R.travelMs) / R.frontWidth;
+          if (x > -4 && x < 4) p += rp.amp * Math.exp(-x * x);
+        }
+        el.style.setProperty(`--p${k}`, Math.min(2.2, p).toFixed(3));
+      }
+      if (glowRef.current) {
+        glowRef.current.style.setProperty("--g", Math.min(1.7, 0.25 + lvl * 1.3).toFixed(3));
+      }
+
+      const stale = t - pointer.current.at > 1600;
+      const rect = el.getBoundingClientRect();
+      const radius = Math.max(95, rect.width * H.hoverRadius);
+      for (let i = 0; i < hexes.length; i++) {
+        let want = 0;
+        if (!stale && rect.width) {
+          const hx = rect.left + (hexes[i].cx / 100) * rect.width;
+          const hy = rect.top + (hexes[i].cy / 100) * rect.height;
+          const dx = hx - pointer.current.x, dy = hy - pointer.current.y;
+          const dd = Math.sqrt(dx * dx + dy * dy);
+          want = dd < radius ? Math.pow(1 - dd / radius, 1.15) : 0;
+        }
+        if (Math.abs(want - near[i]) > 0.015) {
+          near[i] = want;
+          cellRefs.current[i]?.style.setProperty("--near", want.toFixed(3));
+        }
+      }
+    };
+
+    raf = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("pointermove", onMove);
+    };
+  }, [animate, hexes, H, R, RINGS]);
+
+  const HEX = "polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)";
+  const mask = "radial-gradient(circle at 50% 50%, #000 0%, #000 48%, rgba(0,0,0,.55) 72%, transparent 92%)";
+  // Fake refraction: a bright edge, a sheen off one corner, shadow at the other.
+  const glass = `linear-gradient(148deg, rgba(255,255,255,${H.sheen}) 0%, rgba(255,255,255,${(H.sheen * 0.2).toFixed(3)}) 38%, rgba(255,255,255,.02) 58%, rgba(255,255,255,${(H.sheen * 0.44).toFixed(3)}) 100%)`;
+
+  return (
+    <div aria-hidden="true" className="absolute inset-0 overflow-hidden pointer-events-none" style={{ zIndex: 0 }}>
+      {/* bloom — clip-path swallows box-shadows, so the glow is its own layer */}
+      <div
+        ref={glowRef}
+        style={{
+          position: "absolute", left: "50%", top: "50%",
+          width: FX.glow.size, height: FX.glow.size,
+          transform: `translate(-50%,-50%) scale(calc(${FX.glow.baseScale} + var(--g, .4) * ${FX.glow.scaleGain}))`,
+          background: `radial-gradient(circle, ${colors.you}55 0%, ${colors.you}22 26%, ${colors.you}0D 48%, transparent 68%)`,
+          opacity: `calc(var(--g, .4) * ${FX.glow.opacity})`,
+          transition: "transform 140ms ease-out, opacity 140ms ease-out",
+          "--g": 0.4,
+        }}
+      />
+      <div
+        ref={wrapRef}
+        style={{
+          position: "absolute", left: "50%", top: "50%",
+          width: H.fieldSize, height: H.fieldSize,
+          transform: "translate(-50%, -50%)",
+          maskImage: mask, WebkitMaskImage: mask,
+        }}
+      >
+        {hexes.map((x, i) => {
+          const ink = x.rival ? colors.rival : colors.you;
+          return (
+            <div
+              key={i}
+              ref={(n) => (cellRefs.current[i] = n)}
+              style={{
+                position: "absolute",
+                left: `${x.left}%`, top: `${x.top}%`,
+                width: `${x.w}%`, height: `${x.h}%`,
+                clipPath: HEX,
+                // The rim: a lightened edge that the inner pane sits inside.
+                background: `color-mix(in srgb, ${ink} ${H.rimTint}%, white)`,
+                "--near": 0,
+                opacity: `calc(${x.base} + var(--p${x.ring}, .5) * ${x.weight} * ${H.pulseOpacity})`,
+                transform: `scale(calc((${H.minScale} + var(--p${x.ring}, .5) * ${x.weight} * ${H.pulseScale}) * (1 - var(--near) * ${H.hoverShrink})))`,
+                filter: `brightness(calc(${H.brightnessBase} + var(--p${x.ring}, .5) * ${H.brightnessGain}))`,
+                transition: animate ? "transform 110ms ease-out, opacity 110ms ease-out, filter 110ms ease-out" : "none",
+                willChange: "transform, opacity, filter",
+              }}
+            >
+              <div style={{
+                position: "absolute", inset: 0,
+                clipPath: HEX,
+                transform: `scale(${(1 - H.rimWidth).toFixed(3)})`,
+                backgroundColor: `color-mix(in srgb, ${ink} ${H.glassOpacity}%, transparent)`,
+                backgroundImage: glass,
+              }} />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /** The piece in hand: follows the pointer exactly, never snaps. */
 function FloatingPiece({ cells, cell, gap, radius, color, x, y, lift, legal }) {
   const { h, w } = boundsOf(cells);
@@ -385,10 +565,12 @@ function FloatingPiece({ cells, cell, gap, radius, color, x, y, lift, legal }) {
 
 function BoardGrid({
   board, cell, ink, ghostKeys, ghostLegal, ghostInk, contestedKeys,
-  boardRef, onPointerDown, theme, youSide = "A",
+  boardRef, onPointerDown, theme, youSide = "A", translucent = false,
 }) {
   const shape = SHAPES[theme.shape] || SHAPES.soft;
   const gap = theme.gap;
+  const framed = !!theme.frame;
+  const slotLine = `inset 0 0 0 ${FX.board.slotBorderWidth}px ${FX.board.slotBorderColor}`;
   const cb = theme.colorblind;
   const markSize = Math.max(6, Math.round(cell * 0.56));
 
@@ -400,8 +582,14 @@ function BoardGrid({
         display: "grid",
         gridTemplateColumns: `repeat(${COLS}, ${cell}px)`,
         gridTemplateRows: `repeat(${ROWS}, ${cell}px)`,
-        gap, background: UI.line, padding: Math.max(gap, 1),
+        gap,
+        // Frameless leaves only the slots, so the backdrop reads straight through.
+        background: !framed
+          ? "transparent"
+          : translucent ? "color-mix(in srgb, var(--tb-line) 42%, transparent)" : UI.line,
+        padding: framed ? Math.max(gap, 1) : 0,
         borderRadius: 4, touchAction: "none",
+        backdropFilter: framed && translucent ? "blur(2px)" : undefined,
       }}
     >
       {board.map((row, r) =>
@@ -409,12 +597,16 @@ function BoardGrid({
           const k = key(r, c);
           const isGhost = ghostKeys.has(k);
           const owner = isGhost ? youSide : v;
-          let bg = UI.cell;
+          let bg = translucent ? "color-mix(in srgb, var(--tb-cell) 46%, transparent)" : UI.cell;
           let opacity = 1;
           let boxShadow = "none";
           let border = "none";
+          if (!v && !framed) {
+            bg = translucent ? `color-mix(in srgb, var(--tb-cell) ${FX.board.slotFill}%, transparent)` : UI.cell;
+            boxShadow = slotLine;
+          }
 
-          if (v) bg = ink[v];
+          if (v) bg = translucent ? `color-mix(in srgb, ${ink[v]} ${FX.board.pieceOpacity}%, transparent)` : ink[v];
           if (v && shape.hollow) {
             border = `2px solid ${ink[v]}`;
             bg = "transparent";
@@ -629,9 +821,9 @@ function Popup({ title, onClose, children, pinned, maxW = 430 }) {
     <div
       className="fixed inset-0 z-40 flex items-center justify-center tb-fade"
       style={{
-        background: "color-mix(in srgb, var(--tb-ground) 92%, transparent)",
-        backdropFilter: "blur(6px)",
-        WebkitBackdropFilter: "blur(6px)",
+        // Opaque on purpose: a translucent backdrop re-samples whatever moves
+        // behind it every frame, which reads as flicker.
+        background: "var(--tb-ground)",
         padding: "clamp(14px, 5vw, 56px) clamp(14px, 5vw, 56px)",
         paddingTop: "max(clamp(14px,5vw,56px), env(safe-area-inset-top,0px))",
         paddingBottom: "max(clamp(14px,5vw,56px), env(safe-area-inset-bottom,0px))",
@@ -662,9 +854,10 @@ function Popup({ title, onClose, children, pinned, maxW = 430 }) {
 /* ============================================================
    SETTINGS
    ============================================================ */
-function SettingsModal({ volume, setVolume, name, rename, status, theme, setTheme, onClose }) {
+function SettingsModal({ volume, setVolume, musicVol, setMusicVol, name, rename, status, theme, setTheme, onClose }) {
   const steps = 10;
   const cur = Math.round(volume * steps);
+  const mcur = Math.round(musicVol * steps);
   const [draft, setDraft] = useState(name);
   const set = (patch) => setTheme({ ...theme, ...patch });
 
@@ -686,7 +879,7 @@ function SettingsModal({ volume, setVolume, name, rename, status, theme, setThem
             const on = i < cur;
             return (
               <button key={i} aria-label={`Volume ${(i + 1) * 10}`}
-                onClick={() => { const v = (i + 1) / steps; setVolume(v); blip(560 + i * 40, v, 0.06); }}
+                onClick={() => { const v = (i + 1) / steps; setVolume(v); blip("ui", v); }}
                 className="flex-1 rounded"
                 style={{ height: 40, background: on ? UI.text : UI.cell, border: `1px solid ${on ? UI.text : UI.line}` }} />
             );
@@ -695,8 +888,24 @@ function SettingsModal({ volume, setVolume, name, rename, status, theme, setThem
         <button onClick={() => setVolume(0)}
           className="flex items-center gap-2 px-3 rounded text-[10px] tracking-[0.2em] mb-7"
           style={{ height: 36, border: `1px solid ${UI.line}`, color: volume === 0 ? UI.text : UI.dim }}>
-          <VolumeX size={13} /> MUTE
+          <VolumeX size={13} /> MUTE EFFECTS
         </button>
+
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-[11px] tracking-[0.2em]">MUSIC</span>
+          <span className="text-[11px]" style={{ color: UI.dim }}>{mcur * 10}</span>
+        </div>
+        <div className="flex gap-1.5 mb-7">
+          {Array.from({ length: steps }).map((_, i) => {
+            const on = i < mcur;
+            return (
+              <button key={i} aria-label={`Music ${(i + 1) * 10}`}
+                onClick={() => setMusicVol(i === 0 && mcur === 1 ? 0 : (i + 1) / steps)}
+                className="flex-1 rounded"
+                style={{ height: 40, background: on ? UI.text : UI.cell, border: `1px solid ${on ? UI.text : UI.line}` }} />
+            );
+          })}
+        </div>
 
         <div className="text-[9px] tracking-[0.24em] mb-1" style={{ color: UI.dim }}>ACCESSIBILITY</div>
         <Row label="COLOURBLIND MARKS">
@@ -768,7 +977,7 @@ function DeckModal({ loadout, setLoadout, color, volume, onClose }) {
       }
       return next;
     });
-    blip(700, volume, 0.07);
+    blip("ui", volume);
   };
 
   const beginDrag = useCallback((blockId, from, x, y) => {
@@ -926,14 +1135,24 @@ function StatCell({ label, value, sub, color }) {
 }
 
 function StatsModal({ profile, status, onClose }) {
+  // No profile has two very different causes. Saying "offline" for both sent
+  // people hunting a server problem when they simply weren't signed in.
   if (!profile) {
+    const connected = status === "online";
     return (
       <Popup title="RANKED STATS" onClose={onClose}>
         <div className="rounded p-6 mt-6 text-center" style={{ background: UI.panel, border: `1px dashed ${UI.line}` }}>
-          <WifiOff size={20} style={{ color: UI.dim, margin: "0 auto 12px" }} />
+          {connected
+            ? <UserRound size={20} style={{ color: UI.dim, margin: "0 auto 12px" }} />
+            : <WifiOff size={20} style={{ color: UI.dim, margin: "0 auto 12px" }} />}
           <div className="text-[11px] leading-relaxed" style={{ color: UI.dim }}>
-            {status === "connecting" ? "Connecting to the server…" : "Server offline."}
-            <br />Ranked stats live on the server, not on this device.
+            {connected ? (
+              <>Sign in to see your ranked stats.<br />Solo and take-turns matches aren't ranked.</>
+            ) : status === "connecting" ? (
+              <>Connecting to the server…</>
+            ) : (
+              <>Server offline.<br />Ranked stats live on the server, not on this device.</>
+            )}
           </div>
         </div>
       </Popup>
@@ -1215,10 +1434,12 @@ function ThemeModal({ theme, setTheme, onClose }) {
                 }}>{g}</button>
             ))}
           </Row>
+          <Row label="BOARD FRAME"><Toggle on={theme.frame} onClick={() => set({ frame: !theme.frame })} /></Row>
           <Row label="COLOURBLIND MARKS"><Toggle on={theme.colorblind} onClick={() => set({ colorblind: !theme.colorblind })} /></Row>
           <div className="text-[9px] leading-relaxed pt-3" style={{ color: UI.dim }}>
-            Marks put ○ on your squares, ✕ on your opponent's and ◆ on contested ones,
-            so the board reads without relying on colour.
+            Board frame off leaves only the slots, so the backdrop shows through the
+            gaps. Marks put ○ on your squares, ✕ on your opponent's and ◆ on contested
+            ones, so the board reads without relying on colour.
           </div>
         </div>
       )}
@@ -1236,7 +1457,7 @@ function ThemeModal({ theme, setTheme, onClose }) {
 function GoogleButton({ onCredential }) {
   const box = useRef(null);
   useEffect(() => {
-    if (!GOOGLE_CLIENT_ID || !box.current) return;
+    if (!GOOGLE_CLIENT_ID || !SHOW_GOOGLE || !box.current) return;
     let cancelled = false;
     const render = () => {
       if (cancelled || !window.google?.accounts?.id || !box.current) return;
@@ -1261,7 +1482,7 @@ function GoogleButton({ onCredential }) {
     return () => { cancelled = true; };
   }, [onCredential]);
 
-  if (!GOOGLE_CLIENT_ID) return null;
+  if (!GOOGLE_CLIENT_ID || !SHOW_GOOGLE) return null;
   return (
     <>
       <div className="flex items-center gap-3 my-4">
@@ -1439,6 +1660,13 @@ function VerifyModal({ profile, onClose }) {
    ACCOUNT — who you are
    ============================================================ */
 function AccountModal({ profile, onLogout, onClose }) {
+  if (!profile) {
+    return (
+      <Popup title="ACCOUNT" onClose={onClose} maxW={380}>
+        <div className="py-10 text-center text-[11px]" style={{ color: UI.dim }}>Signed out.</div>
+      </Popup>
+    );
+  }
   const st = profile.stats;
   const tr = Math.round(profile.rating.r);
   const placed = st.games >= PLACEMENT_GAMES;
@@ -1504,7 +1732,7 @@ function AccountModal({ profile, onLogout, onClose }) {
 /* ============================================================
    MENU
    ============================================================ */
-function Menu({ onPick, loadout, setLoadout, volume, setVolume, colors, profile, status, name, rename, onLogout, theme, setTheme }) {
+function Menu({ onPick, loadout, setLoadout, volume, setVolume, musicVol, setMusicVol, colors, profile, status, name, rename, onLogout, theme, setTheme }) {
   const [modal, setModal] = useState(null);
   const authed = useAuth() === "authed";
   const verified = !!profile?.emailVerified;
@@ -1529,7 +1757,7 @@ function Menu({ onPick, loadout, setLoadout, volume, setVolume, colors, profile,
             if (status !== "online") return;
             if (!authed) return setModal("login");
             if (!verified) return setModal("VERIFY");
-            onPick("MATCHMAKING"); blip(400, volume);
+            onPick("MATCHMAKING"); blip("ui", volume);
           }}
           disabled={status !== "online"}
           className="w-full rounded flex flex-col items-center justify-center gap-1 mb-2.5 disabled:opacity-40"
@@ -1562,10 +1790,10 @@ function Menu({ onPick, loadout, setLoadout, volume, setVolume, colors, profile,
         )}
 
         <div className="flex gap-2.5 mb-2.5">
-          <button onClick={() => { onPick("DIFFICULTY"); blip(520, volume); }} className="flex-1 rounded flex items-center justify-center" style={{ height: 44, background: UI.panel, border: `1px solid ${UI.line}` }}>
+          <button onClick={() => { onPick("DIFFICULTY"); blip("ui", volume); }} className="flex-1 rounded flex items-center justify-center" style={{ height: 44, background: UI.panel, border: `1px solid ${UI.line}` }}>
             <span className="text-sm tracking-[0.28em]">SP</span>
           </button>
-          <button onClick={() => { onPick("HOTSEAT"); blip(520, volume); }} className="flex-1 rounded flex items-center justify-center" style={{ height: 44, background: UI.panel, border: `1px solid ${UI.line}` }}>
+          <button onClick={() => { onPick("HOTSEAT"); blip("ui", volume); }} className="flex-1 rounded flex items-center justify-center" style={{ height: 44, background: UI.panel, border: `1px solid ${UI.line}` }}>
             <span className="text-sm tracking-[0.2em]">TAKE TURNS</span>
           </button>
         </div>
@@ -1606,10 +1834,10 @@ function Menu({ onPick, loadout, setLoadout, volume, setVolume, colors, profile,
       )}
       {modal === "VERIFY" && profile && <VerifyModal profile={profile} onClose={() => setModal(null)} />}
       {modal === "THEME" && <ThemeModal theme={theme} setTheme={setTheme} onClose={() => setModal(null)} />}
-      {modal === "ACCOUNT" && profile && (
+      {modal === "ACCOUNT" && (
         <AccountModal profile={profile} onLogout={() => { setModal(null); onLogout(); }} onClose={() => setModal(null)} />
       )}
-      {modal === "SETTINGS" && <SettingsModal volume={volume} setVolume={setVolume} name={name} rename={rename} status={status} theme={theme} setTheme={setTheme} onClose={() => setModal(null)} />}
+      {modal === "SETTINGS" && <SettingsModal volume={volume} setVolume={setVolume} musicVol={musicVol} setMusicVol={setMusicVol} name={name} rename={rename} status={status} theme={theme} setTheme={setTheme} onClose={() => setModal(null)} />}
       {modal === "STATS" && <StatsModal profile={profile} status={status} onClose={() => setModal(null)} />}
       {modal === "DECK" && <DeckModal loadout={loadout} setLoadout={setLoadout} color={color} volume={volume} onClose={() => setModal(null)} />}
     </div>
@@ -1632,7 +1860,7 @@ function Difficulty({ onStart, onBack, colors, volume }) {
           {LEVELS.map((nm, i) => {
             const n = i + 1, on = lv === n;
             return (
-              <button key={n} onClick={() => { setLv(n); blip(480 + n * 30, volume, 0.05); }}
+              <button key={n} onClick={() => { setLv(n); blip("ui", volume); }}
                 className="rounded flex items-center justify-center text-sm"
                 style={{
                   height: 44, background: on ? colors.rival : UI.panel,
@@ -1666,7 +1894,7 @@ function Matchmaking({ profile, loadout, colors, volume, onCancel }) {
 
   useEffect(() => {
     net.queue(loadout);
-    const offF = net.on("found", () => blip(880, volume, 0.18));
+    const offF = net.on("found", () => blip("found", volume));
     return () => offF();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1788,7 +2016,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
     setBoard(res.board);
     setReveal({ contested: res.contested, a: mA, b: mB });
     setPhase("REVEAL");
-    if (res.contested.length) blip(1050, volume, 0.16);
+    if (res.contested.length) blip("special", volume);
   };
 
   const handOver = (move) => { setPendingA(move); setPhase(solo ? "AI_THINK" : "HANDOFF"); };
@@ -1796,7 +2024,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
   const commit = () => {
     if (pl.sel.handIdx === null || !pl.ghost || !pl.ghostLegal) return;
     const id = hand[pl.sel.handIdx];
-    blip(560, volume);
+    blip("place", volume);
     drawInto(player, pl.sel.handIdx);
     const move = { cells: pl.ghost, value: BLOCKS[id].cells.length, blockId: id };
     if (player === "A") handOver(move); else finish(pendingA, move);
@@ -1805,7 +2033,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
 
   const discard = () => {
     if (pl.sel.handIdx === null) return;
-    blip(300, volume);
+    blip("drop", volume);
     drawInto(player, pl.sel.handIdx);
     if (player === "A") handOver(null); else finish(pendingA, null);
     pl.reset();
@@ -1834,7 +2062,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
       setReveal(null);
       setPendingA(null);
       const bothStuck = !hasAnyMove(board, decks.A.hand, "A") && !hasAnyMove(board, decks.B.hand, "B");
-      if (turn >= TURNS || bothStuck) { setPhase("DONE"); blip(880, volume, 0.3); }
+      if (turn >= TURNS || bothStuck) { setPhase("DONE"); blip("end", volume); }
       else { setTurn((t2) => t2 + 1); setPhase("PLAY_A"); }
     }, REVEAL_MS);
     return () => clearTimeout(t);
@@ -1842,7 +2070,8 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
 
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ background: UI.ground, color: UI.text }}>
-      <div className="flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
+      <PulseField colors={colors} theme={theme} />
+      <div className="relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
         <div className="flex items-center justify-between h-9 shrink-0">
           <button onClick={onExit} className="flex items-center gap-1 text-[10px] tracking-[0.25em] py-2 -ml-1" style={{ color: UI.dim }}>
             <ChevronLeft size={13} /> MENU
@@ -1855,7 +2084,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
         <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center">
           <div className="relative" style={{ width: cell * COLS + g * (COLS + 1), height: cell * ROWS + g * (ROWS + 1) }}>
             <BoardGrid
-              board={board} cell={cell} ink={INK} theme={theme} youSide={player}
+              board={board} cell={cell} ink={INK} theme={theme} youSide={player} translucent
               ghostKeys={pl.ghostKeys} ghostLegal={pl.ghostLegal} ghostInk={INK[player]}
               contestedKeys={contestedKeys} boardRef={pl.boardRef} onPointerDown={pl.onBoardPointerDown}
             />
@@ -1998,20 +2227,20 @@ function NetGame({ colors, volume, theme, onResult }) {
 
   const commit = () => {
     if (!pl.ghostLegal || pl.sel.handIdx === null) return;
-    blip(560, volume);
+    blip("place", volume);
     net.move({ turn: m.turn, handIdx: pl.sel.handIdx, rot: ((pl.sel.rot % 4) + 4) % 4, pos: pl.sel.pos });
     pl.reset();
   };
 
   const discard = () => {
     if (pl.sel.handIdx === null) return;
-    blip(300, volume);
+    blip("drop", volume);
     net.discard({ turn: m.turn, handIdx: pl.sel.handIdx });
     pl.reset();
   };
 
   useEffect(() => {
-    if (m?.reveal?.contested?.length) blip(1050, volume, 0.16);
+    if (m?.reveal?.contested?.length) blip("special", volume);
   }, [m?.reveal, volume]);
 
   if (!m || !board) {
@@ -2027,7 +2256,8 @@ function NetGame({ colors, volume, theme, onResult }) {
 
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ background: UI.ground, color: UI.text }}>
-      <div className="flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
+      <PulseField colors={colors} theme={theme} />
+      <div className="relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
         <div className="flex items-center justify-between h-9 shrink-0">
           <div className="text-[10px] tracking-[0.25em]" style={{ color: UI.dim }}>RANKED</div>
           <div className="flex items-center gap-2">
@@ -2052,7 +2282,7 @@ function NetGame({ colors, volume, theme, onResult }) {
           <div className="relative" style={{ width: cell * COLS + g * (COLS + 1), height: cell * ROWS + g * (ROWS + 1) }}>
             <div style={{ transform: flip ? "rotate(180deg)" : "none" }}>
               <BoardGrid
-                board={board} cell={cell} ink={INK} theme={theme} youSide={you}
+                board={board} cell={cell} ink={INK} theme={theme} youSide={you} translucent
                 ghostKeys={pl.ghostKeys} ghostLegal={pl.ghostLegal} ghostInk={colors.you}
                 contestedKeys={contestedKeys} boardRef={pl.boardRef} onPointerDown={pl.onBoardPointerDown}
               />
@@ -2121,6 +2351,9 @@ function Result({ over, colors, onQueue, onMenu }) {
   const riFrom = rankIndexFor(trFrom);
   const riTo = rankIndexFor(trTo);
   const rank = RANKS[riTo];
+  // Verdict and rating movement use your own palette, not fixed red/green.
+  const verdictInk = drew ? UI.text : won ? colors.you : colors.rival;
+  const deltaInk = delta >= 0 ? colors.you : colors.rival;
 
   const [shown, setShown] = useState(trFrom);
   useEffect(() => {
@@ -2138,9 +2371,16 @@ function Result({ over, colors, onQueue, onMenu }) {
 
   return (
     <div className="tb-screen tb-safe w-full flex flex-col items-center justify-center px-6 font-mono" style={{ background: UI.ground, color: UI.text }}>
-      <div className="w-full" style={{ maxWidth: 330 }}>
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background: `radial-gradient(ellipse at 50% 34%, color-mix(in srgb, ${verdictInk} 26%, transparent) 0%, transparent 62%)`,
+        }}
+      />
+      <div className="relative w-full" style={{ maxWidth: 330 }}>
         <div className="text-center mb-7">
-          <div className="text-[32px] leading-none tracking-[0.15em]" style={{ color: drew ? UI.text : won ? colors.you : UI.bad }}>
+          <div className="text-[32px] leading-none tracking-[0.15em]" style={{ color: verdictInk }}>
             {drew ? "DRAW" : won ? "VICTORY" : "DEFEAT"}
           </div>
           <div className="text-[11px] mt-3" style={{ color: UI.dim }}>
@@ -2158,7 +2398,7 @@ function Result({ over, colors, onQueue, onMenu }) {
             <div className="flex-1 min-w-0">
               <div className="flex items-baseline gap-2">
                 <span className="text-2xl leading-none tabular-nums">{shown}</span>
-                <span className="text-sm tabular-nums" style={{ color: delta >= 0 ? UI.good : UI.bad }}>
+                <span className="text-sm tabular-nums" style={{ color: deltaInk }}>
                   {delta >= 0 ? "+" : ""}{delta}
                 </span>
               </div>
@@ -2199,6 +2439,7 @@ export default function TurfBlocks() {
   const [loadout, setLoadoutState] = useState(loadLoadout);
   const [volume, setVolumeState] = useState(() => Number(store.get("tb:vol") ?? 0.5));
   const [theme, setThemeState] = useState(loadTheme);
+  const [musicVol, setMusicVolState] = useState(() => Number(store.get("tb:music") ?? 0.45));
   const [over, setOver] = useState(null);
 
   const status = useStatus();
@@ -2223,6 +2464,27 @@ export default function TurfBlocks() {
     if (!authed && (screen === "MATCHMAKING" || screen === "RANKED")) setScreen("MENU");
   }, [authed, screen]);
 
+  /* Browsers won't start audio until the first gesture, so arm it and wait. */
+  useEffect(() => {
+    music.setVolume(musicVol);
+    music.setEnabled(musicVol > 0);
+    const unlock = () => music.unlock();
+    window.addEventListener("pointerdown", unlock, { once: true });
+    window.addEventListener("keydown", unlock, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* One track for the lobby, one for a match. Changing screens crossfades. */
+  useEffect(() => {
+    const inMatch = screen === "RANKED" || screen === "SOLO" || screen === "HOTSEAT";
+    if (inMatch) music.playList(TRACKS.battle, { fade: 1800 });
+    else music.play(TRACKS.menu, { fade: 1800 });
+  }, [screen]);
+
   const setTheme = (t) => { saveTheme(t); setThemeState(t); };
   const setLoadout = (updater) => setLoadoutState((prev) => {
     const next = typeof updater === "function" ? updater(prev) : updater;
@@ -2230,6 +2492,12 @@ export default function TurfBlocks() {
     return next;
   });
   const setVolume = (v) => { store.set("tb:vol", String(v)); setVolumeState(v); };
+  const setMusicVol = (v) => {
+    store.set("tb:music", String(v));
+    setMusicVolState(v);
+    music.setEnabled(v > 0);
+    music.setVolume(v);
+  };
   const rename = (n) => { const v = n.trim().slice(0, 16); if (v) net.setName(v); };
   const logout = () => { store.set("tb:token", ""); net.logout(); setScreen("MENU"); };
 
@@ -2295,6 +2563,7 @@ export default function TurfBlocks() {
         }}
         loadout={loadout} setLoadout={setLoadout}
         volume={volume} setVolume={setVolume}
+        musicVol={musicVol} setMusicVol={setMusicVol}
         colors={colors} profile={profile} status={status}
         name={name} rename={rename} onLogout={logout}
         theme={theme} setTheme={setTheme}
