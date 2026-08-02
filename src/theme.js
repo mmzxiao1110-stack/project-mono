@@ -59,14 +59,21 @@ export const INKS = [
   "#0F766E", "#B91C1C",
 ];
 
-/** How a claimed square is drawn. */
+/**
+ * How a claimed square is drawn.
+ *
+ * `ratio` is corner radius as a fraction of the tile, not pixels — so a block
+ * looks equally rounded whether it's a 30px board square or an 8px preview in
+ * the deck editor. It ships to CSS as --tb-block-r and gets multiplied by
+ * whatever size the tile happens to be.
+ */
 export const SHAPES = {
-  square: { label: "SQUARE", radius: 0, inset: 0, hollow: false },
-  soft: { label: "SOFT", radius: 2, inset: 0, hollow: false },
-  round: { label: "ROUND", radius: 5, inset: 0, hollow: false },
-  pill: { label: "PILL", radius: 999, inset: 0, hollow: false },
-  inset: { label: "INSET", radius: 3, inset: 2, hollow: false },
-  outline: { label: "OUTLINE", radius: 2, inset: 0, hollow: true },
+  square: { label: "SQUARE", ratio: 0, inset: 0, hollow: false },
+  soft: { label: "SOFT", ratio: 0.09, inset: 0, hollow: false },
+  round: { label: "ROUND", ratio: 0.2, inset: 0, hollow: false },
+  pill: { label: "PILL", ratio: 0.5, inset: 0, hollow: false },
+  inset: { label: "INSET", ratio: 0.14, inset: 2, hollow: false },
+  outline: { label: "OUTLINE", ratio: 0.09, inset: 0, hollow: true },
 };
 
 export const GRID_GAPS = [0, 1, 2, 3, 5];
@@ -74,7 +81,7 @@ export const GRID_GAPS = [0, 1, 2, 3, 5];
 export const defaultTheme = () => ({
   preset: "slate",
   ...stripLabel(PRESETS.slate),
-  shape: "soft",
+  shape: "round",
   gap: 2,
   frame: false,       // false = only the slots, no board behind them
   staticField: false, // true = backdrop frozen at full pulse (low-power devices)
@@ -125,7 +132,9 @@ export function isLight(hex) {
 
 /** The CSS the app injects. Chrome only — inks stay in JS. */
 export function themeVars(t) {
+  const shape = SHAPES[t.shape] || SHAPES.round;
   return `
+    --tb-block-r: ${shape.ratio};
     --tb-ground: ${t.ground};
     --tb-panel: ${t.panel};
     --tb-line: ${t.line};

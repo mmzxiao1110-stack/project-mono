@@ -7,8 +7,8 @@
  * reveal safe: neither player's move is transmitted until both have landed.
  */
 import {
-  BLOCKS, TURNS, initialBoard, isLegal, rotateN, absCells, boundsOf,
-  resolveTurn, scoreOf, dealFrom, hasAnyMove, ROWS, COLS,
+  BLOCKS, TURNS, GOLDEN_SLOT, initialBoard, isLegal, rotateN, absCells, boundsOf,
+  resolveTurn, scoreOf, newDeck, cycleHand, hasAnyMove, goldenCycleFor, ROWS, COLS,
 } from "../shared/engine.js";
 import { glickoUpdate, rankIndexFor } from "../shared/glicko.js";
 import { saveProfile } from "./store.js";
@@ -43,8 +43,8 @@ export class Match {
     this.graceTimers = { A: null, B: null };
 
     this.seats = {
-      A: { ...seats[0], side: "A", connected: true, deck: dealFrom(seats[0].loadout) },
-      B: { ...seats[1], side: "B", connected: true, deck: dealFrom(seats[1].loadout) },
+      A: { ...seats[0], side: "A", connected: true, deck: newDeck(seats[0].loadout), goldenPlays: 0 },
+      B: { ...seats[1], side: "B", connected: true, deck: newDeck(seats[1].loadout), goldenPlays: 0 },
     };
 
     // Snapshot ratings at match start — this is what Glicko scores against.
@@ -72,7 +72,24 @@ export class Match {
 
   publicSeat(side) {
     const p = this.seats[side].profile;
-    return { name: p.name, rating: Math.round(p.rating.r), rd: Math.round(p.rating.rd) };
+    return {
+      name: p.name,
+      rating: Math.round(p.rating.r),
+      rd: Math.round(p.rating.rd),
+      // Both players get to study each other's eight blocks.
+      loadout: this.seats[side].loadout,
+    };
+  }
+
+  goldenBlock(side) {
+    return this.seats[side].loadout[GOLDEN_SLOT];
+  }
+
+  /** Charged AND actually holding it — a charge you can't play isn't a threat. */
+  goldenArmed(side) {
+    const seat = this.seats[side];
+    const id = this.goldenBlock(side);
+    return seat.goldenPlays >= goldenCycleFor(id) && seat.deck.hand.includes(id);
   }
 
   start() {
@@ -81,6 +98,8 @@ export class Match {
       matchId: this.id,
       you: side,
       opponent: this.publicSeat(this.other(side)),
+      loadout: this.seats[side].loadout,
+      goldenSlot: GOLDEN_SLOT,
       turns: TURNS,
     }));
     this.sendTurn();
@@ -96,8 +115,15 @@ export class Match {
       turn: this.turn,
       board: this.board,
       hand: this.seats[side].deck.hand,
-      deckLeft: this.seats[side].deck.deck.length,
+      bagLeft: this.seats[side].deck.bag.length,
       oppHandCount: this.seats[this.other(side)].deck.hand.length,
+      golden: {
+        blockId: this.goldenBlock(side),
+        plays: this.seats[side].goldenPlays,
+        need: goldenCycleFor(this.goldenBlock(side)),
+        armed: this.goldenArmed(side),
+        oppArmed: this.goldenArmed(this.other(side)),
+      },
       deadline: null,
     }));
 
@@ -155,10 +181,13 @@ export class Match {
     if (!Number.isInteger(r) || !Number.isInteger(c)) return "bad position";
     if (r < 0 || c < 0 || r + h > ROWS || c + w > COLS) return "off the board";
 
-    const cells = absCells(shape, [r, c]);
-    if (!isLegal(this.board, cells, side)) return "illegal placement";
+    // Golden status is decided here, never taken from the client.
+    const golden = blockId === this.goldenBlock(side) && this.goldenArmed(side);
 
-    this.pending[side] = { handIdx, blockId, cells, value: BLOCKS[blockId].cells.length };
+    const cells = absCells(shape, [r, c]);
+    if (!isLegal(this.board, cells, side, { golden })) return "illegal placement";
+
+    this.pending[side] = { handIdx, blockId, cells, golden, value: BLOCKS[blockId].cells.length };
     this.send(side, { t: "ack", turn: this.turn });
     this.send(this.other(side), { t: "oppReady", turn: this.turn });
     this.startShotClock();
@@ -199,19 +228,23 @@ export class Match {
     const res = resolveTurn(this.board, this.pending.A, this.pending.B);
     this.board = res.board;
 
-    // Consume the played or discarded card, then draw.
+    // Consume the played or discarded block, then draw from the bag.
     for (const side of ["A", "B"]) {
       const seat = this.seats[side];
-      const idx = this.pending[side] ? this.pending[side].handIdx : this.pending[side + "_discard"] ?? 0;
-      if (seat.deck.hand.length) {
-        seat.deck.hand = seat.deck.hand.filter((_, i) => i !== idx);
-        if (seat.deck.deck.length) seat.deck.hand.push(seat.deck.deck.shift());
+      const move = this.pending[side];
+      const idx = move ? move.handIdx : this.pending[side + "_discard"] ?? 0;
+      const played = seat.deck.hand[idx];
+
+      if (move && played === this.goldenBlock(side)) {
+        // Spending a charged golden piece resets it; otherwise it charges.
+        seat.goldenPlays = move.golden ? 0 : seat.goldenPlays + 1;
       }
+      if (seat.deck.hand.length) seat.deck = cycleHand(seat.deck, idx, seat.loadout);
     }
 
     const moves = {
-      A: this.pending.A ? { blockId: this.pending.A.blockId, cells: this.pending.A.cells } : null,
-      B: this.pending.B ? { blockId: this.pending.B.blockId, cells: this.pending.B.cells } : null,
+      A: this.pending.A ? { blockId: this.pending.A.blockId, cells: this.pending.A.cells, golden: this.pending.A.golden } : null,
+      B: this.pending.B ? { blockId: this.pending.B.blockId, cells: this.pending.B.cells, golden: this.pending.B.golden } : null,
     };
     const score = scoreOf(this.board);
 
@@ -222,14 +255,15 @@ export class Match {
       board: this.board,
       moves,
       contested: res.contested,
+      cleared: res.cleared,
       score,
     }));
 
     this.pending = { A: undefined, B: undefined };
 
     const stuck =
-      !hasAnyMove(this.board, this.seats.A.deck.hand, "A") &&
-      !hasAnyMove(this.board, this.seats.B.deck.hand, "B");
+      !hasAnyMove(this.board, this.seats.A.deck.hand, "A", { goldenBlockId: this.goldenArmed("A") ? this.goldenBlock("A") : null }) &&
+      !hasAnyMove(this.board, this.seats.B.deck.hand, "B", { goldenBlockId: this.goldenArmed("B") ? this.goldenBlock("B") : null });
 
     if (this.turn >= TURNS || stuck) {
       setTimeout(() => this.end(), REVEAL_MS);
@@ -341,6 +375,8 @@ export class Match {
       matchId: this.id,
       you: side,
       opponent: this.publicSeat(this.other(side)),
+      loadout: this.seats[side].loadout,
+      goldenSlot: GOLDEN_SLOT,
       turns: TURNS,
       resumed: true,
     });
@@ -350,8 +386,15 @@ export class Match {
       turn: this.turn,
       board: this.board,
       hand: this.seats[side].deck.hand,
-      deckLeft: this.seats[side].deck.deck.length,
+      bagLeft: this.seats[side].deck.bag.length,
       oppHandCount: this.seats[this.other(side)].deck.hand.length,
+      golden: {
+        blockId: this.goldenBlock(side),
+        plays: this.seats[side].goldenPlays,
+        need: goldenCycleFor(this.goldenBlock(side)),
+        armed: this.goldenArmed(side),
+        oppArmed: this.goldenArmed(this.other(side)),
+      },
       deadline: this.deadline,
       alreadyMoved: this.pending[side] !== undefined,
     });

@@ -6,12 +6,14 @@
  * SAME FILE to be the referee. If these ever disagree, players desync.
  */
 
+import { RULES } from "./rules.js";
+
 export const COLS = 8;
 export const ROWS = 16;
-export const TURNS = 20;
-export const HAND_SIZE = 4;
+export const TURNS = RULES.turns;
+export const HAND_SIZE = RULES.handSize;
 export const SLOTS = 8;
-export const COPIES_PER_TYPE = 8;
+export const GOLDEN_SLOT = RULES.goldenSlot;
 
 export const BLOCKS = [
   // SMALL 1–3
@@ -54,6 +56,13 @@ export const DEFAULT_LOADOUT = ["DOT", "BAR", "RUN", "ELL", "BLOK", "TEE", "CROS
   .map((n) => BLOCKS.findIndex((b) => b.name === n));
 
 export const sizeOf = (n) => (n <= 3 ? "SMALL" : n <= 7 ? "MEDIUM" : "BIG");
+
+/** Plays needed before the golden slot charges, by block size. */
+export function goldenCycleFor(blockId) {
+  const s = sizeOf(BLOCKS[blockId].cells.length);
+  const c = RULES.goldenCycle;
+  return s === "SMALL" ? c.small : s === "MEDIUM" ? c.medium : c.large;
+}
 export const key = (r, c) => r * COLS + c;
 
 /* ---------- geometry ---------- */
@@ -94,12 +103,20 @@ export function initialBoard() {
   return b;
 }
 
-/** Every square empty, and at least one square touching your own ink (8-way). */
-export function isLegal(board, cells, owner) {
+/**
+ * Every square must be free, and at least one must touch your own ink (8-way).
+ * A charged golden piece may also land on the opponent's ink, converting it.
+ */
+export function isLegal(board, cells, owner, { golden = false } = {}) {
+  const opp = owner === "A" ? "B" : "A";
   for (const [r, c] of cells) {
     if (!Number.isInteger(r) || !Number.isInteger(c)) return false;
     if (r < 0 || c < 0 || r >= ROWS || c >= COLS) return false;
-    if (board[r][c] !== null) return false;
+    const v = board[r][c];
+    if (v === null) continue;
+    if (golden && v === opp) continue;
+    if (golden && v === "S" && RULES.goldenEatsSpecial) continue;
+    return false;
   }
   for (const [r, c] of cells)
     for (let dr = -1; dr <= 1; dr++)
@@ -112,31 +129,51 @@ export function isLegal(board, cells, owner) {
   return false;
 }
 
-export function enumerateMoves(board, hand, owner) {
+/** @param goldenBlockId if that block is in hand it is enumerated as golden. */
+export function enumerateMoves(board, hand, owner, { goldenBlockId = null } = {}) {
   const out = [];
   const seen = new Set();
   for (let hi = 0; hi < hand.length; hi++) {
     const blockId = hand[hi];
+    const golden = goldenBlockId !== null && blockId === goldenBlockId;
     for (let rot = 0; rot < 4; rot++) {
       const cells = rotateN(BLOCKS[blockId].cells, rot);
       const { h, w } = boundsOf(cells);
       for (let r = 0; r <= ROWS - h; r++)
         for (let c = 0; c <= COLS - w; c++) {
           const abs = absCells(cells, [r, c]);
-          if (!isLegal(board, abs, owner)) continue;
+          if (!isLegal(board, abs, owner, { golden })) continue;
           const sig = hi + ":" + abs.map(([a, b]) => key(a, b)).sort((x, y) => x - y).join(",");
           if (seen.has(sig)) continue;
           seen.add(sig);
-          out.push({ handIdx: hi, blockId, rot, pos: [r, c], cells: abs, value: cells.length });
+          out.push({ handIdx: hi, blockId, rot, pos: [r, c], cells: abs, value: cells.length, golden });
         }
     }
   }
   return out;
 }
 
-export const hasAnyMove = (board, hand, owner) => enumerateMoves(board, hand, owner).length > 0;
+export const hasAnyMove = (board, hand, owner, opts) => enumerateMoves(board, hand, owner, opts).length > 0;
 
-/** Simultaneous resolution. Squares both players claim this turn go SPECIAL. */
+const homeCells = (owner) => {
+  const m = Math.floor(COLS / 2) - 1;
+  const r = owner === "A" ? ROWS - 1 : 0;
+  return [[r, m], [r, m + 1]];
+};
+
+/** Nobody should be left with no ink to build from. */
+function restoreHomes(nb) {
+  for (const owner of ["A", "B"]) {
+    let has = false;
+    for (const row of nb) { if (row.includes(owner)) { has = true; break; } }
+    if (!has) for (const [r, c] of homeCells(owner)) nb[r][c] = owner;
+  }
+}
+
+/**
+ * Simultaneous resolution. Both moves land at once; squares claimed by both
+ * are resolved by RULES.golden.
+ */
 export function resolveTurn(board, moveA, moveB) {
   const nb = board.map((row) => [...row]);
   const aCells = moveA ? moveA.cells : [];
@@ -146,8 +183,57 @@ export function resolveTurn(board, moveA, moveB) {
   const ck = new Set(contested.map(([r, c]) => key(r, c)));
   for (const [r, c] of aCells) if (!ck.has(key(r, c))) nb[r][c] = "A";
   for (const [r, c] of bCells) if (!ck.has(key(r, c))) nb[r][c] = "B";
-  for (const [r, c] of contested) nb[r][c] = "S";
-  return { board: nb, contested };
+
+  // Snapshot AFTER both moves land. A block placed this turn and immediately
+  // wiped by clearRow still needs to be seen appearing and then destroyed.
+  const staged = nb.map((row) => [...row]);
+
+  const wipe = (r, c) => { if (r >= 0 && c >= 0 && r < ROWS && c < COLS) nb[r][c] = null; };
+
+  switch (RULES.golden) {
+    case "vanish":
+      for (const [r, c] of contested) wipe(r, c);
+      break;
+
+    case "clearRow":
+      for (const [r] of contested) for (let c = 0; c < COLS; c++) wipe(r, c);
+      break;
+
+    case "clearColumn":
+      for (const [, c] of contested) for (let r = 0; r < ROWS; r++) wipe(r, c);
+      break;
+
+    case "blast": {
+      const rad = Math.max(0, RULES.blastRadius | 0);
+      for (const [r, c] of contested)
+        for (let dr = -rad; dr <= rad; dr++)
+          for (let dc = -rad; dc <= rad; dc++) wipe(r + dr, c + dc);
+      break;
+    }
+
+    case "swap": {
+      // Whoever is behind on turf takes the contested squares.
+      const s = scoreOf(nb);
+      const winner = s.a === s.b ? (Math.random() < 0.5 ? "A" : "B") : s.a < s.b ? "A" : "B";
+      for (const [r, c] of contested) nb[r][c] = winner;
+      break;
+    }
+
+    case "special":
+    default:
+      for (const [r, c] of contested) nb[r][c] = "S";
+  }
+
+  if (RULES.restoreHome && contested.length) restoreHomes(nb);
+
+  // Everything that lost its ink this turn, with the colour it used to be —
+  // the client animates these rippling out of existence.
+  const cleared = [];
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++)
+      if (staged[r][c] !== null && nb[r][c] === null) cleared.push([r, c, staged[r][c]]);
+
+  return { board: nb, contested, cleared };
 }
 
 export function scoreOf(board) {
@@ -172,11 +258,25 @@ export function shuffled(arr, rand = Math.random) {
   return out;
 }
 
-export function dealFrom(loadout, rand = Math.random) {
-  const full = [];
-  for (const id of loadout) for (let n = 0; n < COPIES_PER_TYPE; n++) full.push(id);
-  const deck = shuffled(full, rand);
-  return { hand: deck.slice(0, HAND_SIZE), deck: deck.slice(HAND_SIZE) };
+/**
+ * Bag randomiser, Tetris-style. Each bag is one shuffled copy of your eight
+ * blocks, so across any eight draws you see each block exactly once — no
+ * droughts, no floods, but the order inside a bag is still a surprise.
+ * The opening hand comes off the first bag, so it's a fair random four.
+ */
+export function newDeck(loadout, rand = Math.random) {
+  const bag = shuffled(loadout, rand);
+  return { hand: bag.slice(0, HAND_SIZE), bag: bag.slice(HAND_SIZE) };
+}
+
+/** Removes the played block and draws one, refilling the bag when it empties. */
+export function cycleHand(deck, handIdx, loadout, rand = Math.random) {
+  const hand = deck.hand.filter((_, i) => i !== handIdx);
+  let bag = [...deck.bag];
+  if (!bag.length) bag = shuffled(loadout, rand);
+  const next = bag.shift();
+  if (next !== undefined) hand.push(next);
+  return { hand, bag };
 }
 
 /** Never trust a client-supplied loadout. */

@@ -7,9 +7,10 @@ import {
 
 /* The rules live in one place and the server imports the same file. */
 import {
-  COLS, ROWS, TURNS, HAND_SIZE, SLOTS, BLOCKS, DEFAULT_LOADOUT, sizeOf, key,
-  rotateN, boundsOf, absCells, initialBoard, isLegal, enumerateMoves,
-  hasAnyMove, resolveTurn, scoreOf, dealFrom,
+  COLS, ROWS, TURNS, HAND_SIZE, SLOTS, GOLDEN_SLOT, BLOCKS, DEFAULT_LOADOUT,
+  sizeOf, key, rotateN, boundsOf, absCells, initialBoard, isLegal,
+  enumerateMoves, hasAnyMove, resolveTurn, scoreOf, newDeck, cycleHand,
+  goldenCycleFor,
 } from "../shared/engine.js";
 import {
   RANKS, PLACEMENT_GAMES, rankIndexFor, rankMin, rankProgress,
@@ -121,8 +122,8 @@ const weightsFor = (level) => {
   return { gain: 1, front: 0.35 * t, deny: 1.1 * t * t, adv: 0.3 * t, noise: 9 * (1 - t) + 0.15 };
 };
 
-function aiPickMove(board, hand, owner, level) {
-  const moves = enumerateMoves(board, hand, owner);
+function aiPickMove(board, hand, owner, level, goldenBlockId = null) {
+  const moves = enumerateMoves(board, hand, owner, { goldenBlockId });
   if (!moves.length) return null;
   const w = weightsFor(level);
   const opp = owner === "A" ? "B" : "A";
@@ -136,7 +137,8 @@ function aiPickMove(board, hand, owner, level) {
     const deny = w.deny > 0 ? oppBefore - frontierSize(nb, opp) : 0;
     const avgR = m.cells.reduce((s, x) => s + x[0], 0) / m.cells.length;
     const advance = owner === "A" ? homeRow - avgR : avgR;
-    const s = w.gain * m.value + w.front * mine + w.deny * deny + w.adv * advance + Math.random() * w.noise;
+    // Converting enemy ink is worth roughly double a plain claim.
+    const s = w.gain * m.value * (m.golden ? 2 : 1) + w.front * mine + w.deny * deny + w.adv * advance + Math.random() * w.noise;
     if (s > bestScore) { bestScore = s; best = m; }
   }
   return best;
@@ -202,7 +204,7 @@ function useSize() {
 
 /** Everything about picking a block and dragging it onto the grid.
  *  Shared by the local game and the networked one. */
-function usePlacement({ board, owner, hand, enabled, flip = false }) {
+function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId = null }) {
   const [sel, setSel] = useState({ handIdx: null, rot: 0, pos: null });
   // Raw pointer position + row lift while a drag is live. The piece follows
   // this exactly; only its shadow snaps to the grid.
@@ -220,9 +222,11 @@ function usePlacement({ board, owner, hand, enabled, flip = false }) {
   }, [sel.handIdx, sel.rot, hand]);
 
   const ghost = useMemo(() => (rotated && sel.pos ? absCells(rotated, sel.pos) : null), [rotated, sel.pos]);
+  // The selected block is golden only if it IS the charged one.
+  const goldenSel = sel.handIdx !== null && goldenBlockId !== null && hand[sel.handIdx] === goldenBlockId;
   const ghostLegal = useMemo(
-    () => (ghost && board ? isLegal(board, ghost, owner) : false),
-    [ghost, board, owner]
+    () => (ghost && board ? isLegal(board, ghost, owner, { golden: goldenSel }) : false),
+    [ghost, board, owner, goldenSel]
   );
   const ghostKeys = useMemo(
     () => new Set((enabled && ghost ? ghost : []).map(([r, c]) => key(r, c))),
@@ -310,13 +314,18 @@ function usePlacement({ board, owner, hand, enabled, flip = false }) {
     });
   }, [hand]);
 
-  return { sel, setSel, reset, rotated, ghost, ghostLegal, ghostKeys, dragging, drag, boardRef, onBoardPointerDown, onCardPointerDown, rotate, nudge };
+  return { sel, setSel, reset, rotated, ghost, ghostLegal, ghostKeys, goldenSel, dragging, drag, boardRef, onBoardPointerDown, onCardPointerDown, rotate, nudge };
 }
 
 /* ============================================================
    SHARED VIEWS
    ============================================================ */
-function BlockGlyph({ blockId, box = 40, color, gap = 1 }) {
+/**
+ * Corner radius comes from --tb-block-r, a unitless fraction, multiplied by
+ * whatever this glyph's tile size happens to be — so a block reads the same
+ * whether it's a board square, a hand card or an 8px preview.
+ */
+function BlockGlyph({ blockId, box = 40, color, gap = 1, glow = false }) {
   const cells = BLOCKS[blockId].cells;
   const { h, w } = boundsOf(cells);
   const span = Math.max(h, w);
@@ -329,10 +338,45 @@ function BlockGlyph({ blockId, box = 40, color, gap = 1 }) {
       gridTemplateRows: `repeat(${h}, ${size}px)`,
       gap, pointerEvents: "none",
     }}>
-      {Array.from({ length: h * w }).map((_, i) => (
-        <div key={i} style={{
-          background: filled.has(Math.floor(i / w) * 100 + (i % w)) ? color : "transparent",
-          borderRadius: 1,
+      {Array.from({ length: h * w }).map((_, i) => {
+        const on = filled.has(Math.floor(i / w) * 100 + (i % w));
+        return (
+          <div key={i} style={{
+            background: on ? color : "transparent",
+            borderRadius: `calc(${size}px * var(--tb-block-r, .2))`,
+            boxShadow: on && glow ? `0 0 ${Math.round(size * 0.7)}px ${color}` : "none",
+          }} />
+        );
+      })}
+    </div>
+  );
+}
+
+/** Pieces rippling out of existence after a collision. */
+function VanishLayer({ contested = [], cleared = [], cell, gap, pad, ink }) {
+  const origin = contested.length ? contested : cleared.map(([r, c]) => [r, c]);
+  const delayFor = (r, c) => {
+    if (!origin.length) return 0;
+    let best = Infinity;
+    for (const [orr, oc] of origin) best = Math.min(best, Math.hypot(orr - r, oc - c));
+    return Math.round(best * 42);
+  };
+  const items = [
+    ...contested.map(([r, c]) => ({ r, c, color: GOLD, delay: delayFor(r, c) })),
+    ...cleared.map(([r, c, owner]) => ({ r, c, color: ink[owner] || ink.A, delay: delayFor(r, c) })),
+  ];
+  if (!items.length) return null;
+  return (
+    <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 3 }}>
+      {items.map((it, i) => (
+        <div key={i} className="tb-vanish" style={{
+          position: "absolute",
+          left: pad + it.c * (cell + gap),
+          top: pad + it.r * (cell + gap),
+          width: cell, height: cell,
+          background: it.color,
+          borderRadius: `calc(${cell}px * var(--tb-block-r, .2))`,
+          animationDelay: `${it.delay}ms`,
         }} />
       ))}
     </div>
@@ -349,54 +393,13 @@ function BlockGlyph({ blockId, box = 40, color, gap = 1 }) {
  */
 
 /**
- * Tessellation geometry. Each entry returns tile size, row stepping, and a
- * clip-path — everything else in PulseField is shape-agnostic.
+ * Square tessellation. Hex, diamond and triangle variants were removed once
+ * the square look was settled — restoring one means adding a branch here that
+ * returns its own tile size, row stepping and clip-path.
  */
-function mosaicGeometry(shape, cols, rows) {
-  if (shape === "square") {
-    const w = 100 / cols, h = w;
-    return {
-      w, h, vStep: h, cols, rows,
-      offset: () => 0,
-      clip: () => "none",
-      origin: () => "50% 50%",
-      centre: (x, y) => [x + w / 2, y + h / 2],
-    };
-  }
-  if (shape === "diamond") {
-    const w = 100 / cols, h = w;
-    return {
-      w, h, vStep: h / 2, cols, rows,
-      offset: (r) => (r % 2 ? w / 2 : 0),
-      clip: () => "polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)",
-      origin: () => "50% 50%",
-      centre: (x, y) => [x + w / 2, y + h / 2],
-    };
-  }
-  if (shape === "triangle") {
-    // Alternating up/down triangles share edges, so they step by half a base.
-    const w = 200 / (cols + 1);
-    const h = w * 0.866;
-    return {
-      w, h, vStep: h, cols, rows, step: w / 2,
-      offset: () => 0,
-      clip: (c, r) => ((c + r) % 2 === 0
-        ? "polygon(50% 0%, 100% 100%, 0% 100%)"
-        : "polygon(0% 0%, 100% 0%, 50% 100%)"),
-      origin: (c, r) => ((c + r) % 2 === 0 ? "50% 66%" : "50% 34%"),
-      centre: (x, y, c, r) => [x + w / 2, y + h * ((c + r) % 2 === 0 ? 0.66 : 0.34)],
-    };
-  }
-  // pointy-top hexagons
-  const w = 100 / (cols - 1);
-  const h = w * 1.1547;
-  return {
-    w, h, vStep: h * 0.75, cols, rows,
-    offset: (r) => (r % 2 ? w / 2 : 0),
-    clip: () => "polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)",
-    origin: () => "50% 50%",
-    centre: (x, y) => [x + w / 2, y + h / 2],
-  };
+function mosaicGeometry(cols, rows) {
+  const w = 100 / cols;
+  return { w, h: w, vStep: w, cols, rows, step: w, offset: () => 0 };
 }
 
 function PulseField({ colors, theme }) {
@@ -412,15 +415,15 @@ function PulseField({ colors, theme }) {
   const still = !theme.motion || theme.staticField;
 
   const tiles = useMemo(() => {
-    const g = mosaicGeometry(H.shape, H.columns, H.rows);
-    const step = g.step ?? g.w;
+    const g = mosaicGeometry(H.columns, H.rows);
+    const step = g.step;
     const totalH = (g.rows - 1) * g.vStep + g.h;
     const out = [];
     for (let r = 0; r < g.rows; r++) {
       for (let c = 0; c < g.cols; c++) {
         const left = c * step + g.offset(r) - g.w / 2;
         const top = r * g.vStep + (100 - totalH) / 2;
-        const [mx, my] = g.centre(left, top, c, r);
+        const mx = left + g.w / 2, my = top + g.h / 2;
         const cx = mx - 50, cy = my - 50;
         const dist = Math.min(1, Math.sqrt(cx * cx + cy * cy) / 50);
         if (dist >= 0.99) continue;
@@ -428,8 +431,6 @@ function PulseField({ colors, theme }) {
         const fall = 1 - dist;
         out.push({
           left, top, w: g.w, h: g.h, mx, my,
-          clip: g.clip(c, r),
-          origin: g.origin(c, r),
           ring: Math.min(RINGS - 1, Math.floor(dist * RINGS)),
           weight: +(Math.pow(fall, 1.1) * (0.65 + Math.random() * 0.55)).toFixed(3),
           base: +(0.05 + fall * 0.18).toFixed(3),
@@ -439,7 +440,7 @@ function PulseField({ colors, theme }) {
     }
     return { list: out, size: g };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [H.shape, H.columns, H.rows, H.thinning, H.rivalShare, RINGS]);
+  }, [H.columns, H.rows, H.thinning, H.rivalShare, RINGS]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -513,7 +514,7 @@ function PulseField({ colors, theme }) {
 
   const mask = "radial-gradient(circle at 50% 50%, #000 0%, #000 48%, rgba(0,0,0,.55) 72%, transparent 92%)";
   const glass = `linear-gradient(148deg, rgba(255,255,255,${H.sheen}) 0%, rgba(255,255,255,${(H.sheen * 0.2).toFixed(3)}) 38%, rgba(255,255,255,.02) 58%, rgba(255,255,255,${(H.sheen * 0.44).toFixed(3)}) 100%)`;
-  const round = H.shape === "square" ? H.squareRadius : 0;
+  const round = H.squareRadius;
 
   return (
     <div aria-hidden="true" className="absolute inset-0 overflow-hidden pointer-events-none" style={{ zIndex: 0 }}>
@@ -548,9 +549,7 @@ function PulseField({ colors, theme }) {
                 position: "absolute",
                 left: `${x.left}%`, top: `${x.top}%`,
                 width: `${x.w}%`, height: `${x.h}%`,
-                clipPath: x.clip,
                 borderRadius: round,
-                transformOrigin: x.origin,
                 background: `color-mix(in srgb, ${ink} ${H.rimTint}%, white)`,
                 "--near": 0,
                 opacity: `calc(${x.base} + var(--p${x.ring}, .5) * ${x.weight} * ${H.pulseOpacity})`,
@@ -562,9 +561,7 @@ function PulseField({ colors, theme }) {
             >
               <div style={{
                 position: "absolute", inset: 0,
-                clipPath: x.clip,
                 borderRadius: round,
-                transformOrigin: x.origin,
                 transform: `scale(${(1 - H.rimWidth).toFixed(3)})`,
                 backgroundColor: `color-mix(in srgb, ${ink} ${H.glassOpacity}%, transparent)`,
                 backgroundImage: glass,
@@ -577,8 +574,51 @@ function PulseField({ colors, theme }) {
   );
 }
 
+const RAIL_W = 1.7; // rail width in board cells
+
+/**
+ * The deck rails flanking the board. Both players' eight blocks are public, so
+ * you can read what your opponent is holding — the golden slot sits at the
+ * bottom and lights up only on the turn they can actually fire it.
+ */
+function Rail({ loadout, cell, height, ink, armed, inHand, mine }) {
+  if (!loadout || !loadout.length) return <div style={{ width: cell * RAIL_W }} />;
+  // Reversed so slot 0 — the golden one — is at the bottom.
+  const order = loadout.map((_, i) => i).reverse();
+  return (
+    <div className="flex flex-col shrink-0" style={{ width: cell * RAIL_W, height, gap: 2 }}>
+      {order.map((slot) => {
+        const id = loadout[slot];
+        const golden = slot === GOLDEN_SLOT;
+        const lit = golden && armed;
+        const held = mine && inHand?.includes(id);
+        return (
+          <div
+            key={slot}
+            className={lit ? "flex items-center justify-center tb-charged-rail" : "flex items-center justify-center"}
+            style={{
+              flex: 1,
+              opacity: lit ? 1 : held ? 1 : 0.42,
+              transform: lit ? "scale(1.16)" : "none",
+              transition: "opacity 200ms ease, transform 200ms ease",
+            }}
+          >
+            <BlockGlyph
+              blockId={id}
+              box={cell * (lit ? 1.35 : 1.2)}
+              color={lit ? GOLD : golden ? GOLD_SOFT : ink}
+              glow={lit}
+              gap={1}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /** The piece in hand: follows the pointer exactly, never snaps. */
-function FloatingPiece({ cells, cell, gap, radius, color, x, y, lift, legal }) {
+function FloatingPiece({ cells, cell, gap, color, x, y, lift, legal, flip = false, golden = false }) {
   const { h, w } = boundsOf(cells);
   const filled = new Set(cells.map(([r, c]) => r * 100 + c));
   return (
@@ -587,21 +627,25 @@ function FloatingPiece({ cells, cell, gap, radius, color, x, y, lift, legal }) {
         position: "fixed",
         left: x,
         top: y - lift * (cell + gap),
-        transform: `translate(-50%, -50%) scale(${FX.board.floatScale})`,
+        // Seat B plays on a board rotated 180°, so the piece in hand has to
+        // match or an L lands mirrored from its own shadow.
+        transform: `translate(-50%, -50%) rotate(${flip ? 180 : 0}deg) scale(${FX.board.floatScale})`,
         pointerEvents: "none",
         zIndex: 30,
         display: "grid",
         gridTemplateColumns: `repeat(${w}, ${cell}px)`,
         gridTemplateRows: `repeat(${h}, ${cell}px)`,
         gap,
-        filter: `drop-shadow(${FX.board.floatShadow})`,
+        filter: golden
+          ? `drop-shadow(0 0 10px ${color}) drop-shadow(${FX.board.floatShadow})`
+          : `drop-shadow(${FX.board.floatShadow})`,
         opacity: legal ? 1 : 0.75,
       }}
     >
       {Array.from({ length: h * w }).map((_, i) => (
         <div key={i} style={{
           background: filled.has(Math.floor(i / w) * 100 + (i % w)) ? color : "transparent",
-          borderRadius: radius,
+          borderRadius: `calc(${cell}px * var(--tb-block-r, .2))`,
         }} />
       ))}
     </div>
@@ -610,7 +654,7 @@ function FloatingPiece({ cells, cell, gap, radius, color, x, y, lift, legal }) {
 
 function BoardGrid({
   board, cell, ink, ghostKeys, ghostLegal, ghostInk, contestedKeys,
-  boardRef, onPointerDown, theme, youSide = "A", translucent = false,
+  boardRef, onPointerDown, theme, youSide = "A", translucent = false, ghostGolden = false,
 }) {
   const shape = SHAPES[theme.shape] || SHAPES.soft;
   const gap = theme.gap;
@@ -685,10 +729,10 @@ function BoardGrid({
           return (
             <div
               key={k}
-              className={contestedKeys.has(k) ? "tb-contest" : v ? "tb-drop" : ""}
+              className={contestedKeys.has(k) ? "tb-contest" : isGhost && ghostGolden ? "tb-charged" : v ? "tb-drop" : ""}
               style={{
                 background: bg, opacity, boxShadow, border,
-                borderRadius: shape.radius,
+                borderRadius: `calc(${cell}px * var(--tb-block-r, .2))`,
                 margin: shape.inset,
                 display: mark ? "flex" : undefined,
                 alignItems: "center",
@@ -702,7 +746,7 @@ function BoardGrid({
   );
 }
 
-function HandRow({ hand, selIdx, dragging, ink, onPress, disabled }) {
+function HandRow({ hand, selIdx, dragging, ink, onPress, disabled, goldenBlockId = null }) {
   return (
     <div className="grid grid-cols-4 gap-1.5 mb-1.5">
       {Array.from({ length: HAND_SIZE }).map((_, i) => {
@@ -711,22 +755,23 @@ function HandRow({ hand, selIdx, dragging, ink, onPress, disabled }) {
           return <div key={i} className="rounded" style={{ height: 66, border: `1px dashed ${UI.line}`, opacity: 0.4 }} />;
         }
         const active = selIdx === i;
+        const charged = goldenBlockId !== null && blockId === goldenBlockId;
         return (
           <div
             key={i}
             onPointerDown={(e) => !disabled && onPress(e, i)}
-            className="flex flex-col items-center justify-center gap-1 rounded select-none"
+            className={`flex flex-col items-center justify-center gap-1 rounded select-none${charged ? " tb-charged" : ""}`}
             style={{
               height: 66,
-              background: active ? UI.panel : "transparent",
-              border: `1px solid ${active ? ink : UI.line}`,
+              background: charged ? "color-mix(in srgb, var(--tb-special) 20%, transparent)" : active ? UI.panel : "transparent",
+              border: `${charged ? 2 : 1}px solid ${charged ? GOLD : active ? ink : UI.line}`,
               touchAction: "none",
               opacity: disabled ? 0.35 : active && dragging ? 0.25 : 1,
             }}
           >
-            <BlockGlyph blockId={blockId} box={32} color={ink} />
-            <div className="text-[7px] tracking-wider" style={{ color: UI.dim }}>
-              {BLOCKS[blockId].name} · {BLOCKS[blockId].cells.length}
+            <BlockGlyph blockId={blockId} box={32} color={charged ? GOLD : ink} glow={charged} />
+            <div className="text-[7px] tracking-wider" style={{ color: charged ? GOLD : UI.dim }}>
+              {charged ? "GOLDEN" : `${BLOCKS[blockId].name} · ${BLOCKS[blockId].cells.length}`}
             </div>
           </div>
         );
@@ -1066,7 +1111,7 @@ function DeckModal({ loadout, setLoadout, color, volume, onClose }) {
       return;
     }
     let armed = false;
-    const timer = setTimeout(() => { armed = true; cleanup(); beginDrag(blockId, from, sx, sy); }, 240);
+    const timer = setTimeout(() => { armed = true; cleanup(); beginDrag(blockId, from, sx, sy); }, 170);
     const watch = (ev) => {
       if (armed) return;
       if (Math.abs(ev.clientX - sx) > 9 || Math.abs(ev.clientY - sy) > 9) { clearTimeout(timer); cleanup(); }
@@ -1087,20 +1132,32 @@ function DeckModal({ loadout, setLoadout, color, volume, onClose }) {
       <div className="grid grid-cols-4 gap-1.5 pb-3" style={{ borderBottom: `1px solid ${UI.line}` }}>
         {loadout.map((blockId, i) => {
           const hot = drag && drag.over === i;
+          const golden = i === GOLDEN_SLOT;
           return (
             <div key={i} ref={(el) => (slotRefs.current[i] = el)}
               onPointerDown={(e) => onPress(e, blockId, i, true)}
-              className="rounded flex flex-col items-center justify-center gap-1 select-none"
+              className="rounded flex flex-col items-center justify-center gap-1 select-none relative"
               style={{
-                height: 62, background: hot ? UI.cell : "transparent",
-                border: `1px solid ${hot ? color : UI.line}`, touchAction: "none",
-                opacity: drag && drag.from === i ? 0.35 : 1,
+                height: 62,
+                background: hot ? UI.cell : golden ? "color-mix(in srgb, var(--tb-special) 10%, transparent)" : "transparent",
+                border: `1px solid ${hot ? color : golden ? GOLD : UI.line}`,
+                touchAction: "none",
+                transform: hot ? "scale(1.06)" : "none",
+                transition: "transform 120ms ease-out",
+                opacity: drag && drag.from === i ? 0.25 : 1,
               }}>
-              <BlockGlyph blockId={blockId} box={28} color={color} />
-              <span className="text-[7px] tracking-wider" style={{ color: UI.dim }}>{BLOCKS[blockId].name}</span>
+              <BlockGlyph blockId={blockId} box={28} color={golden ? GOLD : color} />
+              <span className="text-[7px] tracking-wider" style={{ color: golden ? GOLD : UI.dim }}>
+                {golden ? "GOLDEN" : BLOCKS[blockId].name}
+              </span>
             </div>
           );
         })}
+      </div>
+      <div className="text-[9px] leading-relaxed pt-2 pb-1" style={{ color: UI.dim }}>
+        <span style={{ color: GOLD }}>Golden slot.</span> Play this block{" "}
+        {goldenCycleFor(loadout[GOLDEN_SLOT])}× to charge it — then it can be dropped
+        straight onto your opponent's squares and turns them yours.
       </div>
     </>
   );
@@ -1108,8 +1165,8 @@ function DeckModal({ loadout, setLoadout, color, volume, onClose }) {
   return (
     <Popup title="YOUR BLOCKS" onClose={onClose} pinned={pinned}>
       <div className="text-[10px] leading-relaxed pt-3 pb-4" style={{ color: UI.dim }}>
-        Hold a block, then drag it up into a slot. Solo and take-turns give your opponent
-        the same deck; in ranked, everyone brings their own.
+Hold a block for a moment, then drag it up into a slot. Both players can see each
+        other\u2019s eight blocks during a match.
       </div>
       {["SMALL", "MEDIUM", "BIG"].map((g) => (
         <div key={g} className="mb-5">
@@ -1134,9 +1191,15 @@ function DeckModal({ loadout, setLoadout, color, volume, onClose }) {
         </div>
       ))}
       {drag && (
-        <div className="fixed z-50 pointer-events-none" style={{ left: drag.x, top: drag.y, transform: "translate(-50%,-50%)" }}>
-          <div className="rounded p-2" style={{ background: UI.panel, border: `1px solid ${color}` }}>
-            <BlockGlyph blockId={drag.blockId} box={34} color={color} />
+        <div className="fixed z-50 pointer-events-none"
+          style={{ left: drag.x, top: drag.y - 34, transform: "translate(-50%,-50%) scale(1.12)" }}>
+          <div className="rounded-lg p-2.5"
+            style={{
+              background: UI.panel,
+              border: `2px solid ${drag.over !== null ? GOLD : color}`,
+              boxShadow: "0 10px 26px rgba(0,0,0,.6)",
+            }}>
+            <BlockGlyph blockId={drag.blockId} box={46} color={color} />
           </div>
         </div>
       )}
@@ -1460,7 +1523,7 @@ function ThemeModal({ theme, setTheme, onClose }) {
                   className="rounded flex flex-col items-center justify-center gap-2 py-3"
                   style={{ background: on ? UI.cell : "transparent", border: `1px solid ${on ? theme.you : UI.line}` }}>
                   <div style={{
-                    width: 22, height: 22, borderRadius: sh.radius,
+                    width: 22, height: 22, borderRadius: 22 * sh.ratio,
                     background: sh.hollow ? "transparent" : theme.you,
                     border: sh.hollow ? `2px solid ${theme.you}` : "none",
                   }} />
@@ -2028,41 +2091,48 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
   const [board, setBoard] = useState(initialBoard);
   const [turn, setTurn] = useState(1);
   const [phase, setPhase] = useState("PLAY_A");
-  const [decks, setDecks] = useState(() => ({ A: dealFrom(loadout), B: dealFrom(loadout) }));
+  const [decks, setDecks] = useState(() => ({ A: newDeck(loadout), B: newDeck(loadout) }));
+  const [goldenPlays, setGoldenPlays] = useState({ A: 0, B: 0 });
   const [pendingA, setPendingA] = useState(null);
   const [reveal, setReveal] = useState(null);
   const [stageRef, stage] = useSize();
 
   const player = phase === "PLAY_B" ? "B" : "A";
   const hand = decks[player].hand;
+
+  // Declared after `player` — these read it.
+  const goldenBlockId = loadout[GOLDEN_SLOT];
+  const goldenNeed = goldenCycleFor(goldenBlockId);
+  const armedFor = (side) => goldenPlays[side] >= goldenNeed && decks[side].hand.includes(goldenBlockId);
+  const myArmed = armedFor(player);
   const inPlay = phase === "PLAY_A" || phase === "PLAY_B";
   const score = useMemo(() => scoreOf(board), [board]);
   const oppName = solo ? `LV${aiLevel} ${LEVELS[aiLevel - 1]}` : "PLAYER 2";
 
-  const pl = usePlacement({ board, owner: player, hand, enabled: inPlay });
+  const pl = usePlacement({ board, owner: player, hand, enabled: inPlay, goldenBlockId: myArmed ? goldenBlockId : null });
   const contestedKeys = useMemo(() => new Set((reveal ? reveal.contested : []).map(([r, c]) => key(r, c))), [reveal]);
-  const stuck = useMemo(() => (inPlay ? !hasAnyMove(board, hand, player) : false), [board, hand, player, inPlay]);
+  const stuck = useMemo(() => (inPlay ? !hasAnyMove(board, hand, player, { goldenBlockId: myArmed ? goldenBlockId : null }) : false), [board, hand, player, inPlay, myArmed, goldenBlockId]);
 
   const g = theme.gap;
+  // Rails eat RAIL_W cells on each side, so the board sizes against COLS + 2*RAIL_W.
   const cell = Math.max(6, Math.floor(Math.min(
-    (stage.w - g * (COLS + 1)) / COLS,
+    (stage.w - g * (COLS + 1) - 14) / (COLS + RAIL_W * 2),
     (stage.h - g * (ROWS + 1)) / ROWS
   )));
+  const boardH = cell * ROWS + g * (ROWS + 1);
 
-  const drawInto = (side, handIdx) => {
-    setDecks((st) => {
-      const p = st[side];
-      const nextHand = p.hand.filter((_, i) => i !== handIdx);
-      const nextDeck = [...p.deck];
-      if (nextDeck.length) nextHand.push(nextDeck.shift());
-      return { ...st, [side]: { hand: nextHand, deck: nextDeck } };
-    });
+  const drawInto = (side, handIdx, { played = false, spentGolden = false } = {}) => {
+    const wasGolden = decks[side].hand[handIdx] === goldenBlockId;
+    setDecks((st) => ({ ...st, [side]: cycleHand(st[side], handIdx, loadout) }));
+    if (played && wasGolden) {
+      setGoldenPlays((gp) => ({ ...gp, [side]: spentGolden ? 0 : gp[side] + 1 }));
+    }
   };
 
   const finish = (mA, mB) => {
     const res = resolveTurn(board, mA, mB);
     setBoard(res.board);
-    setReveal({ contested: res.contested, a: mA, b: mB });
+    setReveal({ contested: res.contested, cleared: res.cleared, a: mA, b: mB });
     setPhase("REVEAL");
     if (res.contested.length) blip("special", volume);
   };
@@ -2073,8 +2143,8 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
     if (pl.sel.handIdx === null || !pl.ghost || !pl.ghostLegal) return;
     const id = hand[pl.sel.handIdx];
     blip("place", volume);
-    drawInto(player, pl.sel.handIdx);
-    const move = { cells: pl.ghost, value: BLOCKS[id].cells.length, blockId: id };
+    drawInto(player, pl.sel.handIdx, { played: true, spentGolden: pl.goldenSel });
+    const move = { cells: pl.ghost, value: BLOCKS[id].cells.length, blockId: id, golden: pl.goldenSel };
     if (player === "A") handOver(move); else finish(pendingA, move);
     pl.reset();
   };
@@ -2091,10 +2161,11 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
     if (phase !== "AI_THINK") return;
     const t = setTimeout(() => {
       const aiHand = decks.B.hand;
-      const move = aiPickMove(board, aiHand, "B", aiLevel);
+      const aiGolden = armedFor("B") ? goldenBlockId : null;
+      const move = aiPickMove(board, aiHand, "B", aiLevel, aiGolden);
       if (move) {
-        drawInto("B", move.handIdx);
-        finish(pendingA, { cells: move.cells, value: move.value, blockId: move.blockId });
+        drawInto("B", move.handIdx, { played: true, spentGolden: !!move.golden });
+        finish(pendingA, { cells: move.cells, value: move.value, blockId: move.blockId, golden: move.golden });
       } else {
         drawInto("B", aiPickDiscard(aiHand));
         finish(pendingA, null);
@@ -2129,19 +2200,28 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
 
         <ScoreBar score={score} turn={turn} turns={TURNS} inkA={INK.A} inkB={INK.B} labelA="P1" labelB={solo ? "AI" : "P2"} />
 
-        <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center">
-          <div className="relative" style={{ width: cell * COLS + g * (COLS + 1), height: cell * ROWS + g * (ROWS + 1) }}>
+        <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center gap-1.5">
+          <Rail loadout={loadout} cell={cell} height={boardH} ink={INK.A}
+            armed={armedFor("A")} inHand={decks.A.hand} mine={player === "A"} />
+          <div className="relative" style={{ width: cell * COLS + g * (COLS + 1), height: boardH }}>
             <BoardGrid
               board={board} cell={cell} ink={INK} theme={theme} youSide={player} translucent
-              ghostKeys={pl.ghostKeys} ghostLegal={pl.ghostLegal} ghostInk={INK[player]}
+              ghostKeys={pl.ghostKeys} ghostLegal={pl.ghostLegal}
+              ghostInk={pl.goldenSel ? GOLD : INK[player]} ghostGolden={pl.goldenSel}
               contestedKeys={contestedKeys} boardRef={pl.boardRef} onPointerDown={pl.onBoardPointerDown}
             />
+
+            {reveal && (
+              <VanishLayer
+                contested={reveal.contested} cleared={reveal.cleared}
+                cell={cell} gap={g} pad={theme.frame ? Math.max(g, 1) : 0} ink={INK}
+              />
+            )}
 
             {pl.dragging && pl.drag && pl.rotated && (
               <FloatingPiece
                 cells={pl.rotated} cell={cell} gap={theme.gap}
-                radius={(SHAPES[theme.shape] || SHAPES.soft).radius}
-                color={INK[player]} legal={pl.ghostLegal}
+                color={pl.goldenSel ? GOLD : INK[player]} legal={pl.ghostLegal} golden={pl.goldenSel}
                 x={pl.drag.x} y={pl.drag.y} lift={pl.drag.lift}
               />
             )}
@@ -2178,12 +2258,15 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
               </div>
             )}
           </div>
+          <Rail loadout={loadout} cell={cell} height={boardH} ink={INK.B}
+            armed={armedFor("B")} inHand={decks.B.hand} mine={player === "B"} />
         </div>
 
         <div className="shrink-0 flex flex-col justify-end" style={{ height: DOCK_H }}>
           {inPlay && (
             <>
-              <HandRow hand={hand} selIdx={pl.sel.handIdx} dragging={pl.dragging} ink={INK[player]} onPress={pl.onCardPointerDown} />
+              <HandRow hand={hand} selIdx={pl.sel.handIdx} dragging={pl.dragging} ink={INK[player]}
+                onPress={pl.onCardPointerDown} goldenBlockId={myArmed ? goldenBlockId : null} />
               <ActionBar
                 ink={INK[player]}
                 onRotate={pl.rotate} onCommit={commit} onDiscard={discard}
@@ -2251,12 +2334,15 @@ function NetGame({ colors, volume, theme, onResult }) {
   const board = m?.board ?? null;
   const hand = m?.hand ?? [];
   const canAct = !!board && !m.submitted && !m.reveal && !m.over;
+  const gold = m?.golden ?? null;
+  const myArmed = !!gold?.armed;
+  const goldenBlockId = gold?.blockId ?? null;
 
   // Seat B's home row is row 0 — the top. Rotate their view so both players
   // always build upward from the bottom of their own screen.
   const flip = you === "B";
 
-  const pl = usePlacement({ board, owner: you, hand, enabled: canAct, flip });
+  const pl = usePlacement({ board, owner: you, hand, enabled: canAct, flip, goldenBlockId: myArmed ? goldenBlockId : null });
   const contestedKeys = useMemo(
     () => new Set((m?.reveal ? m.reveal.contested : []).map(([r, c]) => key(r, c))),
     [m?.reveal]
@@ -2265,13 +2351,16 @@ function NetGame({ colors, volume, theme, onResult }) {
   const stuck = useMemo(() => (canAct && board ? !hasAnyMove(board, hand, you) : false), [canAct, board, hand, you]);
 
   const g = theme.gap;
+  // Rails eat RAIL_W cells on each side, so the board sizes against COLS + 2*RAIL_W.
   const cell = Math.max(6, Math.floor(Math.min(
-    (stage.w - g * (COLS + 1)) / COLS,
+    (stage.w - g * (COLS + 1) - 14) / (COLS + RAIL_W * 2),
     (stage.h - g * (ROWS + 1)) / ROWS
   )));
+  const boardH = cell * ROWS + g * (ROWS + 1);
 
   // null until one player locks in; the server then broadcasts a deadline.
   const secsLeft = m?.deadline ? Math.max(0, Math.ceil((m.deadline - now) / 1000)) : null;
+  const graceLeft = m?.graceUntil ? Math.max(0, Math.ceil((m.graceUntil - now) / 1000)) : null;
 
   const commit = () => {
     if (!pl.ghostLegal || pl.sel.handIdx === null) return;
@@ -2309,7 +2398,12 @@ function NetGame({ colors, volume, theme, onResult }) {
         <div className="flex items-center justify-between h-9 shrink-0">
           <div className="text-[10px] tracking-[0.25em]" style={{ color: UI.dim }}>RANKED</div>
           <div className="flex items-center gap-2">
-            {theme.showTimer && secsLeft !== null && (
+            {graceLeft !== null && (
+              <span className="flex items-center gap-1 text-[10px] tabular-nums" style={{ color: GOLD }}>
+                <Clock size={11} /> {graceLeft}
+              </span>
+            )}
+            {theme.showTimer && secsLeft !== null && graceLeft === null && (
               <span className="flex items-center gap-1 text-[10px] tabular-nums" style={{ color: secsLeft <= 5 ? UI.bad : GOLD }}>
                 <Clock size={11} /> {secsLeft}
               </span>
@@ -2328,37 +2422,56 @@ function NetGame({ colors, volume, theme, onResult }) {
 
         <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center">
           <div className="relative" style={{ width: cell * COLS + g * (COLS + 1), height: cell * ROWS + g * (ROWS + 1) }}>
-            <div style={{ transform: flip ? "rotate(180deg)" : "none" }}>
+            <div className="relative" style={{ transform: flip ? "rotate(180deg)" : "none" }}>
               <BoardGrid
                 board={board} cell={cell} ink={INK} theme={theme} youSide={you} translucent
                 ghostKeys={pl.ghostKeys} ghostLegal={pl.ghostLegal} ghostInk={colors.you}
                 contestedKeys={contestedKeys} boardRef={pl.boardRef} onPointerDown={pl.onBoardPointerDown}
               />
+              {m.reveal && (
+                <VanishLayer
+                  contested={m.reveal.contested} cleared={m.reveal.cleared}
+                  cell={cell} gap={g} pad={theme.frame ? Math.max(g, 1) : 0} ink={INK}
+                />
+              )}
             </div>
+            {reveal && (
+              <VanishLayer
+                contested={reveal.contested} cleared={reveal.cleared}
+                cell={cell} gap={g} pad={theme.frame ? Math.max(g, 1) : 0} ink={INK}
+              />
+            )}
+
             {pl.dragging && pl.drag && pl.rotated && (
               <FloatingPiece
                 cells={pl.rotated} cell={cell} gap={theme.gap}
-                radius={(SHAPES[theme.shape] || SHAPES.soft).radius}
-                color={colors.you} legal={pl.ghostLegal}
+                color={pl.goldenSel ? GOLD : colors.you} legal={pl.ghostLegal} flip={flip} golden={pl.goldenSel}
                 x={pl.drag.x} y={pl.drag.y} lift={pl.drag.lift}
               />
             )}
 
             {m.oppDropped && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-5 rounded" style={{ background: "rgba(14,18,22,.92)" }}>
-                <div className="text-[10px] tracking-[0.3em] mb-2" style={{ color: GOLD }}>OPPONENT DROPPED</div>
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-5 rounded"
+                style={{ background: "color-mix(in srgb, var(--tb-ground) 94%, transparent)" }}>
+                <div className="text-[10px] tracking-[0.3em] mb-3" style={{ color: GOLD }}>OPPONENT DROPPED</div>
+                {graceLeft !== null && (
+                  <div className="text-[38px] leading-none tabular-nums mb-3" style={{ color: GOLD }}>{graceLeft}</div>
+                )}
                 <div className="text-[11px] leading-relaxed" style={{ color: UI.dim }}>
-                  Holding their seat for a moment. If they don't return, you take the win.
+                  Holding their seat. If they don't return, you take the win.
                 </div>
               </div>
             )}
           </div>
+          <Rail loadout={m.opponent?.loadout} cell={cell} height={boardH} ink={colors.rival}
+            armed={!!gold?.oppArmed} />
         </div>
 
         <div className="shrink-0 flex flex-col justify-end" style={{ height: DOCK_H }}>
           <HandRow
             hand={hand} selIdx={pl.sel.handIdx} dragging={pl.dragging}
             ink={colors.you} onPress={pl.onCardPointerDown} disabled={!canAct}
+            goldenBlockId={myArmed ? goldenBlockId : null}
           />
           <ActionBar
             ink={colors.you}
@@ -2375,6 +2488,8 @@ function NetGame({ colors, volume, theme, onResult }) {
                   : "Turn resolved."
               )
               : m.submitted ? <span className="tb-pulse">Locked in — waiting for {m.opponent.name}…</span>
+              : pl.goldenSel ? <span style={{ color: GOLD }}>Golden — this can land on their ink.</span>
+              : gold?.oppArmed ? <span style={{ color: GOLD }}>They have a golden piece ready.</span>
               : m.oppReady ? <span style={{ color: GOLD }}>They've locked in. Your move.</span>
               : stuck ? <span style={{ color: UI.bad }}>Nowhere to play — drop a block.</span>
               : pl.sel.handIdx === null ? "Drag a block onto the grid."
@@ -2583,13 +2698,29 @@ export default function TurfBlocks() {
         50%     { transform: translate3d(3%, -3%, 0) }
       }
       .tb-drift { animation: tbDrift 18s ease-in-out infinite; }
+      @keyframes tbVanish {
+        0%   { transform: scale(1); opacity: 1 }
+        30%  { transform: scale(1.4); opacity: 1; filter: brightness(2.6) }
+        100% { transform: scale(.08); opacity: 0; filter: brightness(1) }
+      }
+      .tb-vanish { animation: tbVanish 560ms cubic-bezier(.32,0,.2,1) both; }
+      @keyframes tbChargedRail {
+        0%,100% { filter: brightness(1) }
+        50%     { filter: brightness(1.6) }
+      }
+      .tb-charged-rail { animation: tbChargedRail 1.4s ease-in-out infinite; }
+      @keyframes tbCharged {
+        0%,100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--tb-special) 45%, transparent) }
+        50%     { box-shadow: 0 0 10px 2px color-mix(in srgb, var(--tb-special) 55%, transparent) }
+      }
+      .tb-charged { animation: tbCharged 1.5s ease-in-out infinite; }
       @keyframes tbFade { from { opacity: 0 } to { opacity: 1 } }
       .tb-fade { animation: tbFade .14s ease-out both; }
       @keyframes tbPop { from { opacity: 0; transform: scale(.94) translateY(8px) } to { opacity: 1; transform: none } }
       .tb-pop { animation: tbPop .18s cubic-bezier(.2,.9,.3,1) both; }
-      ${theme.motion ? "" : ".tb-contest,.tb-drop,.tb-pulse,.tb-fade,.tb-pop,.tb-boot,.tb-sweep,.tb-drift { animation: none !important }"}
+      ${theme.motion ? "" : ".tb-contest,.tb-drop,.tb-pulse,.tb-fade,.tb-pop,.tb-charged,.tb-charged-rail { animation: none !important }"}
       @media (prefers-reduced-motion: reduce) {
-        .tb-contest,.tb-drop,.tb-pulse,.tb-fade,.tb-pop,.tb-boot,.tb-sweep,.tb-drift { animation: none }
+        .tb-contest,.tb-drop,.tb-pulse,.tb-fade,.tb-pop,.tb-charged { animation: none }
       }
       button { -webkit-tap-highlight-color: transparent; }
       button:focus-visible { outline: 2px solid var(--tb-text); outline-offset: 2px; }

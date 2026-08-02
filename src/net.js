@@ -302,11 +302,14 @@ class Net {
           matchId: m.matchId,
           you: m.you,
           opponent: m.opponent,
+          loadout: m.loadout,
+          goldenSlot: m.goldenSlot,
           turns: m.turns,
           turn: 0,
           board: null,
           hand: [],
-          deckLeft: 0,
+          golden: null,
+          bagLeft: 0,
           oppHandCount: 0,
           deadline: 0,
           submitted: false,
@@ -324,7 +327,8 @@ class Net {
           turn: m.turn,
           board: m.board,
           hand: m.hand,
-          deckLeft: m.deckLeft,
+          golden: m.golden,
+          bagLeft: m.bagLeft,
           oppHandCount: m.oppHandCount,
           deadline: m.deadline,
           submitted: !!m.alreadyMoved,
@@ -348,7 +352,7 @@ class Net {
       case "reveal":
         this.patch({
           board: m.board,
-          reveal: { moves: m.moves, contested: m.contested, score: m.score, turn: m.turn },
+          reveal: { moves: m.moves, contested: m.contested, cleared: m.cleared || [], score: m.score, turn: m.turn },
           submitted: false,
           oppReady: false,
         });
@@ -363,11 +367,11 @@ class Net {
         break;
 
       case "oppDropped":
-        this.patch({ oppDropped: true, graceMs: m.grace });
+        this.patch({ oppDropped: true, graceUntil: Date.now() + (m.grace || 30000) });
         break;
 
       case "oppReturned":
-        this.patch({ oppDropped: false });
+        this.patch({ oppDropped: false, graceUntil: null });
         break;
 
       case "error":
