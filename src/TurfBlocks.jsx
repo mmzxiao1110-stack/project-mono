@@ -348,37 +348,88 @@ function BlockGlyph({ blockId, box = 40, color, gap = 1 }) {
  * ~20 times a second instead of every frame keeps it cheap on a phone.
  */
 
+/**
+ * Tessellation geometry. Each entry returns tile size, row stepping, and a
+ * clip-path — everything else in PulseField is shape-agnostic.
+ */
+function mosaicGeometry(shape, cols, rows) {
+  if (shape === "square") {
+    const w = 100 / cols, h = w;
+    return {
+      w, h, vStep: h, cols, rows,
+      offset: () => 0,
+      clip: () => "none",
+      origin: () => "50% 50%",
+      centre: (x, y) => [x + w / 2, y + h / 2],
+    };
+  }
+  if (shape === "diamond") {
+    const w = 100 / cols, h = w;
+    return {
+      w, h, vStep: h / 2, cols, rows,
+      offset: (r) => (r % 2 ? w / 2 : 0),
+      clip: () => "polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)",
+      origin: () => "50% 50%",
+      centre: (x, y) => [x + w / 2, y + h / 2],
+    };
+  }
+  if (shape === "triangle") {
+    // Alternating up/down triangles share edges, so they step by half a base.
+    const w = 200 / (cols + 1);
+    const h = w * 0.866;
+    return {
+      w, h, vStep: h, cols, rows, step: w / 2,
+      offset: () => 0,
+      clip: (c, r) => ((c + r) % 2 === 0
+        ? "polygon(50% 0%, 100% 100%, 0% 100%)"
+        : "polygon(0% 0%, 100% 0%, 50% 100%)"),
+      origin: (c, r) => ((c + r) % 2 === 0 ? "50% 66%" : "50% 34%"),
+      centre: (x, y, c, r) => [x + w / 2, y + h * ((c + r) % 2 === 0 ? 0.66 : 0.34)],
+    };
+  }
+  // pointy-top hexagons
+  const w = 100 / (cols - 1);
+  const h = w * 1.1547;
+  return {
+    w, h, vStep: h * 0.75, cols, rows,
+    offset: (r) => (r % 2 ? w / 2 : 0),
+    clip: () => "polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)",
+    origin: () => "50% 50%",
+    centre: (x, y) => [x + w / 2, y + h / 2],
+  };
+}
+
 function PulseField({ colors, theme }) {
   const wrapRef = useRef(null);
   const glowRef = useRef(null);
   const cellRefs = useRef([]);
   const pointer = useRef({ x: -9999, y: -9999, at: 0 });
-  const animate = theme.motion;
 
   const H = FX.hex, R = FX.ripple;
   const RINGS = R.rings;
+  // Static mode freezes every tile at full pulse: no timers, no transitions,
+  // no per-frame work at all. For devices that can't carry the animation.
+  const still = !theme.motion || theme.staticField;
 
-  const hexes = useMemo(() => {
-    const cols = H.columns, rows = H.rows;
-    const w = 100 / (cols - 1);
-    const h = w * 1.1547;
-    const vStep = h * 0.75;
-    const totalH = (rows - 1) * vStep + h;
+  const tiles = useMemo(() => {
+    const g = mosaicGeometry(H.shape, H.columns, H.rows);
+    const step = g.step ?? g.w;
+    const totalH = (g.rows - 1) * g.vStep + g.h;
     const out = [];
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const left = c * w + (r % 2 ? w / 2 : 0) - w / 2;
-        const top = r * vStep + (100 - totalH) / 2;
-        const cx = left + w / 2 - 50;
-        const cy = top + h / 2 - 50;
+    for (let r = 0; r < g.rows; r++) {
+      for (let c = 0; c < g.cols; c++) {
+        const left = c * step + g.offset(r) - g.w / 2;
+        const top = r * g.vStep + (100 - totalH) / 2;
+        const [mx, my] = g.centre(left, top, c, r);
+        const cx = mx - 50, cy = my - 50;
         const dist = Math.min(1, Math.sqrt(cx * cx + cy * cy) / 50);
         if (dist >= 0.99) continue;
-        // Thin out with distance so the clump dissolves rather than ending.
         if (Math.random() > 1 - Math.pow(dist, 1.5) * H.thinning) continue;
         const fall = 1 - dist;
         out.push({
-          left, top, w, h,
-          cx: left + w / 2, cy: top + h / 2,
+          left, top, w: g.w, h: g.h, mx, my,
+          clip: g.clip(c, r),
+          origin: g.origin(c, r),
           ring: Math.min(RINGS - 1, Math.floor(dist * RINGS)),
           weight: +(Math.pow(fall, 1.1) * (0.65 + Math.random() * 0.55)).toFixed(3),
           base: +(0.05 + fall * 0.18).toFixed(3),
@@ -386,26 +437,27 @@ function PulseField({ colors, theme }) {
         });
       }
     }
-    return out;
+    return { list: out, size: g };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [H.shape, H.columns, H.rows, H.thinning, H.rivalShare, RINGS]);
 
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
-    if (!animate) {
-      for (let k = 0; k < RINGS; k++) el.style.setProperty(`--p${k}`, "0.5");
+
+    if (still) {
+      for (let k = 0; k < RINGS; k++) el.style.setProperty(`--p${k}`, String(H.staticPulse));
+      glowRef.current?.style.setProperty("--g", String(H.staticPulse));
       return;
     }
 
     const onMove = (e) => { pointer.current = { x: e.clientX, y: e.clientY, at: performance.now() }; };
     window.addEventListener("pointermove", onMove, { passive: true });
 
-    const near = new Array(hexes.length).fill(0);
+    const list = tiles.list;
+    const near = new Array(list.length).fill(0);
     const ripples = [];
-    let avg = 0.3;
-    let lastOnset = 0;
-    let lastBeat = 0;
+    let lastBeat = -R.beatMs;
     let raf, last = 0;
 
     const tick = (t) => {
@@ -413,42 +465,34 @@ function PulseField({ colors, theme }) {
       if (t - last < 30) return;
       last = t;
 
-      const lvl = music.level();
-      avg += (lvl - avg) * 0.05;
-
-      // A guaranteed heartbeat, so the field always ripples...
       if (t - lastBeat > R.beatMs) {
         lastBeat = t;
-        ripples.push({ t0: t, amp: R.beatAmp + lvl * 0.5 });
-      }
-      // ...with extra ripples fired by peaks in the music on top of it.
-      if (lvl > avg * 1.18 + 0.03 && t - lastOnset > 150) {
-        lastOnset = t;
-        ripples.push({ t0: t, amp: Math.min(1.6, (lvl - avg) * R.onsetAmp + 0.5) });
+        ripples.push({ t0: t, amp: R.beatAmp });
       }
       while (ripples.length && t - ripples[0].t0 > R.travelMs * 1.5) ripples.shift();
 
+      // Each ring reads the wave at its own distance, so a ripple sweeps outward.
+      let centre = R.rest;
       for (let k = 0; k < RINGS; k++) {
         const d = (k + 0.5) / RINGS;
-        let p = 0.14 + lvl * 0.9 * (1 - d * 0.3);
+        let p = R.rest;
         for (const rp of ripples) {
           const x = (d - (t - rp.t0) / R.travelMs) / R.frontWidth;
           if (x > -4 && x < 4) p += rp.amp * Math.exp(-x * x);
         }
-        el.style.setProperty(`--p${k}`, Math.min(2.2, p).toFixed(3));
+        if (k === 0) centre = p;
+        el.style.setProperty(`--p${k}`, Math.min(2.4, p).toFixed(3));
       }
-      if (glowRef.current) {
-        glowRef.current.style.setProperty("--g", Math.min(1.7, 0.25 + lvl * 1.3).toFixed(3));
-      }
+      glowRef.current?.style.setProperty("--g", Math.min(2, centre).toFixed(3));
 
       const stale = t - pointer.current.at > 1600;
       const rect = el.getBoundingClientRect();
       const radius = Math.max(95, rect.width * H.hoverRadius);
-      for (let i = 0; i < hexes.length; i++) {
+      for (let i = 0; i < list.length; i++) {
         let want = 0;
         if (!stale && rect.width) {
-          const hx = rect.left + (hexes[i].cx / 100) * rect.width;
-          const hy = rect.top + (hexes[i].cy / 100) * rect.height;
+          const hx = rect.left + (list[i].mx / 100) * rect.width;
+          const hy = rect.top + (list[i].my / 100) * rect.height;
           const dx = hx - pointer.current.x, dy = hy - pointer.current.y;
           const dd = Math.sqrt(dx * dx + dy * dy);
           want = dd < radius ? Math.pow(1 - dd / radius, 1.15) : 0;
@@ -465,16 +509,14 @@ function PulseField({ colors, theme }) {
       cancelAnimationFrame(raf);
       window.removeEventListener("pointermove", onMove);
     };
-  }, [animate, hexes, H, R, RINGS]);
+  }, [still, tiles, H, R, RINGS]);
 
-  const HEX = "polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)";
   const mask = "radial-gradient(circle at 50% 50%, #000 0%, #000 48%, rgba(0,0,0,.55) 72%, transparent 92%)";
-  // Fake refraction: a bright edge, a sheen off one corner, shadow at the other.
   const glass = `linear-gradient(148deg, rgba(255,255,255,${H.sheen}) 0%, rgba(255,255,255,${(H.sheen * 0.2).toFixed(3)}) 38%, rgba(255,255,255,.02) 58%, rgba(255,255,255,${(H.sheen * 0.44).toFixed(3)}) 100%)`;
+  const round = H.shape === "square" ? H.squareRadius : 0;
 
   return (
     <div aria-hidden="true" className="absolute inset-0 overflow-hidden pointer-events-none" style={{ zIndex: 0 }}>
-      {/* bloom — clip-path swallows box-shadows, so the glow is its own layer */}
       <div
         ref={glowRef}
         style={{
@@ -483,7 +525,7 @@ function PulseField({ colors, theme }) {
           transform: `translate(-50%,-50%) scale(calc(${FX.glow.baseScale} + var(--g, .4) * ${FX.glow.scaleGain}))`,
           background: `radial-gradient(circle, ${colors.you}55 0%, ${colors.you}22 26%, ${colors.you}0D 48%, transparent 68%)`,
           opacity: `calc(var(--g, .4) * ${FX.glow.opacity})`,
-          transition: "transform 140ms ease-out, opacity 140ms ease-out",
+          transition: still ? "none" : "transform 140ms ease-out, opacity 140ms ease-out",
           "--g": 0.4,
         }}
       />
@@ -496,7 +538,7 @@ function PulseField({ colors, theme }) {
           maskImage: mask, WebkitMaskImage: mask,
         }}
       >
-        {hexes.map((x, i) => {
+        {tiles.list.map((x, i) => {
           const ink = x.rival ? colors.rival : colors.you;
           return (
             <div
@@ -506,20 +548,23 @@ function PulseField({ colors, theme }) {
                 position: "absolute",
                 left: `${x.left}%`, top: `${x.top}%`,
                 width: `${x.w}%`, height: `${x.h}%`,
-                clipPath: HEX,
-                // The rim: a lightened edge that the inner pane sits inside.
+                clipPath: x.clip,
+                borderRadius: round,
+                transformOrigin: x.origin,
                 background: `color-mix(in srgb, ${ink} ${H.rimTint}%, white)`,
                 "--near": 0,
                 opacity: `calc(${x.base} + var(--p${x.ring}, .5) * ${x.weight} * ${H.pulseOpacity})`,
                 transform: `scale(calc((${H.minScale} + var(--p${x.ring}, .5) * ${x.weight} * ${H.pulseScale}) * (1 - var(--near) * ${H.hoverShrink})))`,
                 filter: `brightness(calc(${H.brightnessBase} + var(--p${x.ring}, .5) * ${H.brightnessGain}))`,
-                transition: animate ? "transform 110ms ease-out, opacity 110ms ease-out, filter 110ms ease-out" : "none",
-                willChange: "transform, opacity, filter",
+                transition: still ? "none" : "transform 110ms ease-out, opacity 110ms ease-out, filter 110ms ease-out",
+                willChange: still ? "auto" : "transform, opacity, filter",
               }}
             >
               <div style={{
                 position: "absolute", inset: 0,
-                clipPath: HEX,
+                clipPath: x.clip,
+                borderRadius: round,
+                transformOrigin: x.origin,
                 transform: `scale(${(1 - H.rimWidth).toFixed(3)})`,
                 backgroundColor: `color-mix(in srgb, ${ink} ${H.glassOpacity}%, transparent)`,
                 backgroundImage: glass,
@@ -542,14 +587,14 @@ function FloatingPiece({ cells, cell, gap, radius, color, x, y, lift, legal }) {
         position: "fixed",
         left: x,
         top: y - lift * (cell + gap),
-        transform: "translate(-50%, -50%) scale(1.07)",
+        transform: `translate(-50%, -50%) scale(${FX.board.floatScale})`,
         pointerEvents: "none",
         zIndex: 30,
         display: "grid",
         gridTemplateColumns: `repeat(${w}, ${cell}px)`,
         gridTemplateRows: `repeat(${h}, ${cell}px)`,
         gap,
-        filter: `drop-shadow(0 8px 16px rgba(0,0,0,.55))`,
+        filter: `drop-shadow(${FX.board.floatShadow})`,
         opacity: legal ? 1 : 0.75,
       }}
     >
@@ -570,7 +615,8 @@ function BoardGrid({
   const shape = SHAPES[theme.shape] || SHAPES.soft;
   const gap = theme.gap;
   const framed = !!theme.frame;
-  const slotLine = `inset 0 0 0 ${FX.board.slotBorderWidth}px ${FX.board.slotBorderColor}`;
+  const B = FX.board;
+  const slotLine = `inset 0 0 0 ${B.slotBorderWidth}px ${B.slotBorderColor}`;
   const cb = theme.colorblind;
   const markSize = Math.max(6, Math.round(cell * 0.56));
 
@@ -584,12 +630,10 @@ function BoardGrid({
         gridTemplateRows: `repeat(${ROWS}, ${cell}px)`,
         gap,
         // Frameless leaves only the slots, so the backdrop reads straight through.
-        background: !framed
-          ? "transparent"
-          : translucent ? "color-mix(in srgb, var(--tb-line) 42%, transparent)" : UI.line,
+        background: !framed ? "transparent" : translucent ? B.frameColor : UI.line,
         padding: framed ? Math.max(gap, 1) : 0,
-        borderRadius: 4, touchAction: "none",
-        backdropFilter: framed && translucent ? "blur(2px)" : undefined,
+        borderRadius: B.frameRadius, touchAction: "none",
+        backdropFilter: framed && translucent && B.frameBlur ? `blur(${B.frameBlur}px)` : undefined,
       }}
     >
       {board.map((row, r) =>
@@ -597,27 +641,27 @@ function BoardGrid({
           const k = key(r, c);
           const isGhost = ghostKeys.has(k);
           const owner = isGhost ? youSide : v;
-          let bg = translucent ? "color-mix(in srgb, var(--tb-cell) 46%, transparent)" : UI.cell;
+          let bg = translucent ? `color-mix(in srgb, var(--tb-cell) ${B.cellFill}%, transparent)` : UI.cell;
           let opacity = 1;
           let boxShadow = "none";
           let border = "none";
           if (!v && !framed) {
-            bg = translucent ? `color-mix(in srgb, var(--tb-cell) ${FX.board.slotFill}%, transparent)` : UI.cell;
+            bg = translucent ? `color-mix(in srgb, var(--tb-cell) ${B.slotFill}%, transparent)` : UI.cell;
             boxShadow = slotLine;
           }
 
-          if (v) bg = translucent ? `color-mix(in srgb, ${ink[v]} ${FX.board.pieceOpacity}%, transparent)` : ink[v];
+          if (v) bg = translucent ? `color-mix(in srgb, ${ink[v]} ${B.pieceOpacity}%, transparent)` : ink[v];
           if (v && shape.hollow) {
             border = `2px solid ${ink[v]}`;
             bg = "transparent";
           }
-          if (v === "S" && !shape.hollow) boxShadow = "inset 0 0 0 2px rgba(0,0,0,.4)";
+          if (v === "S" && !shape.hollow && B.specialRing) boxShadow = `inset 0 0 0 ${B.specialRing}px rgba(0,0,0,.4)`;
           if (isGhost) {
             // A landing shadow — the piece itself floats under the finger.
-            bg = `color-mix(in srgb, ${ghostLegal ? ghostInk : UI.bad} 20%, transparent)`;
+            bg = `color-mix(in srgb, ${ghostLegal ? ghostInk : UI.bad} ${B.ghostFill}%, transparent)`;
             border = "none";
             opacity = 1;
-            boxShadow = `inset 0 0 0 1.5px ${ghostLegal ? ghostInk : UI.bad}`;
+            boxShadow = `inset 0 0 0 ${B.ghostBorderWidth}px ${ghostLegal ? ghostInk : UI.bad}`;
           }
 
           // Colourblind marks: shape, not just hue. Yours are circles, theirs
@@ -914,6 +958,9 @@ function SettingsModal({ volume, setVolume, musicVol, setMusicVol, name, rename,
         <Row label="ANIMATION">
           <Toggle on={theme.motion} onClick={() => set({ motion: !theme.motion })} />
         </Row>
+        <Row label="STATIC BACKDROP">
+          <Toggle on={theme.staticField} onClick={() => set({ staticField: !theme.staticField })} />
+        </Row>
         <Row label="HAPTICS">
           <Toggle on={theme.haptics} onClick={() => set({ haptics: !theme.haptics })} />
         </Row>
@@ -921,8 +968,9 @@ function SettingsModal({ volume, setVolume, musicVol, setMusicVol, name, rename,
           <Toggle on={theme.showTimer} onClick={() => set({ showTimer: !theme.showTimer })} />
         </Row>
         <div className="text-[9px] leading-relaxed mt-2 mb-7" style={{ color: UI.dim }}>
-          Marks put ○ on your squares and ✕ on your opponent's, so the board reads
-          without colour. Everything else lives in THEME.
+          Static backdrop freezes the mosaic at full brightness and stops every timer
+          behind it — turn it on if the animation stutters. Marks put ○ on your squares
+          and ✕ on your opponent's, so the board reads without colour.
         </div>
 
         <div className="text-[9px] tracking-[0.24em] mb-2" style={{ color: UI.dim }}>CONNECTION</div>
