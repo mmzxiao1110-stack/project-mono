@@ -1,0 +1,18 @@
+{
+  "name": "turf-blocks-server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+"scripts": {
+  "dev": "node --env-file=.env --watch index.js",
+  "start": "node --env-file=.env index.js",
+  "test:match": "node testclient.js"
+},
+  "dependencies": {
+    "ws": "^8.18.0",
+    "nodemailer": "^6.9.14",
+    "google-auth-library": "^9.14.0"
+  }
+}
+
+
