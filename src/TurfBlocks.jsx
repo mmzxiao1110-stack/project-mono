@@ -183,7 +183,12 @@ const useStatus = () => useSyncExternalStore(subs.status, () => net.status);
 const useProfile = () => useSyncExternalStore(subs.profile, () => net.profile);
 const useSearch = () => useSyncExternalStore(subs.search, () => net.search);
 const useFound = () => useSyncExternalStore(subs.found, () => net.found);
-const useAuth = () => useSyncExternalStore(subs.auth, () => net.auth);
+// Subscribes to the revision counter, returns the state. Any auth event —
+// including busy -> error, which leaves `auth` unchanged — re-renders.
+function useAuth() {
+  useSyncExternalStore(subs.auth, () => net.authRev);
+  return net.auth;
+}
 
 /* ============================================================
    HOOKS
@@ -212,11 +217,14 @@ function useSize() {
  *  Shared by the local game and the networked one. */
 function usePlacement({ board, owner, hand, enabled, flip = false }) {
   const [sel, setSel] = useState({ handIdx: null, rot: 0, pos: null });
-  const [dragging, setDragging] = useState(false);
+  // Raw pointer position + row lift while a drag is live. The piece follows
+  // this exactly; only its shadow snaps to the grid.
+  const [drag, setDrag] = useState(null);
+  const dragging = !!drag;
   const boardRef = useRef(null);
   const dragRef = useRef({ cells: null, lift: 0 });
 
-  const reset = useCallback(() => setSel({ handIdx: null, rot: 0, pos: null }), []);
+  const reset = useCallback(() => { setSel({ handIdx: null, rot: 0, pos: null }); setDrag(null); }, []);
 
   const rotated = useMemo(() => {
     if (sel.handIdx === null) return null;
@@ -238,6 +246,7 @@ function usePlacement({ board, owner, hand, enabled, flip = false }) {
     const el = boardRef.current;
     const cells = dragRef.current.cells;
     if (!el || !cells) return;
+    setDrag({ x: clientX, y: clientY, lift: dragRef.current.lift });
     const rect = el.getBoundingClientRect();
     const sc = Math.floor(((clientX - rect.left) / rect.width) * COLS);
     const sr = Math.floor(((clientY - rect.top) / rect.height) * ROWS);
@@ -257,10 +266,10 @@ function usePlacement({ board, owner, hand, enabled, flip = false }) {
 
   const beginDrag = useCallback((e, cells) => {
     dragRef.current = { cells, lift: e.pointerType === "touch" ? TOUCH_LIFT : 0 };
-    setDragging(true);
     const onMove = (ev) => { ev.preventDefault(); updateFromPoint(ev.clientX, ev.clientY); };
     const onUp = () => {
-      setDragging(false);
+      // Release is the moment the piece drops onto its shadow.
+      setDrag(null);
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
@@ -314,7 +323,7 @@ function usePlacement({ board, owner, hand, enabled, flip = false }) {
     });
   }, [hand]);
 
-  return { sel, setSel, reset, rotated, ghost, ghostLegal, ghostKeys, dragging, boardRef, onBoardPointerDown, onCardPointerDown, rotate, nudge };
+  return { sel, setSel, reset, rotated, ghost, ghostLegal, ghostKeys, dragging, drag, boardRef, onBoardPointerDown, onCardPointerDown, rotate, nudge };
 }
 
 /* ============================================================
@@ -337,6 +346,37 @@ function BlockGlyph({ blockId, box = 40, color, gap = 1 }) {
         <div key={i} style={{
           background: filled.has(Math.floor(i / w) * 100 + (i % w)) ? color : "transparent",
           borderRadius: 1,
+        }} />
+      ))}
+    </div>
+  );
+}
+
+/** The piece in hand: follows the pointer exactly, never snaps. */
+function FloatingPiece({ cells, cell, gap, radius, color, x, y, lift, legal }) {
+  const { h, w } = boundsOf(cells);
+  const filled = new Set(cells.map(([r, c]) => r * 100 + c));
+  return (
+    <div
+      style={{
+        position: "fixed",
+        left: x,
+        top: y - lift * (cell + gap),
+        transform: "translate(-50%, -50%) scale(1.07)",
+        pointerEvents: "none",
+        zIndex: 30,
+        display: "grid",
+        gridTemplateColumns: `repeat(${w}, ${cell}px)`,
+        gridTemplateRows: `repeat(${h}, ${cell}px)`,
+        gap,
+        filter: `drop-shadow(0 8px 16px rgba(0,0,0,.55))`,
+        opacity: legal ? 1 : 0.75,
+      }}
+    >
+      {Array.from({ length: h * w }).map((_, i) => (
+        <div key={i} style={{
+          background: filled.has(Math.floor(i / w) * 100 + (i % w)) ? color : "transparent",
+          borderRadius: radius,
         }} />
       ))}
     </div>
@@ -381,10 +421,11 @@ function BoardGrid({
           }
           if (v === "S" && !shape.hollow) boxShadow = "inset 0 0 0 2px rgba(0,0,0,.4)";
           if (isGhost) {
-            bg = ghostInk;
+            // A landing shadow — the piece itself floats under the finger.
+            bg = `color-mix(in srgb, ${ghostLegal ? ghostInk : UI.bad} 20%, transparent)`;
             border = "none";
-            opacity = ghostLegal ? 0.55 : 0.2;
-            boxShadow = `inset 0 0 0 1px ${ghostLegal ? ghostInk : UI.bad}`;
+            opacity = 1;
+            boxShadow = `inset 0 0 0 1.5px ${ghostLegal ? ghostInk : UI.bad}`;
           }
 
           // Colourblind marks: shape, not just hue. Yours are circles, theirs
@@ -444,7 +485,7 @@ function HandRow({ hand, selIdx, dragging, ink, onPress, disabled }) {
               background: active ? UI.panel : "transparent",
               border: `1px solid ${active ? ink : UI.line}`,
               touchAction: "none",
-              opacity: disabled ? 0.35 : active && dragging ? 0.4 : 1,
+              opacity: disabled ? 0.35 : active && dragging ? 0.25 : 1,
             }}
           >
             <BlockGlyph blockId={blockId} box={32} color={ink} />
@@ -501,12 +542,12 @@ function ScoreBar({ score, turn, turns, inkA, inkB, labelA, labelB }) {
   );
 }
 
-function AmbientField({ loadout, colors, theme }) {
+function AmbientField({ loadout, colors, theme, paused }) {
   const [field, setField] = useState(() => ({ board: initialBoard(), fresh: new Set(), gen: 0 }));
   const reduced =
     typeof window !== "undefined" && window.matchMedia &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const animate = theme.motion && !reduced;
+  const animate = theme.motion && !reduced && !paused;
 
   useEffect(() => {
     if (!animate) return;
@@ -588,9 +629,9 @@ function Popup({ title, onClose, children, pinned, maxW = 430 }) {
     <div
       className="fixed inset-0 z-40 flex items-center justify-center tb-fade"
       style={{
-        background: "rgba(5,8,11,.74)",
-        backdropFilter: "blur(4px)",
-        WebkitBackdropFilter: "blur(4px)",
+        background: "color-mix(in srgb, var(--tb-ground) 92%, transparent)",
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
         padding: "clamp(14px, 5vw, 56px) clamp(14px, 5vw, 56px)",
         paddingTop: "max(clamp(14px,5vw,56px), env(safe-area-inset-top,0px))",
         paddingBottom: "max(clamp(14px,5vw,56px), env(safe-area-inset-bottom,0px))",
@@ -1474,13 +1515,13 @@ function Menu({ onPick, loadout, setLoadout, volume, setVolume, colors, profile,
 
   return (
     <div className="tb-screen tb-safe relative w-full flex items-center justify-center px-5 font-mono overflow-hidden" style={{ background: UI.ground, color: UI.text }}>
-      <AmbientField loadout={loadout} colors={colors} theme={theme} />
+      <AmbientField loadout={loadout} colors={colors} theme={theme} paused={!!modal} />
       <div className="absolute inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse at 50% 46%, color-mix(in srgb, var(--tb-ground) 62%, transparent) 0%, color-mix(in srgb, var(--tb-ground) 88%, transparent) 46%, var(--tb-ground) 82%)" }} />
 
       <div className="relative w-full" style={{ maxWidth: 330 }}>
         <div className="text-center mb-8">
           <div className="text-[9px] tracking-[0.42em] mb-2.5" style={{ color: UI.dim }}>{COLS} × {ROWS} · {TURNS} TURNS</div>
-          <div className="text-[28px] leading-tight tracking-[0.2em]">TURF BLOCKS</div>
+          <div className="text-[34px] leading-tight tracking-[0.28em]">MINO</div>
         </div>
 
         <button
@@ -1819,6 +1860,15 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
               contestedKeys={contestedKeys} boardRef={pl.boardRef} onPointerDown={pl.onBoardPointerDown}
             />
 
+            {pl.dragging && pl.drag && pl.rotated && (
+              <FloatingPiece
+                cells={pl.rotated} cell={cell} gap={theme.gap}
+                radius={(SHAPES[theme.shape] || SHAPES.soft).radius}
+                color={INK[player]} legal={pl.ghostLegal}
+                x={pl.drag.x} y={pl.drag.y} lift={pl.drag.lift}
+              />
+            )}
+
             {phase === "HANDOFF" && (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-5 rounded" style={{ background: UI.ground }}>
                 <div className="text-[10px] tracking-[0.3em] mb-2" style={{ color: UI.dim }}>MOVE LOCKED IN</div>
@@ -2007,6 +2057,15 @@ function NetGame({ colors, volume, theme, onResult }) {
                 contestedKeys={contestedKeys} boardRef={pl.boardRef} onPointerDown={pl.onBoardPointerDown}
               />
             </div>
+            {pl.dragging && pl.drag && pl.rotated && (
+              <FloatingPiece
+                cells={pl.rotated} cell={cell} gap={theme.gap}
+                radius={(SHAPES[theme.shape] || SHAPES.soft).radius}
+                color={colors.you} legal={pl.ghostLegal}
+                x={pl.drag.x} y={pl.drag.y} lift={pl.drag.lift}
+              />
+            )}
+
             {m.oppDropped && (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-5 rounded" style={{ background: "rgba(14,18,22,.92)" }}>
                 <div className="text-[10px] tracking-[0.3em] mb-2" style={{ color: GOLD }}>OPPONENT DROPPED</div>

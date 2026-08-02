@@ -1,8 +1,54 @@
 {
-  "accounts": {},
-  "usernames": {},
-  "emails": {},
+  "accounts": {
+    "u_e7cf94f2abeb1038f3": {
+      "userId": "u_e7cf94f2abeb1038f3",
+      "username": "cl1110",
+      "email": "mmzxiao1110@gmail.com",
+      "emailVerified": true,
+      "provider": "password",
+      "salt": "c79b4c5e69ea246fe9f2ac44f3434672",
+      "hash": "fc62014065697c25f056ea52e66cf5e90e74e0bfbdeb319ce3fe9c17c5cf739fbd24fc33dca82a4c38e12655e4bcf24b0694e0d0b0af491452bbff2a8c2b0d67",
+      "code": null,
+      "createdAt": 1785633543996
+    }
+  },
+  "usernames": {
+    "cl1110": "u_e7cf94f2abeb1038f3"
+  },
+  "emails": {
+    "mmzxiao1110@gmail.com": "u_e7cf94f2abeb1038f3"
+  },
   "identities": {},
-  "sessions": {},
-  "profiles": {}
+  "sessions": {
+    "5bfea9b5ceaa997a7021336ba33f0e893b83f8da85dd05134f5c538460424e5b": {
+      "userId": "u_e7cf94f2abeb1038f3",
+      "expires": 1788225543998
+    }
+  },
+  "profiles": {
+    "u_e7cf94f2abeb1038f3": {
+      "playerId": "u_e7cf94f2abeb1038f3",
+      "name": "cl1110",
+      "rating": {
+        "r": 1500,
+        "rd": 350,
+        "vol": 0.06
+      },
+      "stats": {
+        "games": 0,
+        "wins": 0,
+        "losses": 0,
+        "seconds": 0,
+        "streak": 0,
+        "bestStreak": 0,
+        "peakTr": 1500,
+        "peakRank": null,
+        "squares": 0,
+        "special": 0,
+        "history": [],
+        "recent": []
+      },
+      "createdAt": 1785633543996
+    }
+  }
 }

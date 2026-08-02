@@ -42,6 +42,11 @@ class Net {
     this.auth = "anon"; // anon | authed
     this.authError = null;
     this.authBusy = false;
+    this.codeSent = false;
+    // Bumped on every auth-related change. `auth` alone is not enough: a failed
+    // login goes anon -> anon, so the snapshot never changes and React skips
+    // the re-render that would show the error.
+    this.authRev = 0;
     this.attempt = 0;
     this.outbox = [];
     this.closing = false;
@@ -54,6 +59,11 @@ class Net {
     if (!this.listeners.has(evt)) this.listeners.set(evt, new Set());
     this.listeners.get(evt).add(fn);
     return () => this.listeners.get(evt)?.delete(fn);
+  }
+
+  bumpAuth() {
+    this.authRev++;
+    this.emit("auth", this.authRev);
   }
 
   emit(evt, data) {
@@ -128,8 +138,16 @@ class Net {
   }
 
   send(obj) {
-    if (this.ws && this.ws.readyState === 1) this.raw(obj);
-    else this.outbox.push(obj);
+    if (this.ws && this.ws.readyState === 1) return this.raw(obj);
+    // Auth requests are time-sensitive: queueing them silently looks like a hang.
+    if (["signup", "login", "google", "verify", "resend"].includes(obj.t)) {
+      this.authBusy = false;
+      this.authError = "Can't reach the server. Check your connection and try again.";
+      this.bumpAuth();
+      this.open();
+      return;
+    }
+    this.outbox.push(obj);
   }
 
   queue(loadout) {
@@ -154,34 +172,35 @@ class Net {
   signup(username, email, password) {
     this.authBusy = true;
     this.authError = null;
-    this.emit("auth", this.auth);
+    this.bumpAuth();
     this.send({ t: "signup", username, email, password });
   }
 
   google(credential) {
     this.authBusy = true;
     this.authError = null;
-    this.emit("auth", this.auth);
+    this.bumpAuth();
     this.send({ t: "google", credential });
   }
 
   verify(code) {
     this.authBusy = true;
     this.authError = null;
-    this.emit("auth", this.auth);
+    this.bumpAuth();
     this.send({ t: "verify", code, token: this.token });
   }
 
   resend() {
     this.authError = null;
     this.codeSent = false;
+    this.bumpAuth();
     this.send({ t: "resend", token: this.token });
   }
 
   login(username, password) {
     this.authBusy = true;
     this.authError = null;
-    this.emit("auth", this.auth);
+    this.bumpAuth();
     this.send({ t: "login", username, password });
   }
 
@@ -195,7 +214,7 @@ class Net {
     this.found = null;
     this.emit("profile", null);
     this.emit("match", null);
-    this.emit("auth", this.auth);
+    this.bumpAuth();
   }
 
   move({ turn, handIdx, rot, pos }) {
@@ -221,7 +240,7 @@ class Net {
         this.profile = null;
         this.setStatus("online");
         this.emit("profile", null);
-        this.emit("auth", this.auth);
+        this.bumpAuth();
         break;
 
       case "auth":
@@ -233,13 +252,13 @@ class Net {
         this.setStatus("online");
         this.emit("token", m.token);
         this.emit("profile", this.profile);
-        this.emit("auth", this.auth);
+        this.bumpAuth();
         break;
 
       case "authError":
         this.authBusy = false;
         this.authError = m.msg;
-        this.emit("auth", this.auth);
+        this.bumpAuth();
         break;
 
       case "verified":
@@ -247,18 +266,18 @@ class Net {
         this.authError = null;
         this.profile = m.profile;
         this.emit("profile", this.profile);
-        this.emit("auth", this.auth);
+        this.bumpAuth();
         break;
 
       case "codeSent":
         this.codeSent = true;
         this.authError = null;
-        this.emit("auth", this.auth);
+        this.bumpAuth();
         break;
 
       case "needVerify":
         this.authError = "Verify your email first.";
-        this.emit("auth", this.auth);
+        this.bumpAuth();
         break;
 
       case "welcome":
