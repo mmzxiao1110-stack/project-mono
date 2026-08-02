@@ -50,6 +50,8 @@ class Net {
     this.attempt = 0;
     this.outbox = [];
     this.closing = false;
+    this.queued = false;
+    this.lastLoadout = null;
     this.listeners = new Map();
   }
 
@@ -83,6 +85,7 @@ class Net {
   connect(token) {
     this.token = token || null;
     this.closing = false;
+    this.attempt = 0;
     this.open();
   }
 
@@ -101,6 +104,9 @@ class Net {
     ws.onopen = () => {
       this.attempt = 0;
       this.raw({ t: "hello", token: this.token });
+      // A dropped socket removes you from the server queue. If we still think
+      // we're searching, get back in line rather than waiting on a dead entry.
+      if (this.queued && this.lastLoadout) this.raw({ t: "queue", loadout: this.lastLoadout });
       const pending = this.outbox;
       this.outbox = [];
       pending.forEach((m) => this.raw(m));
@@ -151,6 +157,8 @@ class Net {
   }
 
   queue(loadout) {
+    this.queued = true;
+    this.lastLoadout = loadout;
     this.search = { band: 40, elapsed: 0, queued: 1 };
     this.found = null;
     this.match = null;
@@ -159,6 +167,7 @@ class Net {
   }
 
   unqueue() {
+    this.queued = false;
     this.search = null;
     this.found = null;
     this.emit("search", null);
@@ -292,6 +301,7 @@ class Net {
         break;
 
       case "found":
+        this.queued = false;
         this.found = { opponent: m.opponent, gap: m.gap, matchId: m.matchId };
         this.search = null;
         this.emit("found", this.found);
@@ -372,6 +382,15 @@ class Net {
 
       case "oppReturned":
         this.patch({ oppDropped: false, graceUntil: null });
+        break;
+
+      case "kicked":
+        // Another session took over this account. Stop reconnecting, or the
+        // two clients boot each other back and forth indefinitely.
+        this.closing = true;
+        this.queued = false;
+        this.setStatus("kicked");
+        this.emit("error", "Signed in somewhere else.");
         break;
 
       case "error":

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef, useSyncExtern
 import {
   RotateCw, Check, SkipForward, RefreshCw, ChevronLeft, Settings2, X,
   VolumeX, BarChart3, Wifi, WifiOff, Clock, UserRound, LogOut,
-  Palette, Lock, MailCheck, ShieldAlert,
+  Palette, Lock, MailCheck, ShieldAlert, BookOpen, ChevronRight,
 } from "lucide-react";
 
 /* The rules live in one place and the server imports the same file. */
@@ -18,6 +18,7 @@ import {
 import { net, SERVER_URL, IS_SECURE, GOOGLE_CLIENT_ID } from "./net.js";
 import { music, TRACKS, sfx } from "./audio.js";
 import { FX } from "./tuning.js";
+import { RULES } from "../shared/rules.js";
 import {
   PRESETS, INKS, SHAPES, GRID_GAPS,
   loadTheme, saveTheme, applyPreset, editTheme, themeVars, isLight,
@@ -1545,12 +1546,10 @@ function ThemeModal({ theme, setTheme, onClose }) {
                 }}>{g}</button>
             ))}
           </Row>
-          <Row label="BOARD FRAME"><Toggle on={theme.frame} onClick={() => set({ frame: !theme.frame })} /></Row>
           <Row label="COLOURBLIND MARKS"><Toggle on={theme.colorblind} onClick={() => set({ colorblind: !theme.colorblind })} /></Row>
           <div className="text-[9px] leading-relaxed pt-3" style={{ color: UI.dim }}>
-            Board frame off leaves only the slots, so the backdrop shows through the
-            gaps. Marks put ○ on your squares, ✕ on your opponent's and ◆ on contested
-            ones, so the board reads without relying on colour.
+            Marks put ○ on your squares, ✕ on your opponent's and ◆ on contested ones,
+            so the board reads without relying on colour.
           </div>
         </div>
       )}
@@ -1841,6 +1840,163 @@ function AccountModal({ profile, onLogout, onClose }) {
 }
 
 /* ============================================================
+   HOW TO PLAY
+   ============================================================ */
+function MiniBoard({ w, h, cells, size = 15, ink }) {
+  return (
+    <div style={{
+      display: "grid",
+      gridTemplateColumns: `repeat(${w}, ${size}px)`,
+      gridTemplateRows: `repeat(${h}, ${size}px)`,
+      gap: 2, padding: 2, margin: "0 auto",
+    }}>
+      {Array.from({ length: w * h }).map((_, i) => {
+        const r = Math.floor(i / w), c = i % w;
+        const v = cells[`${r},${c}`];
+        const solid = v === "A" || v === "B" || v === "S";
+        return (
+          <div key={i} style={{
+            background: solid ? ink[v] : v === "ok" || v === "no"
+              ? `color-mix(in srgb, ${v === "ok" ? ink.A : UI.bad} 22%, transparent)`
+              : "color-mix(in srgb, var(--tb-cell) 55%, transparent)",
+            boxShadow: v === "ok" ? `inset 0 0 0 1.5px ${ink.A}`
+              : v === "no" ? `inset 0 0 0 1.5px ${UI.bad}` : "none",
+            borderRadius: `calc(${size}px * var(--tb-block-r, .2))`,
+          }} />
+        );
+      })}
+    </div>
+  );
+}
+
+const COLLISION_TEXT = {
+  vanish: "Both pieces lose that square. It empties out, and either of you can claim it again later.",
+  special: "The square turns gold. Nobody owns it and nobody can ever build on it again.",
+  clearRow: "The entire row is wiped — both colours, all the way across the board.",
+  clearColumn: "The entire column is wiped — both colours, top to bottom.",
+  blast: "Everything around the collision is destroyed, yours included.",
+  swap: "Whoever is behind on territory takes the square. Collide when you're losing.",
+};
+
+function HowToModal({ colors, loadout, onClose }) {
+  const [page, setPage] = useState(0);
+  const ink = { A: colors.you, B: colors.rival, S: colors.special };
+  const goldenId = loadout[GOLDEN_SLOT];
+
+  const pages = [
+    {
+      title: "THE GOAL",
+      art: <MiniBoard w={6} h={6} ink={ink} cells={{
+        "0,2": "B", "0,3": "B", "1,2": "B", "1,3": "B", "1,4": "B", "2,4": "B",
+        "5,2": "A", "5,3": "A", "4,1": "A", "4,2": "A", "4,3": "A", "3,1": "A",
+      }} />,
+      body: `Claim more squares than your opponent. After ${TURNS} turns, whoever covers more of the board wins. That's it.`,
+    },
+    {
+      title: "PLACING",
+      art: <MiniBoard w={6} h={5} ink={ink} cells={{
+        "2,2": "A", "2,3": "A",
+        "1,4": "ok", "3,1": "no",
+      }} />,
+      body: "A block must land on empty squares AND touch ink you already own. Corners count, so diagonal contact is enough. The red placement is floating on its own — illegal.",
+    },
+    {
+      title: "BOTH AT ONCE",
+      art: <MiniBoard w={6} h={5} ink={ink} cells={{
+        "3,1": "A", "3,2": "A", "4,1": "A",
+        "1,4": "B", "1,3": "B", "0,4": "B",
+      }} />,
+      body: "There are no alternating turns. You both choose in secret, lock in, and the moves land together. You never know where they're going until it's already happened.",
+    },
+    {
+      title: "COLLISIONS",
+      art: <MiniBoard w={6} h={5} ink={ink} cells={{
+        "2,1": "A", "2,2": "A", "2,3": "S", "2,4": "B", "3,4": "B",
+      }} />,
+      body: `Sometimes you both reach for the same square. ${COLLISION_TEXT[RULES.golden] || COLLISION_TEXT.vanish}`,
+    },
+    {
+      title: "THE GOLDEN PIECE",
+      art: (
+        <div className="flex items-center justify-center gap-4">
+          <BlockGlyph blockId={goldenId} box={44} color={GOLD} glow />
+          <ChevronRight size={16} style={{ color: UI.dim }} />
+          <MiniBoard w={5} h={4} ink={ink} cells={{
+            "1,1": "B", "1,2": "B", "2,1": "S", "2,2": "S", "2,3": "B",
+          }} />
+        </div>
+      ),
+      body: `The first slot of your deck charges as you play it — ${goldenCycleFor(goldenId)} play${goldenCycleFor(goldenId) === 1 ? "" : "s"} for that block. Once charged, it can be dropped straight onto your opponent's squares and turns them yours. It still has to touch your own ink.`,
+    },
+    {
+      title: "YOUR DECK",
+      art: (
+        <div className="flex flex-wrap items-center justify-center gap-2.5">
+          {loadout.map((id, i) => (
+            <BlockGlyph key={i} blockId={id} box={26} color={i === GOLDEN_SLOT ? GOLD : colors.you} />
+          ))}
+        </div>
+      ),
+      body: "Eight blocks, four in hand. Draws come in bags: across any eight draws you get each block exactly once, so nothing floods and nothing goes missing. Both decks are shown either side of the board — you can read what they're holding, and they can read you.",
+    },
+    {
+      title: "WATCH THE GOLD",
+      art: <div className="text-center text-[11px] leading-relaxed" style={{ color: GOLD }}>
+        <BookOpen size={22} style={{ margin: "0 auto 10px" }} />
+        Their golden slot only lights up on the turn they can actually fire it.
+      </div>,
+      body: "A charge sitting in their bag is harmless. The moment it lights up on their rail, assume the square you care about is about to change colour — and remember they can see yours too.",
+    },
+  ];
+
+  const p = pages[page];
+  const last = page === pages.length - 1;
+
+  return (
+    <Popup title="HOW TO PLAY" onClose={onClose} maxW={380}>
+      <div className="pt-4 pb-1">
+        <div className="flex gap-1 mb-4">
+          {pages.map((_, i) => (
+            <div key={i} style={{
+              flex: 1, height: 2, borderRadius: 2,
+              background: i <= page ? colors.you : UI.line,
+              transition: "background 200ms",
+            }} />
+          ))}
+        </div>
+
+        <div className="text-[10px] tracking-[0.3em] mb-4" style={{ color: UI.dim }}>{p.title}</div>
+
+        <div className="rounded py-5 mb-4 flex items-center justify-center"
+          style={{ background: UI.ground, border: `1px solid ${UI.line}`, minHeight: 132 }}>
+          {p.art}
+        </div>
+
+        <div className="text-[11px] leading-relaxed mb-5" style={{ minHeight: 76 }}>{p.body}</div>
+
+        <div className="flex gap-2">
+          <button
+            onClick={() => setPage((n) => Math.max(0, n - 1))}
+            disabled={page === 0}
+            className="rounded text-[10px] tracking-[0.25em] disabled:opacity-30"
+            style={{ height: 46, flex: 1, border: `1px solid ${UI.line}`, color: UI.dim }}
+          >
+            BACK
+          </button>
+          <button
+            onClick={() => (last ? onClose() : setPage((n) => n + 1))}
+            className="rounded text-[10px] tracking-[0.25em]"
+            style={{ height: 46, flex: 1.6, background: UI.text, color: UI.ground }}
+          >
+            {last ? "GOT IT" : "NEXT"}
+          </button>
+        </div>
+      </div>
+    </Popup>
+  );
+}
+
+/* ============================================================
    MENU
    ============================================================ */
 function Menu({ onPick, loadout, setLoadout, volume, setVolume, musicVol, setMusicVol, colors, profile, status, name, rename, onLogout, theme, setTheme }) {
@@ -1918,6 +2074,11 @@ function Menu({ onPick, loadout, setLoadout, volume, setVolume, musicVol, setMus
                 ))}
               </div>
             </button>
+            <button onClick={() => setModal("HOWTO")} aria-label="How to play"
+              className="rounded flex items-center justify-center"
+              style={{ width: 44, height: 44, background: UI.panel, border: `1px solid ${UI.line}` }}>
+              <BookOpen size={17} style={{ color: UI.dim }} />
+            </button>
             <button onClick={() => setModal("THEME")} aria-label="Theme"
               className="rounded flex items-center justify-center"
               style={{ width: 44, height: 44, background: UI.panel, border: `1px solid ${UI.line}` }}>
@@ -1945,6 +2106,7 @@ function Menu({ onPick, loadout, setLoadout, volume, setVolume, musicVol, setMus
       )}
       {modal === "VERIFY" && profile && <VerifyModal profile={profile} onClose={() => setModal(null)} />}
       {modal === "THEME" && <ThemeModal theme={theme} setTheme={setTheme} onClose={() => setModal(null)} />}
+      {modal === "HOWTO" && <HowToModal colors={colors} loadout={loadout} onClose={() => setModal(null)} />}
       {modal === "ACCOUNT" && (
         <AccountModal profile={profile} onLogout={() => { setModal(null); onLogout(); }} onClose={() => setModal(null)} />
       )}
@@ -2002,6 +2164,7 @@ const BAND_CAP = 600;
 function Matchmaking({ profile, loadout, colors, volume, onCancel }) {
   const search = useSearch();
   const found = useFound();
+  const status = useStatus();
 
   useEffect(() => {
     net.queue(loadout);
@@ -2042,11 +2205,19 @@ function Matchmaking({ profile, loadout, colors, volume, onCancel }) {
                 }} />
                 <div className="absolute inset-y-0" style={{ left: "50%", width: 2, background: colors.you, transform: "translateX(-1px)" }} />
               </div>
-              <div className="text-center text-[9px] mt-2" style={{ color: UI.dim }}>{tr} TR · {rank.name}</div>
+              <div className="text-center text-[9px] mt-2 flex items-center justify-center gap-1.5"
+                style={{ color: status === "online" ? UI.dim : GOLD }}>
+                {status !== "online" && <WifiOff size={11} />}
+                {tr} TR · {rank.name}
+              </div>
             </div>
 
             <div className="text-[10px] leading-relaxed text-center mb-8" style={{ color: UI.dim }}>
-              Closest rating first. The window widens the longer you wait.
+              {status === "online"
+                ? "Closest rating first. The window widens the longer you wait."
+                : status === "kicked"
+                ? "You signed in somewhere else. Reload to take this session back."
+                : "Lost the server — reconnecting. You'll rejoin the queue automatically."}
             </div>
 
             <button onClick={() => { net.unqueue(); onCancel(); }} className="w-full rounded text-[10px] tracking-[0.3em]" style={{ height: 46, border: `1px solid ${UI.line}`, color: UI.dim }}>
@@ -2095,6 +2266,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
   const [goldenPlays, setGoldenPlays] = useState({ A: 0, B: 0 });
   const [pendingA, setPendingA] = useState(null);
   const [reveal, setReveal] = useState(null);
+  const [lockedOut, setLockedOut] = useState(false);
   const [stageRef, stage] = useSize();
 
   const player = phase === "PLAY_B" ? "B" : "A";
@@ -2180,12 +2352,22 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
     const t = setTimeout(() => {
       setReveal(null);
       setPendingA(null);
-      const bothStuck = !hasAnyMove(board, decks.A.hand, "A") && !hasAnyMove(board, decks.B.hand, "B");
-      if (turn >= TURNS || bothStuck) { setPhase("DONE"); blip("end", volume); }
+      // A charged golden piece can land on enemy ink, so a board that looks
+      // full may still be playable. Check with it before ending anything.
+      const goldenOf = (side) =>
+        goldenPlays[side] >= goldenNeed && decks[side].hand.includes(goldenBlockId) ? goldenBlockId : null;
+      const bothStuck =
+        !hasAnyMove(board, decks.A.hand, "A", { goldenBlockId: goldenOf("A") }) &&
+        !hasAnyMove(board, decks.B.hand, "B", { goldenBlockId: goldenOf("B") });
+      if (bothStuck || turn >= TURNS) {
+        setLockedOut(bothStuck);
+        setPhase("DONE");
+        blip("end", volume);
+      }
       else { setTurn((t2) => t2 + 1); setPhase("PLAY_A"); }
     }, REVEAL_MS);
     return () => clearTimeout(t);
-  }, [phase, board, decks, turn, volume]);
+  }, [phase, board, decks, turn, volume, goldenPlays, goldenNeed, goldenBlockId]);
 
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ background: UI.ground, color: UI.text }}>
@@ -2238,7 +2420,9 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
 
             {phase === "DONE" && (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-4 rounded" style={{ background: "rgba(14,18,22,.93)" }}>
-                <div className="text-[9px] tracking-[0.3em] mb-3" style={{ color: UI.dim }}>MATCH OVER</div>
+                <div className="text-[9px] tracking-[0.3em] mb-3" style={{ color: lockedOut ? GOLD : UI.dim }}>
+                  {lockedOut ? "BOARD LOCKED" : "MATCH OVER"}
+                </div>
                 <div className="text-xl mb-1.5 tracking-wider">
                   {score.a === score.b ? "DRAW" : (
                     <span style={{ color: score.a > score.b ? INK.A : INK.B }}>
@@ -2507,7 +2691,7 @@ function NetGame({ colors, volume, theme, onResult }) {
    RESULT
    ============================================================ */
 function Result({ over, colors, onQueue, onMenu }) {
-  const { won, drew, forfeit, myScore, oppScore, special, opponent, rating } = over;
+  const { won, drew, forfeit, reason, myScore, oppScore, special, opponent, rating } = over;
   const trFrom = Math.round(rating.before.r);
   const trTo = Math.round(rating.after.r);
   const delta = trTo - trFrom;
@@ -2550,7 +2734,11 @@ function Result({ over, colors, onQueue, onMenu }) {
             {myScore} — {oppScore} vs {opponent.name}
             {special > 0 && <span style={{ color: GOLD }}> · {special}◆</span>}
           </div>
-          {forfeit && <div className="text-[10px] mt-1.5" style={{ color: GOLD }}>opponent forfeited</div>}
+          {forfeit ? (
+            <div className="text-[10px] mt-1.5" style={{ color: GOLD }}>opponent forfeited</div>
+          ) : reason === "locked" ? (
+            <div className="text-[10px] mt-1.5" style={{ color: GOLD }}>board locked — no legal moves left</div>
+          ) : null}
         </div>
 
         <div className="rounded p-4 mb-4" style={{ background: UI.panel, border: `1px solid ${UI.line}` }}>

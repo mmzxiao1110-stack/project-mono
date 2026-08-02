@@ -265,7 +265,13 @@ export class Match {
       !hasAnyMove(this.board, this.seats.A.deck.hand, "A", { goldenBlockId: this.goldenArmed("A") ? this.goldenBlock("A") : null }) &&
       !hasAnyMove(this.board, this.seats.B.deck.hand, "B", { goldenBlockId: this.goldenArmed("B") ? this.goldenBlock("B") : null });
 
-    if (this.turn >= TURNS || stuck) {
+    if (stuck) {
+      // Neither side can legally place anything — including with a charged
+      // golden piece. Nothing left to play for; call it here.
+      this.endReason = "locked";
+      setTimeout(() => this.end(), REVEAL_MS);
+    } else if (this.turn >= TURNS) {
+      this.endReason = "turns";
       setTimeout(() => this.end(), REVEAL_MS);
     } else {
       this.turn++;
@@ -277,6 +283,7 @@ export class Match {
   end(forfeitBy = null) {
     if (this.over) return;
     this.over = true;
+    if (forfeitBy) this.endReason = "forfeit";
     clearTimeout(this.timer);
     clearTimeout(this.graceTimers.A);
     clearTimeout(this.graceTimers.B);
@@ -341,6 +348,7 @@ export class Match {
         matchId: this.id,
         won, drew,
         forfeit: forfeitBy ? forfeitBy !== side : false,
+        reason: this.endReason || "turns",
         myScore: mine,
         oppScore: theirs,
         special: score.s,

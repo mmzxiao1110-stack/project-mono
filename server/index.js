@@ -42,6 +42,13 @@ const inMatch = new Map(); // userId -> { match, side }
 const send = (ws, msg) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg)); };
 const fail = (ws, msg) => send(ws, { t: "error", msg });
 
+/**
+ * Always resolve the CURRENT socket for a player. Caching a socket reference
+ * anywhere is a bug: a reconnect swaps it, and messages sent to the old one
+ * vanish silently — which looks to the player like the server hung.
+ */
+const sendTo = (userId, msg) => send(sockets.get(userId), msg);
+
 const publicProfile = (p, acct) => ({
   playerId: p.playerId,
   name: p.name,
@@ -54,10 +61,19 @@ const publicProfile = (p, acct) => ({
 });
 
 const queue = new Queue((a, b, gap) => {
+  const sa = sockets.get(a.playerId);
+  const sb = sockets.get(b.playerId);
+  if (!sa || !sb) {
+    // Someone dropped between being paired and being told. Put the survivor back.
+    const alive = sa ? a : sb ? b : null;
+    if (alive) { queue.add(alive); console.log(`[queue] re-queued ${alive.profile.name}`); }
+    return;
+  }
+
   const match = new Match(
     [
-      { profile: a.profile, loadout: a.loadout, socket: a.socket },
-      { profile: b.profile, loadout: b.loadout, socket: b.socket },
+      { profile: a.profile, loadout: a.loadout, socket: sa },
+      { profile: b.profile, loadout: b.loadout, socket: sb },
     ],
     (m) => {
       inMatch.delete(m.seats.A.profile.playerId);
@@ -68,8 +84,8 @@ const queue = new Queue((a, b, gap) => {
   inMatch.set(a.profile.playerId, { match, side: "A" });
   inMatch.set(b.profile.playerId, { match, side: "B" });
 
-  send(a.socket, { t: "found", matchId: match.id, opponent: match.publicSeat("B"), gap: Math.round(gap) });
-  send(b.socket, { t: "found", matchId: match.id, opponent: match.publicSeat("A"), gap: Math.round(gap) });
+  sendTo(a.playerId, { t: "found", matchId: match.id, opponent: match.publicSeat("B"), gap: Math.round(gap) });
+  sendTo(b.playerId, { t: "found", matchId: match.id, opponent: match.publicSeat("A"), gap: Math.round(gap) });
 
   console.log(
     `[match] ${match.id}: ${a.profile.name} (${Math.round(a.rating.r)}) vs ` +
@@ -82,7 +98,9 @@ const queue = new Queue((a, b, gap) => {
 function authenticate(ws, userId, token) {
   const existing = sockets.get(userId);
   if (existing && existing !== ws) {
-    send(existing, { t: "error", msg: "Signed in somewhere else." });
+    // Distinct type, not a generic error: the old client must know to STOP
+    // reconnecting, or the two sockets boot each other in a loop forever.
+    send(existing, { t: "kicked" });
     existing.close();
   }
   ws.userId = userId;
@@ -286,18 +304,20 @@ wss.on("connection", (ws) => {
         if (inMatch.has(ws.userId)) return fail(ws, "Already in a match.");
         if (queue.has(ws.userId)) return;
         const profile = getProfile(ws.userId);
+        const uid = ws.userId;
         queue.add({
-          playerId: ws.userId,
+          playerId: uid,
           profile,
           rating: profile.rating,
           loadout: sanitizeLoadout(msg.loadout),
-          socket: ws,
-          onProgress: (p) => send(ws, { t: "searching", ...p }),
+          onProgress: (p) => sendTo(uid, { t: "searching", ...p }),
         });
+        console.log(`[queue] + ${profile.name} (${Math.round(profile.rating.r)}) — ${queue.size} waiting`);
         break;
       }
 
       case "unqueue":
+        if (queue.has(ws.userId)) console.log(`[queue] - ${ws.userId} (cancelled)`);
         queue.remove(ws.userId);
         break;
 
@@ -320,7 +340,11 @@ wss.on("connection", (ws) => {
   ws.on("close", () => {
     const id = ws.userId;
     if (!id) return;
-    if (sockets.get(id) === ws) sockets.delete(id);
+    // Only clear the map if this socket is still the live one — a reconnect
+    // may already have replaced it, and deleting would orphan the new session.
+    if (sockets.get(id) !== ws) return;
+    sockets.delete(id);
+    if (queue.has(id)) console.log(`[queue] - ${id} (disconnected)`);
     queue.remove(id);
     const active = inMatch.get(id);
     if (active) active.match.onDisconnect(active.side);
