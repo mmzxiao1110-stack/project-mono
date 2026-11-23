@@ -384,240 +384,6 @@ function VanishLayer({ contested = [], cleared = [], cell, gap, pad, ink }) {
   );
 }
 
-/**
- * The battle backdrop: a hex lattice that breathes with the soundtrack.
- *
- * One CSS variable drives every tile. Each tile carries its own weight and a
- * transition-delay proportional to its distance from centre, so a change in the
- * variable travels outward as a ring rather than snapping in unison. Updating
- * ~20 times a second instead of every frame keeps it cheap on a phone.
- */
-
-/**
- * Square tessellation. Hex, diamond and triangle variants were removed once
- * the square look was settled — restoring one means adding a branch here that
- * returns its own tile size, row stepping and clip-path.
- */
-function mosaicGeometry(cols, rows) {
-  const w = 100 / cols;
-  return { w, h: w, vStep: w, cols, rows, step: w, offset: () => 0 };
-}
-
-function PulseField({ colors, theme }) {
-  const wrapRef = useRef(null);
-  const glowRef = useRef(null);
-  const cellRefs = useRef([]);
-  const pointer = useRef({ x: -9999, y: -9999, at: 0 });
-
-  const H = FX.hex, R = FX.ripple;
-  const RINGS = R.rings;
-  // Static mode freezes every tile at full pulse: no timers, no transitions,
-  // no per-frame work at all. For devices that can't carry the animation.
-  const still = !theme.motion || theme.staticField;
-
-  const tiles = useMemo(() => {
-    const g = mosaicGeometry(H.columns, H.rows);
-    const step = g.step;
-    const totalH = (g.rows - 1) * g.vStep + g.h;
-    const out = [];
-    for (let r = 0; r < g.rows; r++) {
-      for (let c = 0; c < g.cols; c++) {
-        const left = c * step + g.offset(r) - g.w / 2;
-        const top = r * g.vStep + (100 - totalH) / 2;
-        const mx = left + g.w / 2, my = top + g.h / 2;
-        const cx = mx - 50, cy = my - 50;
-        const dist = Math.min(1, Math.sqrt(cx * cx + cy * cy) / 50);
-        if (dist >= 0.99) continue;
-        if (Math.random() > 1 - Math.pow(dist, 1.5) * H.thinning) continue;
-        const fall = 1 - dist;
-        out.push({
-          left, top, w: g.w, h: g.h, mx, my,
-          ring: Math.min(RINGS - 1, Math.floor(dist * RINGS)),
-          weight: +(Math.pow(fall, 1.1) * (0.65 + Math.random() * 0.55)).toFixed(3),
-          base: +(0.05 + fall * 0.18).toFixed(3),
-          rival: Math.random() < H.rivalShare,
-        });
-      }
-    }
-    return { list: out, size: g };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [H.columns, H.rows, H.thinning, H.rivalShare, RINGS]);
-
-  useEffect(() => {
-    const el = wrapRef.current;
-    if (!el) return;
-
-    if (still) {
-      for (let k = 0; k < RINGS; k++) el.style.setProperty(`--p${k}`, String(H.staticPulse));
-      glowRef.current?.style.setProperty("--g", String(H.staticPulse));
-      return;
-    }
-
-    const onMove = (e) => { pointer.current = { x: e.clientX, y: e.clientY, at: performance.now() }; };
-    window.addEventListener("pointermove", onMove, { passive: true });
-
-    const list = tiles.list;
-    const near = new Array(list.length).fill(0);
-    const ripples = [];
-    let lastBeat = -R.beatMs;
-    let raf, last = 0;
-
-    const tick = (t) => {
-      raf = requestAnimationFrame(tick);
-      if (t - last < 30) return;
-      last = t;
-
-      if (t - lastBeat > R.beatMs) {
-        lastBeat = t;
-        ripples.push({ t0: t, amp: R.beatAmp });
-      }
-      while (ripples.length && t - ripples[0].t0 > R.travelMs * 1.5) ripples.shift();
-
-      // Each ring reads the wave at its own distance, so a ripple sweeps outward.
-      let centre = R.rest;
-      for (let k = 0; k < RINGS; k++) {
-        const d = (k + 0.5) / RINGS;
-        let p = R.rest;
-        for (const rp of ripples) {
-          const x = (d - (t - rp.t0) / R.travelMs) / R.frontWidth;
-          if (x > -4 && x < 4) p += rp.amp * Math.exp(-x * x);
-        }
-        if (k === 0) centre = p;
-        el.style.setProperty(`--p${k}`, Math.min(2.4, p).toFixed(3));
-      }
-      glowRef.current?.style.setProperty("--g", Math.min(2, centre).toFixed(3));
-
-      const stale = t - pointer.current.at > 1600;
-      const rect = el.getBoundingClientRect();
-      const radius = Math.max(95, rect.width * H.hoverRadius);
-      for (let i = 0; i < list.length; i++) {
-        let want = 0;
-        if (!stale && rect.width) {
-          const hx = rect.left + (list[i].mx / 100) * rect.width;
-          const hy = rect.top + (list[i].my / 100) * rect.height;
-          const dx = hx - pointer.current.x, dy = hy - pointer.current.y;
-          const dd = Math.sqrt(dx * dx + dy * dy);
-          want = dd < radius ? Math.pow(1 - dd / radius, 1.15) : 0;
-        }
-        if (Math.abs(want - near[i]) > 0.015) {
-          near[i] = want;
-          cellRefs.current[i]?.style.setProperty("--near", want.toFixed(3));
-        }
-      }
-    };
-
-    raf = requestAnimationFrame(tick);
-    return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener("pointermove", onMove);
-    };
-  }, [still, tiles, H, R, RINGS]);
-
-  const mask = "radial-gradient(circle at 50% 50%, #000 0%, #000 48%, rgba(0,0,0,.55) 72%, transparent 92%)";
-  const glass = `linear-gradient(148deg, rgba(255,255,255,${H.sheen}) 0%, rgba(255,255,255,${(H.sheen * 0.2).toFixed(3)}) 38%, rgba(255,255,255,.02) 58%, rgba(255,255,255,${(H.sheen * 0.44).toFixed(3)}) 100%)`;
-  const round = H.squareRadius;
-
-  return (
-    <div aria-hidden="true" className="absolute inset-0 overflow-hidden pointer-events-none" style={{ zIndex: 0 }}>
-      <div
-        ref={glowRef}
-        style={{
-          position: "absolute", left: "50%", top: "50%",
-          width: FX.glow.size, height: FX.glow.size,
-          transform: `translate(-50%,-50%) scale(calc(${FX.glow.baseScale} + var(--g, .4) * ${FX.glow.scaleGain}))`,
-          background: `radial-gradient(circle, ${colors.you}55 0%, ${colors.you}22 26%, ${colors.you}0D 48%, transparent 68%)`,
-          opacity: `calc(var(--g, .4) * ${FX.glow.opacity})`,
-          transition: still ? "none" : "transform 140ms ease-out, opacity 140ms ease-out",
-          "--g": 0.4,
-        }}
-      />
-      <div
-        ref={wrapRef}
-        style={{
-          position: "absolute", left: "50%", top: "50%",
-          width: H.fieldSize, height: H.fieldSize,
-          transform: "translate(-50%, -50%)",
-          maskImage: mask, WebkitMaskImage: mask,
-        }}
-      >
-        {tiles.list.map((x, i) => {
-          const ink = x.rival ? colors.rival : colors.you;
-          return (
-            <div
-              key={i}
-              ref={(n) => (cellRefs.current[i] = n)}
-              style={{
-                position: "absolute",
-                left: `${x.left}%`, top: `${x.top}%`,
-                width: `${x.w}%`, height: `${x.h}%`,
-                borderRadius: round,
-                background: `color-mix(in srgb, ${ink} ${H.rimTint}%, white)`,
-                "--near": 0,
-                opacity: `calc(${x.base} + var(--p${x.ring}, .5) * ${x.weight} * ${H.pulseOpacity})`,
-                transform: `scale(calc((${H.minScale} + var(--p${x.ring}, .5) * ${x.weight} * ${H.pulseScale}) * (1 - var(--near) * ${H.hoverShrink})))`,
-                filter: `brightness(calc(${H.brightnessBase} + var(--p${x.ring}, .5) * ${H.brightnessGain}))`,
-                transition: still ? "none" : "transform 110ms ease-out, opacity 110ms ease-out, filter 110ms ease-out",
-                willChange: still ? "auto" : "transform, opacity, filter",
-              }}
-            >
-              <div style={{
-                position: "absolute", inset: 0,
-                borderRadius: round,
-                transform: `scale(${(1 - H.rimWidth).toFixed(3)})`,
-                backgroundColor: `color-mix(in srgb, ${ink} ${H.glassOpacity}%, transparent)`,
-                backgroundImage: glass,
-              }} />
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-const RAIL_W = 1.7; // rail width in board cells
-
-/**
- * The deck rails flanking the board. Both players' eight blocks are public, so
- * you can read what your opponent is holding — the golden slot sits at the
- * bottom and lights up only on the turn they can actually fire it.
- */
-function Rail({ loadout, cell, height, ink, armed, inHand, mine }) {
-  if (!loadout || !loadout.length) return <div style={{ width: cell * RAIL_W }} />;
-  // Reversed so slot 0 — the golden one — is at the bottom.
-  const order = loadout.map((_, i) => i).reverse();
-  return (
-    <div className="flex flex-col shrink-0" style={{ width: cell * RAIL_W, height, gap: 2 }}>
-      {order.map((slot) => {
-        const id = loadout[slot];
-        const golden = slot === GOLDEN_SLOT;
-        const lit = golden && armed;
-        const held = mine && inHand?.includes(id);
-        return (
-          <div
-            key={slot}
-            className={lit ? "flex items-center justify-center tb-charged-rail" : "flex items-center justify-center"}
-            style={{
-              flex: 1,
-              opacity: lit ? 1 : held ? 1 : 0.42,
-              transform: lit ? "scale(1.16)" : "none",
-              transition: "opacity 200ms ease, transform 200ms ease",
-            }}
-          >
-            <BlockGlyph
-              blockId={id}
-              box={cell * (lit ? 1.35 : 1.2)}
-              color={lit ? GOLD : golden ? GOLD_SOFT : ink}
-              glow={lit}
-              gap={1}
-            />
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 /** The piece in hand: follows the pointer exactly, never snaps. */
 function FloatingPiece({ cells, cell, gap, color, x, y, lift, legal, flip = false, golden = false }) {
   const { h, w } = boundsOf(cells);
@@ -1004,9 +770,6 @@ function SettingsModal({ volume, setVolume, musicVol, setMusicVol, name, rename,
         <Row label="ANIMATION">
           <Toggle on={theme.motion} onClick={() => set({ motion: !theme.motion })} />
         </Row>
-        <Row label="STATIC BACKDROP">
-          <Toggle on={theme.staticField} onClick={() => set({ staticField: !theme.staticField })} />
-        </Row>
         <Row label="HAPTICS">
           <Toggle on={theme.haptics} onClick={() => set({ haptics: !theme.haptics })} />
         </Row>
@@ -1014,8 +777,7 @@ function SettingsModal({ volume, setVolume, musicVol, setMusicVol, name, rename,
           <Toggle on={theme.showTimer} onClick={() => set({ showTimer: !theme.showTimer })} />
         </Row>
         <div className="text-[9px] leading-relaxed mt-2 mb-7" style={{ color: UI.dim }}>
-          Static backdrop freezes the mosaic at full brightness and stops every timer
-          behind it — turn it on if the animation stutters. Marks put ○ on your squares
+          Marks put ○ on your squares
           and ✕ on your opponent's, so the board reads without colour.
         </div>
 
@@ -1937,15 +1699,15 @@ function HowToModal({ colors, loadout, onClose }) {
           ))}
         </div>
       ),
-      body: "Eight blocks, four in hand. Draws come in bags: across any eight draws you get each block exactly once, so nothing floods and nothing goes missing. Both decks are shown either side of the board — you can read what they're holding, and they can read you.",
+      body: "Eight blocks, four in hand. Draws come in bags: across any eight draws you get each block exactly once, so nothing floods and nothing goes missing.",
     },
     {
       title: "WATCH THE GOLD",
       art: <div className="text-center text-[11px] leading-relaxed" style={{ color: GOLD }}>
         <BookOpen size={22} style={{ margin: "0 auto 10px" }} />
-        Their golden slot only lights up on the turn they can actually fire it.
+        You're told the turn their golden piece can actually fire.
       </div>,
-      body: "A charge sitting in their bag is harmless. The moment it lights up on their rail, assume the square you care about is about to change colour — and remember they can see yours too.",
+      body: "A charge sitting in their bag is harmless. The moment you're warned it's ready, assume the square you care about is about to change colour.",
     },
   ];
 
@@ -2286,9 +2048,8 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
   const stuck = useMemo(() => (inPlay ? !hasAnyMove(board, hand, player, { goldenBlockId: myArmed ? goldenBlockId : null }) : false), [board, hand, player, inPlay, myArmed, goldenBlockId]);
 
   const g = theme.gap;
-  // Rails eat RAIL_W cells on each side, so the board sizes against COLS + 2*RAIL_W.
   const cell = Math.max(6, Math.floor(Math.min(
-    (stage.w - g * (COLS + 1) - 14) / (COLS + RAIL_W * 2),
+    (stage.w - g * (COLS + 1)) / COLS,
     (stage.h - g * (ROWS + 1)) / ROWS
   )));
   const boardH = cell * ROWS + g * (ROWS + 1);
@@ -2371,7 +2132,6 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
 
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ background: UI.ground, color: UI.text }}>
-      <PulseField colors={colors} theme={theme} />
       <div className="relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
         <div className="flex items-center justify-between h-9 shrink-0">
           <button onClick={onExit} className="flex items-center gap-1 text-[10px] tracking-[0.25em] py-2 -ml-1" style={{ color: UI.dim }}>
@@ -2382,9 +2142,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
 
         <ScoreBar score={score} turn={turn} turns={TURNS} inkA={INK.A} inkB={INK.B} labelA="P1" labelB={solo ? "AI" : "P2"} />
 
-        <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center gap-1.5">
-          <Rail loadout={loadout} cell={cell} height={boardH} ink={INK.A}
-            armed={armedFor("A")} inHand={decks.A.hand} mine={player === "A"} />
+        <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center">
           <div className="relative" style={{ width: cell * COLS + g * (COLS + 1), height: boardH }}>
             <BoardGrid
               board={board} cell={cell} ink={INK} theme={theme} youSide={player} translucent
@@ -2442,8 +2200,6 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
               </div>
             )}
           </div>
-          <Rail loadout={loadout} cell={cell} height={boardH} ink={INK.B}
-            armed={armedFor("B")} inHand={decks.B.hand} mine={player === "B"} />
         </div>
 
         <div className="shrink-0 flex flex-col justify-end" style={{ height: DOCK_H }}>
@@ -2535,12 +2291,10 @@ function NetGame({ colors, volume, theme, onResult }) {
   const stuck = useMemo(() => (canAct && board ? !hasAnyMove(board, hand, you) : false), [canAct, board, hand, you]);
 
   const g = theme.gap;
-  // Rails eat RAIL_W cells on each side, so the board sizes against COLS + 2*RAIL_W.
   const cell = Math.max(6, Math.floor(Math.min(
-    (stage.w - g * (COLS + 1) - 14) / (COLS + RAIL_W * 2),
+    (stage.w - g * (COLS + 1)) / COLS,
     (stage.h - g * (ROWS + 1)) / ROWS
   )));
-  const boardH = cell * ROWS + g * (ROWS + 1);
 
   // null until one player locks in; the server then broadcasts a deadline.
   const secsLeft = m?.deadline ? Math.max(0, Math.ceil((m.deadline - now) / 1000)) : null;
@@ -2577,7 +2331,6 @@ function NetGame({ colors, volume, theme, onResult }) {
 
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ background: UI.ground, color: UI.text }}>
-      <PulseField colors={colors} theme={theme} />
       <div className="relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
         <div className="flex items-center justify-between h-9 shrink-0">
           <div className="text-[10px] tracking-[0.25em]" style={{ color: UI.dim }}>RANKED</div>
@@ -2647,8 +2400,6 @@ function NetGame({ colors, volume, theme, onResult }) {
               </div>
             )}
           </div>
-          <Rail loadout={m.opponent?.loadout} cell={cell} height={boardH} ink={colors.rival}
-            armed={!!gold?.oppArmed} />
         </div>
 
         <div className="shrink-0 flex flex-col justify-end" style={{ height: DOCK_H }}>
@@ -2892,11 +2643,6 @@ export default function TurfBlocks() {
         100% { transform: scale(.08); opacity: 0; filter: brightness(1) }
       }
       .tb-vanish { animation: tbVanish 560ms cubic-bezier(.32,0,.2,1) both; }
-      @keyframes tbChargedRail {
-        0%,100% { filter: brightness(1) }
-        50%     { filter: brightness(1.6) }
-      }
-      .tb-charged-rail { animation: tbChargedRail 1.4s ease-in-out infinite; }
       @keyframes tbCharged {
         0%,100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--tb-special) 45%, transparent) }
         50%     { box-shadow: 0 0 10px 2px color-mix(in srgb, var(--tb-special) 55%, transparent) }
@@ -2906,7 +2652,7 @@ export default function TurfBlocks() {
       .tb-fade { animation: tbFade .14s ease-out both; }
       @keyframes tbPop { from { opacity: 0; transform: scale(.94) translateY(8px) } to { opacity: 1; transform: none } }
       .tb-pop { animation: tbPop .18s cubic-bezier(.2,.9,.3,1) both; }
-      ${theme.motion ? "" : ".tb-contest,.tb-drop,.tb-pulse,.tb-fade,.tb-pop,.tb-charged,.tb-charged-rail { animation: none !important }"}
+      ${theme.motion ? "" : ".tb-contest,.tb-drop,.tb-pulse,.tb-fade,.tb-pop,.tb-charged { animation: none !important }"}
       @media (prefers-reduced-motion: reduce) {
         .tb-contest,.tb-drop,.tb-pulse,.tb-fade,.tb-pop,.tb-charged { animation: none }
       }
