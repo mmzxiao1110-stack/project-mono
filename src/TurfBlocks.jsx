@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef, useSyncExternalStore, createContext, useContext, useLayoutEffect } from "react";
 import {
   RotateCw, Check, SkipForward, RefreshCw, ChevronLeft, Settings2, X, Flag,
-  VolumeX, BarChart3, Wifi, WifiOff, Clock, UserRound, LogOut,
+  BarChart3, Wifi, WifiOff, Clock, UserRound, LogOut,
   Palette, Lock, MailCheck, ShieldAlert, BookOpen, ChevronRight,
 } from "lucide-react";
 
@@ -16,14 +16,13 @@ import {
   RANKS, PLACEMENT_GAMES, rankIndexFor, rankMin, rankProgress,
 } from "../shared/glicko.js";
 import { net, SERVER_URL, IS_SECURE, GOOGLE_CLIENT_ID } from "./net.js";
-import { sfx, unlockAudio } from "./audio.js";
 import { FX } from "./tuning.js";
 import { RULES } from "../shared/rules.js";
 import {
   PRESETS, INKS, STROKES, GRID_GAPS,
   loadTheme, saveTheme, applyPreset, editTheme, themeVars, frameUrl, frameImage,
 } from "./theme.js";
-import { inkPaths, gridPath, shadeUrl, pencilFilter, GRAINS, roughPoly, GRAIN_URL } from "./sketch.js";
+import { inkPaths, gridPath, shadeUrl, pencilFilter, GRAINS } from "./sketch.js";
 import { ACTIONS, getKeys, subscribeKeys, setKey, resetKeys, actionFor, keyLabel, canBind } from "./keys.js";
 
 /* ============================================================
@@ -134,12 +133,6 @@ const loadLoadout = () => {
   } catch (e) { return [...DEFAULT_LOADOUT]; }
 };
 const saveLoadout = (l) => store.set("tb:loadout", JSON.stringify(l));
-
-/* ============================================================
-   AUDIO
-   ============================================================ */
-/** Every sound in the game routes through the piano synth in audio.js. */
-const blip = (kind, vol) => sfx(kind, vol);
 
 /* ============================================================
    AI — client only. Ranked opponents are real people.
@@ -261,7 +254,7 @@ function useSize() {
  *          rotate with Q/E, swap blocks with 1–4, then click the board to
  *          place it. Click the card again, right-click or press Esc to put it back.
  */
-function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId = null, sound = () => {} }) {
+function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId = null }) {
   const [sel, setSel] = useState({ handIdx: null, rot: 0, pos: null });
   // Pointer position while a piece is in hand. The piece follows this
   // exactly; only its shadow snaps to the grid. mode: "touch" | "hold".
@@ -397,12 +390,10 @@ function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId
     if (e.pointerType === "mouse") {
       // Clicking the card you're already holding puts it back.
       if (holding && sel.handIdx === i) return reset();
-      sound("pick");
       setSel({ handIdx: i, rot: 0, pos: null });
       beginHold(e, BLOCKS[hand[i]].cells);
       return;
     }
-    sound("pick");
     setSel({ handIdx: i, rot: 0, pos: null });
     beginDrag(e, BLOCKS[hand[i]].cells);
   };
@@ -428,7 +419,6 @@ function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId
   /** dir 1 = clockwise, -1 = counter-clockwise. */
   const rotate = useCallback((dir = 1) => {
     const step = dir === -1 ? -1 : 1;
-    if (sel.handIdx !== null) sound("rotate");
     setSel((s) => {
       if (s.handIdx === null) return s;
       const id = hand[s.handIdx];
@@ -440,7 +430,7 @@ function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId
         pos: s.pos ? [Math.max(0, Math.min(ROWS - h, s.pos[0])), Math.max(0, Math.min(COLS - w, s.pos[1]))] : null,
       };
     });
-  }, [hand, sel.handIdx, sound]);
+  }, [hand]);
 
   /**
    * Where a block lands when picked by keyboard: the legal spot nearest the
@@ -467,7 +457,6 @@ function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId
   /** Pick hand slot `i` from the keyboard. */
   const select = useCallback((i) => {
     if (!enabled || hand[i] === undefined) return;
-    if (sel.handIdx !== i) sound("pick");
     if (holding) {
       // Swap the block under the cursor; the effect above re-fits the shadow.
       setSel((s) => (s.handIdx === i ? s : { ...s, handIdx: i, rot: 0 }));
@@ -475,7 +464,7 @@ function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId
     }
     // Re-picking the selected block keeps it where it is, unless it has no position yet.
     setSel((s) => (s.handIdx === i && s.pos ? s : { handIdx: i, rot: 0, pos: spawnPos(hand[i], s.pos) }));
-  }, [enabled, hand, spawnPos, holding, sel.handIdx, sound]);
+  }, [enabled, hand, spawnPos, holding]);
 
   /** ← / →: step to the previous or next block in hand, wrapping. */
   const cycle = useCallback((dir) => {
@@ -551,157 +540,6 @@ function useGameKeys(pl, { enabled, onCommit, onDiscard }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
-}
-
-/* ============================================================
-   PAPER TRANSITION
-   ============================================================ */
-/**
- * withPaper(fn): play the paper transition and run `fn` (the screen change)
- * at the moment the sheet fully covers the screen. Before the transition is
- * mounted, or with motion turned off, `fn` just runs.
- */
-const paper = { run: null };
-const withPaper = (fn) => (paper.run ? paper.run(fn) : fn());
-
-// Timeline, ms. The swap happens at COVER, when the sheet is at rest over everything.
-const P_IN = 300, P_COVER = 320, P_FOLD = [200, 470], P_OUT = [540, 840];
-const easeOut = (t) => 1 - Math.pow(1 - t, 3);
-const easeIn = (t) => t * t * t;
-const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
-const clamp01 = (t) => Math.max(0, Math.min(1, t));
-
-// Geometry in a 200×200 box scaled to cover the screen. The sheet overhangs
-// it on every side, so the screen is fully hidden while the sheet is at rest.
-const SHEET = [[-45, -40], [245, -48], [250, 242], [-50, 248]];
-// The fold runs corner to corner across the lower right; the bottom-right
-// corner of the sheet lifts and folds up over the rest.
-const FOLD_A = [10, 250], FOLD_B = [250, 20];
-const FLAP = [FOLD_A, FOLD_B, [250, 242]];
-
-function foldPoint(p, s) {
-  // Moves p across the fold line: s = 1 lies flat, s = -1 is folded over.
-  const [ax, ay] = FOLD_A, [bx, by] = FOLD_B;
-  const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy);
-  const nx = -dy / len, ny = dx / len;
-  const d = (p[0] - ax) * nx + (p[1] - ay) * ny;
-  return [p[0] - nx * d * (1 - s), p[1] - ny * d * (1 - s)];
-}
-const pts = (list) => list.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
-// sketch.js hands back CSS url("…") values; SVG <image> wants the bare URI.
-const bareUrl = (cssUrl) => cssUrl.replace(/^url\("/, "").replace(/"\)$/, "");
-// Pencil outlines for the sheet never change, so they're drawn once.
-const SHEET_LINES = roughPoly(SHEET, { jit: 1.8, over: 7, seed: 4, passes: 3 });
-
-function PaperTransition({ theme, volume }) {
-  const [active, setActive] = useState(false);
-  const sheetRef = useRef(null);
-  const flapRef = useRef(null);
-  const flapBackRef = useRef(null);
-  const flapLineRef = useRef(null);
-  const shadowRef = useRef(null);
-  const busy = useRef(false);
-  const motionRef = useRef(theme.motion);
-  const volRef = useRef(volume);
-  useEffect(() => { motionRef.current = theme.motion; volRef.current = volume; });
-
-  // Pencil textures, baked once per theme as images: a grained hatch for the
-  // back of the sheet (the blocks' own shading) and paper tooth for its face.
-  const hatchImg = useMemo(() => bareUrl(shadeUrl(theme.you, { dir: -1 })), [theme.you]);
-  const grainImg = useMemo(() => bareUrl(GRAIN_URL), []);
-
-  useEffect(() => {
-    const reduced = () => typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    paper.run = (fn) => {
-      // Already mid-transition, or motion off: change immediately.
-      if (busy.current || !motionRef.current || reduced()) { fn(); return; }
-      busy.current = true;
-      blip("transition", volRef.current);
-      setActive(true);
-      const t0 = performance.now();
-      let swapped = false;
-      const frame = (now) => {
-        const t = now - t0;
-        if (!swapped && t >= P_COVER) { swapped = true; fn(); }
-
-        // The sheet: slides in from the bottom-right corner, settles, leaves to the upper left.
-        let tx, ty, rot;
-        if (t < P_OUT[0]) {
-          const k = easeOut(clamp01(t / P_IN));
-          tx = 240 * (1 - k); ty = 240 * (1 - k); rot = 16 * (1 - k) - 3 * k;
-        } else {
-          const k = easeIn(clamp01((t - P_OUT[0]) / (P_OUT[1] - P_OUT[0])));
-          tx = -270 * k; ty = -210 * k; rot = -3 - 16 * k;
-        }
-        sheetRef.current?.setAttribute("transform", `translate(${tx.toFixed(1)} ${ty.toFixed(1)}) rotate(${rot.toFixed(2)} 100 100)`);
-
-        // The bottom-right corner folds up over the sheet, landing a few degrees off true.
-        const f = easeInOut(clamp01((t - P_FOLD[0]) / (P_FOLD[1] - P_FOLD[0])));
-        const sF = 1 - 2 * f;
-        const flap = FLAP.map((p) => foldPoint(p, sF));
-        const skew = -f * 5;
-        const front = sF > 0;
-        const flapTransform = `rotate(${skew.toFixed(2)} ${FOLD_B[0]} ${FOLD_B[1]}) translate(${(-f * 3).toFixed(1)} ${(-f * 4).toFixed(1)})`;
-        for (const el of [flapRef.current, flapBackRef.current]) {
-          if (!el) continue;
-          el.setAttribute("points", pts(flap));
-          el.setAttribute("transform", flapTransform);
-        }
-        if (flapRef.current) flapRef.current.style.opacity = front ? 1 : 0;
-        if (flapBackRef.current) flapBackRef.current.style.opacity = front ? 0 : 1;
-        if (flapLineRef.current) {
-          flapLineRef.current.setAttribute("d", roughPoly(flap, { jit: 1.8, over: 7, seed: 9, passes: 3 }));
-          flapLineRef.current.setAttribute("transform", flapTransform);
-        }
-        if (shadowRef.current) {
-          shadowRef.current.setAttribute("points", pts(flap.map(([x, y]) => [x - 4, y - 5])));
-          shadowRef.current.setAttribute("transform", flapTransform);
-          shadowRef.current.style.opacity = (0.28 * f).toFixed(3);
-        }
-
-        if (t < P_OUT[1]) requestAnimationFrame(frame);
-        else { busy.current = false; setActive(false); }
-      };
-      requestAnimationFrame(frame);
-    };
-    return () => { paper.run = null; };
-  }, []);
-
-  if (!active) return null;
-  const edge = { fill: "none", stroke: "var(--tb-text)", strokeLinecap: "round" };
-  return (
-    <svg aria-hidden="true" viewBox="0 0 200 200" preserveAspectRatio="xMidYMid slice"
-      style={{ position: "fixed", inset: 0, width: "100%", height: "100%", zIndex: 80, pointerEvents: "all" }}>
-      <defs>
-        {/* Paper a shade off the background, so the sheet reads as an object. */}
-        <linearGradient id="tb-paper-face" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" style={{ stopColor: "color-mix(in srgb, var(--tb-panel) 80%, var(--tb-text))" }} />
-          <stop offset="1" style={{ stopColor: "color-mix(in srgb, var(--tb-panel) 90%, var(--tb-text))" }} />
-        </linearGradient>
-        {/* Paper tooth: the same grain as the screen overlay, a little stronger. */}
-        <pattern id="tb-paper-grain" patternUnits="userSpaceOnUse" width="40" height="40">
-          <image href={grainImg} width="40" height="40" opacity="0.55" />
-        </pattern>
-        {/* The back of the sheet: the blocks' own pencil hatching, grain and all. */}
-        <pattern id="tb-paper-hatch" patternUnits="userSpaceOnUse" width="20" height="20">
-          <rect width="20" height="20" style={{ fill: "color-mix(in srgb, var(--tb-panel) 88%, var(--tb-text))" }} />
-          <image href={hatchImg} width="20" height="20" />
-        </pattern>
-      </defs>
-      <g ref={sheetRef} transform="translate(240 240) rotate(16 100 100)">
-        <polygon points={pts(SHEET)} style={{ fill: "url(#tb-paper-face)" }} />
-        <polygon points={pts(SHEET)} style={{ fill: "url(#tb-paper-grain)" }} />
-        <path d={SHEET_LINES} style={edge} strokeWidth="0.45" opacity="0.6" />
-        {/* Where the corner lifted away: the sheet's darker underside. */}
-        <polygon points={pts(FLAP)} style={{ fill: "var(--tb-ground)" }} opacity="0.5" />
-        {/* A smudged shadow under the fold: stacked soft strokes, no blur filter. */}
-        <polygon ref={shadowRef} points={pts(FLAP)} style={{ fill: "#000", opacity: 0, stroke: "#000", strokeOpacity: 0.35, strokeWidth: 3, strokeLinejoin: "round" }} />
-        <polygon ref={flapRef} points={pts(FLAP)} style={{ fill: "url(#tb-paper-face)" }} />
-        <polygon ref={flapBackRef} points={pts(FLAP)} style={{ fill: "url(#tb-paper-hatch)", opacity: 0 }} />
-        <path ref={flapLineRef} d="" style={edge} strokeWidth="0.45" opacity="0.75" />
-      </g>
-    </svg>
-  );
 }
 
 /* ============================================================
@@ -1113,9 +951,7 @@ function Popup({ title, onClose, children, pinned, maxW = 430 }) {
 /* ============================================================
    SETTINGS
    ============================================================ */
-function SettingsModal({ volume, setVolume, name, rename, status, theme, setTheme, onClose }) {
-  const steps = 10;
-  const cur = Math.round(volume * steps);
+function SettingsModal({ name, rename, status, theme, setTheme, onClose }) {
   const [draft, setDraft] = useState(name);
   const [nameErr, setNameErr] = useState(null);
   const set = (patch) => setTheme({ ...theme, ...patch });
@@ -1133,27 +969,6 @@ function SettingsModal({ volume, setVolume, name, rename, status, theme, setThem
           className={`w-full rounded px-3 ${nameErr ? "mb-2" : "mb-7"} text-sm font-mono`}
           style={{ height: 44, background: UI.ground, ...sk(nameErr ? UI.badSoft : UI.line), color: UI.text, outline: "none" }} />
         {nameErr && <div className="text-[12px] mb-6" style={{ color: UI.bad }}>{nameErr}</div>}
-
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-[13px] tracking-[0.2em]">VOLUME</span>
-          <span className="text-[13px]" style={{ color: UI.dim }}>{cur * 10}</span>
-        </div>
-        <div className="flex gap-1.5 mb-3">
-          {Array.from({ length: steps }).map((_, i) => {
-            const on = i < cur;
-            return (
-              <button key={i} aria-label={`Volume ${(i + 1) * 10}`}
-                onClick={() => { const v = (i + 1) / steps; setVolume(v); blip("ui", v); }}
-                className="flex-1 rounded"
-                style={{ height: 40, ...(on ? skFill(UI.text, { dense: true }) : sk(UI.line)) }} />
-            );
-          })}
-        </div>
-        <button onClick={() => setVolume(0)}
-          className="flex items-center gap-2 px-3 rounded text-[12px] tracking-[0.2em] mb-7"
-          style={{ height: 36, ...sk(UI.line), color: volume === 0 ? UI.text : UI.dim }}>
-          <VolumeX size={13} /> MUTE EFFECTS
-        </button>
 
         {HAS_KEYBOARD && <ControlsSection />}
 
@@ -1197,7 +1012,7 @@ function SettingsModal({ volume, setVolume, name, rename, status, theme, setThem
 /* ============================================================
    DECK
    ============================================================ */
-function DeckModal({ loadout, setLoadout, color, volume, onClose }) {
+function DeckModal({ loadout, setLoadout, color, onClose }) {
   const slotRefs = useRef([]);
   const dragRef = useRef(null);
   const [drag, setDrag] = useState(null);
@@ -1228,7 +1043,6 @@ function DeckModal({ loadout, setLoadout, color, volume, onClose }) {
       }
       return next;
     });
-    blip("ui", volume);
   };
 
   const beginDrag = useCallback((blockId, from, x, y) => {
@@ -1259,7 +1073,7 @@ function DeckModal({ loadout, setLoadout, color, volume, onClose }) {
     window.addEventListener("pointercancel", onCancel);
     window.addEventListener("touchmove", block, { passive: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [volume]);
+  }, []);
 
   const onPress = (e, blockId, from, instant) => {
     const sx = e.clientX, sy = e.clientY;
@@ -2319,10 +2133,8 @@ function Flourish({ width = 160 }) {
     </svg>
   );
 }
-function Menu({ onPick, loadout, setLoadout, volume, setVolume, colors, profile, status, name, rename, onLogout, theme, setTheme }) {
-  const [modal, setModalNow] = useState(null);
-  // Opening a panel plays the paper transition; closing one is instant.
-  const setModal = (m) => (m ? withPaper(() => setModalNow(m)) : setModalNow(null));
+function Menu({ onPick, loadout, setLoadout, colors, profile, status, name, rename, onLogout, theme, setTheme }) {
+  const [modal, setModal] = useState(null);
   const authed = useAuth() === "authed";
   const verified = !!profile?.emailVerified;
   const color = theme.you;
@@ -2339,8 +2151,8 @@ function Menu({ onPick, loadout, setLoadout, volume, setVolume, colors, profile,
 
       <div className="relative w-full" style={{ maxWidth: 330 }}>
         <div className="text-center mb-9">
-          <div className="tb-display tb-boil text-[68px] leading-none tracking-[0.16em]"
-            style={{ marginRight: "-0.16em", animationDuration: ".7s" }}>Mino</div>
+          <div className="tb-display text-[68px] leading-none tracking-[0.16em]"
+            style={{ marginRight: "-0.16em", color: UI.text }}>Mino</div>
           <Flourish width={170} />
         </div>
 
@@ -2349,7 +2161,7 @@ function Menu({ onPick, loadout, setLoadout, volume, setVolume, colors, profile,
             if (status !== "online") return;
             if (!authed) return setModal("login");
             if (!verified) return setModal("VERIFY");
-            onPick("MATCHMAKING"); blip("ui", volume);
+            onPick("MATCHMAKING");
           }}
           disabled={status !== "online"}
           className="w-full rounded flex flex-col items-center justify-center gap-1 mb-2.5 disabled:opacity-40"
@@ -2394,10 +2206,10 @@ function Menu({ onPick, loadout, setLoadout, volume, setVolume, colors, profile,
         )}
 
         <div className="flex gap-2.5 mb-2.5">
-          <button onClick={() => { onPick("DIFFICULTY"); blip("ui", volume); }} className="flex-1 rounded flex items-center justify-center" style={{ height: 44, background: UI.panel, ...sk(UI.line) }}>
+          <button onClick={() => { onPick("DIFFICULTY"); }} className="flex-1 rounded flex items-center justify-center" style={{ height: 44, background: UI.panel, ...sk(UI.line) }}>
             <span className="text-sm tracking-[0.28em]">SP</span>
           </button>
-          <button onClick={() => { onPick("HOTSEAT"); blip("ui", volume); }} className="flex-1 rounded flex items-center justify-center" style={{ height: 44, background: UI.panel, ...sk(UI.line) }}>
+          <button onClick={() => { onPick("HOTSEAT"); }} className="flex-1 rounded flex items-center justify-center" style={{ height: 44, background: UI.panel, ...sk(UI.line) }}>
             <span className="text-sm tracking-[0.2em]">TAKE TURNS</span>
           </button>
         </div>
@@ -2448,9 +2260,9 @@ function Menu({ onPick, loadout, setLoadout, volume, setVolume, colors, profile,
       {modal === "ACCOUNT" && (
         <AccountModal profile={profile} onLogout={() => { setModal(null); onLogout(); }} onClose={() => setModal(null)} />
       )}
-      {modal === "SETTINGS" && <SettingsModal volume={volume} setVolume={setVolume} name={name} rename={rename} status={status} theme={theme} setTheme={setTheme} onClose={() => setModal(null)} />}
+      {modal === "SETTINGS" && <SettingsModal name={name} rename={rename} status={status} theme={theme} setTheme={setTheme} onClose={() => setModal(null)} />}
       {modal === "STATS" && <StatsModal profile={profile} status={status} onClose={() => setModal(null)} />}
-      {modal === "DECK" && <DeckModal loadout={loadout} setLoadout={setLoadout} color={color} volume={volume} onClose={() => setModal(null)} />}
+      {modal === "DECK" && <DeckModal loadout={loadout} setLoadout={setLoadout} color={color} onClose={() => setModal(null)} />}
     </div>
   );
 }
@@ -2458,7 +2270,7 @@ function Menu({ onPick, loadout, setLoadout, volume, setVolume, colors, profile,
 /* ============================================================
    DIFFICULTY
    ============================================================ */
-function Difficulty({ onStart, onBack, colors, volume }) {
+function Difficulty({ onStart, onBack, colors }) {
   const [lv, setLv] = useState(DEFAULT_LEVEL);
   return (
     <div className="tb-screen tb-safe w-full flex items-center justify-center px-5 font-mono" style={{ background: UI.ground, color: UI.text }}>
@@ -2471,7 +2283,7 @@ function Difficulty({ onStart, onBack, colors, volume }) {
           {LEVELS.map((nm, i) => {
             const n = i + 1, on = lv === n;
             return (
-              <button key={n} onClick={() => { setLv(n); blip("ui", volume); }}
+              <button key={n} onClick={() => { setLv(n); }}
                 className="rounded flex items-center justify-center text-sm"
                 style={{
                   height: 44,
@@ -2502,15 +2314,13 @@ const BAND_CAP = 600;
 // After this long with no opponent, offer the AI instead of a longer wait.
 const LONELY_AFTER_S = 30;
 
-function Matchmaking({ profile, loadout, colors, volume, onCancel, onPlayAi }) {
+function Matchmaking({ profile, loadout, colors, onCancel, onPlayAi }) {
   const search = useSearch();
   const found = useFound();
   const status = useStatus();
 
   useEffect(() => {
     net.queue(loadout);
-    const offF = net.on("found", () => blip("found", volume));
-    return () => offF();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -2609,7 +2419,7 @@ function ForfeitButton({ onConfirm, ranked = false, disabled = false }) {
   const [asking, setAsking] = useState(false);
   return (
     <>
-      <button onClick={() => withPaper(() => setAsking(true))} disabled={disabled}
+      <button onClick={() => setAsking(true)} disabled={disabled}
         className="flex items-center gap-1 text-[12px] tracking-[0.25em] py-2 disabled:opacity-30" style={{ color: UI.dim }}>
         <Flag size={12} /> FORFEIT
       </button>
@@ -2635,7 +2445,7 @@ function ForfeitButton({ onConfirm, ranked = false, disabled = false }) {
 /* ============================================================
    LOCAL GAME — hotseat and solo. Client owns everything.
    ============================================================ */
-function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRestart }) {
+function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart }) {
   const solo = mode === "SOLO";
   const INK = useMemo(() => ({ A: colors.you, B: colors.rival, S: colors.special }), [colors]);
 
@@ -2662,8 +2472,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
   const score = useMemo(() => scoreOf(board), [board]);
   const oppName = solo ? `AI ${LEVELS[aiLevel - 1]}` : "PLAYER 2";
 
-  const sound = useCallback((k) => blip(k, volume), [volume]);
-  const pl = usePlacement({ board, owner: player, hand, enabled: inPlay, goldenBlockId: myArmed ? goldenBlockId : null, sound });
+  const pl = usePlacement({ board, owner: player, hand, enabled: inPlay, goldenBlockId: myArmed ? goldenBlockId : null });
   const contestedKeys = useMemo(() => new Set((reveal ? reveal.contested : []).map(([r, c]) => key(r, c))), [reveal]);
   const stuck = useMemo(() => (inPlay ? !hasAnyMove(board, hand, player, { goldenBlockId: myArmed ? goldenBlockId : null }) : false), [board, hand, player, inPlay, myArmed, goldenBlockId]);
 
@@ -2687,7 +2496,6 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
     setBoard(res.board);
     setReveal({ contested: res.contested, cleared: res.cleared, a: mA, b: mB });
     setPhase("REVEAL");
-    if (res.contested.length) blip("special", volume);
   };
 
   const handOver = (move) => { setPendingA(move); setPhase(solo ? "AI_THINK" : "HANDOFF"); };
@@ -2695,7 +2503,6 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
   const commit = () => {
     if (pl.sel.handIdx === null || !pl.ghost || !pl.ghostLegal) return;
     const id = hand[pl.sel.handIdx];
-    blip("place", volume);
     drawInto(player, pl.sel.handIdx, { played: true, spentGolden: pl.goldenSel });
     const move = { cells: pl.ghost, value: BLOCKS[id].cells.length, blockId: id, golden: pl.goldenSel };
     if (player === "A") handOver(move); else finish(pendingA, move);
@@ -2706,7 +2513,6 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
   const discard = () => {
     const idx = pl.sel.handIdx ?? hand.findIndex((id) => id !== undefined);
     if (idx < 0) return;
-    blip("drop", volume);
     drawInto(player, idx);
     if (player === "A") handOver(null); else finish(pendingA, null);
     pl.reset();
@@ -2747,12 +2553,11 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
       if (bothStuck || turn >= TURNS) {
         setLockedOut(bothStuck);
         setPhase("DONE");
-        blip("end", volume);
       }
       else { setTurn((t2) => t2 + 1); setPhase("PLAY_A"); }
     }, REVEAL_MS);
     return () => clearTimeout(t);
-  }, [phase, board, decks, turn, volume, goldenPlays, goldenNeed, goldenBlockId]);
+  }, [phase, board, decks, turn, goldenPlays, goldenNeed, goldenBlockId]);
 
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ background: UI.ground, color: UI.text }}>
@@ -2763,7 +2568,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
           </button>
           <div className="text-[12px] tracking-[0.2em]" style={{ color: UI.dim }}>{solo ? oppName : "TAKE TURNS"}</div>
           <ForfeitButton disabled={phase === "DONE"}
-            onConfirm={() => { pl.reset(); setForfeitBy(solo ? "A" : player); setPhase("DONE"); blip("end", volume); }} />
+            onConfirm={() => { pl.reset(); setForfeitBy(solo ? "A" : player); setPhase("DONE"); }} />
         </div>
 
         <ScoreBar score={score} turn={turn} turns={TURNS} inkA={INK.A} inkB={INK.B} specialHex={INK.S} labelA="P1" labelB={solo ? "AI" : "P2"} />
@@ -2882,7 +2687,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
 /* ============================================================
    NET GAME — ranked. The server owns the board; we render it.
    ============================================================ */
-function NetGame({ colors, volume, theme, onResult, onAbort }) {
+function NetGame({ colors, theme, onResult, onAbort }) {
   const m = useMatch();
 
   // The match vanished without finishing (server restart): back to the menu,
@@ -2926,8 +2731,7 @@ function NetGame({ colors, volume, theme, onResult, onAbort }) {
   // always build upward from the bottom of their own screen.
   const flip = you === "B";
 
-  const sound = useCallback((k) => blip(k, volume), [volume]);
-  const pl = usePlacement({ board, owner: you, hand, enabled: canAct, flip, goldenBlockId: myArmed ? goldenBlockId : null, sound });
+  const pl = usePlacement({ board, owner: you, hand, enabled: canAct, flip, goldenBlockId: myArmed ? goldenBlockId : null });
   const contestedKeys = useMemo(
     () => new Set((m?.reveal ? m.reveal.contested : []).map(([r, c]) => key(r, c))),
     [m?.reveal]
@@ -2949,7 +2753,6 @@ function NetGame({ colors, volume, theme, onResult, onAbort }) {
 
   const commit = () => {
     if (!pl.ghostLegal || pl.sel.handIdx === null) return;
-    blip("place", volume);
     // Show the block where it went (dotted, not yet real) until the turn resolves.
     setPlaced({ turn: m.turn, cells: pl.ghost, handIdx: pl.sel.handIdx, golden: pl.goldenSel });
     net.move({ turn: m.turn, handIdx: pl.sel.handIdx, rot: ((pl.sel.rot % 4) + 4) % 4, pos: pl.sel.pos });
@@ -2960,17 +2763,12 @@ function NetGame({ colors, volume, theme, onResult, onAbort }) {
   const discard = () => {
     const idx = pl.sel.handIdx ?? hand.findIndex((id) => id !== undefined);
     if (idx < 0) return;
-    blip("drop", volume);
     setPlaced({ turn: m.turn, cells: [], handIdx: idx });
     net.discard({ turn: m.turn, handIdx: idx });
     pl.reset();
   };
 
   useGameKeys(pl, { enabled: canAct, onCommit: commit, onDiscard: discard });
-
-  useEffect(() => {
-    if (m?.reveal?.contested?.length) blip("special", volume);
-  }, [m?.reveal, volume]);
 
   if (!m || !board) {
     return (
@@ -3191,18 +2989,16 @@ export default function TurfBlocks() {
   const [screen, setScreenNow] = useState("MENU");
   const screenRef = useRef("MENU");
   useEffect(() => { screenRef.current = screen; }, [screen]);
-  // Every screen change goes through the paper transition — but only a real
-  // change: the ranked game re-asserts its screen on every turn.
+  // Only a real change: the ranked game re-asserts its screen on every turn.
   const setScreen = useCallback((next) => {
     const target = typeof next === "function" ? next(screenRef.current) : next;
     if (target === screenRef.current) return;
     screenRef.current = target;
-    withPaper(() => setScreenNow(target));
+    setScreenNow(target);
   }, []);
   const [aiLevel, setAiLevel] = useState(DEFAULT_LEVEL);
   const [seed, setSeed] = useState(0);
   const [loadout, setLoadoutState] = useState(loadLoadout);
-  const [volume, setVolumeState] = useState(() => Number(store.get("tb:vol") ?? 0.5));
   const [theme, setThemeState] = useState(loadTheme);
   const [over, setOver] = useState(null);
 
@@ -3228,23 +3024,12 @@ export default function TurfBlocks() {
     if (!authed && (screen === "MATCHMAKING" || screen === "RANKED")) setScreen("MENU");
   }, [authed, screen, setScreen]);
 
-  /* Browsers won't start audio until the first gesture, so arm it and wait. */
-  useEffect(() => {
-    window.addEventListener("pointerdown", unlockAudio, { once: true });
-    window.addEventListener("keydown", unlockAudio, { once: true });
-    return () => {
-      window.removeEventListener("pointerdown", unlockAudio);
-      window.removeEventListener("keydown", unlockAudio);
-    };
-  }, []);
-
   const setTheme = (t) => { saveTheme(t); setThemeState(t); };
   const setLoadout = (updater) => setLoadoutState((prev) => {
     const next = typeof updater === "function" ? updater(prev) : updater;
     saveLoadout(next);
     return next;
   });
-  const setVolume = (v) => { store.set("tb:vol", String(v)); setVolumeState(v); };
   const rename = (n) => { const v = n.trim().slice(0, 16); if (v && v !== net.profile?.name) net.setName(v); };
   const logout = () => { store.set("tb:token", ""); net.logout(); setScreen("MENU"); };
 
@@ -3265,8 +3050,7 @@ export default function TurfBlocks() {
          than being slanted by the browser. */
       .font-mono { font-family: "Fuzzy Bubbles", "Comic Neue", "Chalkboard SE", system-ui, sans-serif; }
       .font-mono .italic, .font-mono em { font-style: normal; opacity: .85; }
-      /* The title is the one piece of text big enough to show the paper's tooth. */
-      .tb-display { font-family: "Fuzzy Bubbles", system-ui, sans-serif; font-weight: 700; filter: url(#tb-pencil-1); }
+      .tb-display { font-family: "Fuzzy Bubbles", system-ui, sans-serif; font-weight: 700; }
       .lucide { stroke-width: 1.6; }
 
       /* Paper: grain and a vignette over everything, drawn once, never animated. */
@@ -3347,7 +3131,6 @@ export default function TurfBlocks() {
           else { setSeed((s) => s + 1); setScreen("HOTSEAT"); }
         }}
         loadout={loadout} setLoadout={setLoadout}
-        volume={volume} setVolume={setVolume}
         colors={colors} profile={profile} status={status}
         name={name} rename={rename} onLogout={logout}
         theme={theme} setTheme={setTheme}
@@ -3355,18 +3138,18 @@ export default function TurfBlocks() {
     );
   else if (screen === "DIFFICULTY")
     view = (
-      <Difficulty colors={colors} volume={volume}
+      <Difficulty colors={colors}
         onBack={() => setScreen("MENU")}
         onStart={(lv) => { setAiLevel(lv); setSeed((s) => s + 1); setScreen("SOLO"); }} />
     );
   else if (screen === "MATCHMAKING")
     view = (
-      <Matchmaking profile={profile} loadout={loadout} colors={colors} volume={volume}
+      <Matchmaking profile={profile} loadout={loadout} colors={colors}
         onCancel={() => setScreen("MENU")} onPlayAi={() => setScreen("DIFFICULTY")} />
     );
   else if (screen === "RANKED")
     view = (
-      <NetGame colors={colors} volume={volume} theme={theme}
+      <NetGame colors={colors} theme={theme}
         onResult={(o) => { setOver(o); setScreen("RESULT"); }}
         onAbort={() => setScreen("MENU")} />
     );
@@ -3379,15 +3162,14 @@ export default function TurfBlocks() {
   else
     view = (
       <LocalGame key={seed} mode={screen} aiLevel={aiLevel} loadout={loadout}
-        colors={colors} volume={volume} theme={theme}
+        colors={colors} theme={theme}
         onExit={() => setScreen("MENU")}
-        onRestart={() => withPaper(() => setSeed((s) => s + 1))} />
+        onRestart={() => setSeed((s) => s + 1)} />
     );
 
   return (
     <InkStyle.Provider value={theme.stroke}>
       <PencilDefs />{shell}{view}
-      <PaperTransition theme={theme} volume={volume} />
       <div className="tb-rotate font-mono" aria-live="polite">
         <RotateCw size={26} style={{ color: UI.dim }} />
         <div className="text-[16px]">Turn your phone upright</div>
