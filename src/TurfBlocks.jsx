@@ -23,7 +23,7 @@ import {
   PRESETS, INKS, STROKES, GRID_GAPS,
   loadTheme, saveTheme, applyPreset, editTheme, themeVars, frameUrl, frameImage,
 } from "./theme.js";
-import { inkPaths, gridPath, shadeUrl, pencilFilter, GRAINS } from "./sketch.js";
+import { inkPaths, gridPath, shadeUrl, pencilFilter, GRAINS, roughPoly, GRAIN_URL } from "./sketch.js";
 import { ACTIONS, getKeys, subscribeKeys, setKey, resetKeys, actionFor, keyLabel, canBind } from "./keys.js";
 
 /* ============================================================
@@ -565,7 +565,7 @@ const paper = { run: null };
 const withPaper = (fn) => (paper.run ? paper.run(fn) : fn());
 
 // Timeline, ms. The swap happens at COVER, when the sheet is at rest over everything.
-const P_IN = 300, P_COVER = 320, P_FOLD = [220, 470], P_OUT = [540, 840];
+const P_IN = 300, P_COVER = 320, P_FOLD = [200, 470], P_OUT = [540, 840];
 const easeOut = (t) => 1 - Math.pow(1 - t, 3);
 const easeIn = (t) => t * t * t;
 const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
@@ -574,9 +574,10 @@ const clamp01 = (t) => Math.max(0, Math.min(1, t));
 // Geometry in a 200×200 box scaled to cover the screen. The sheet overhangs
 // it on every side, so the screen is fully hidden while the sheet is at rest.
 const SHEET = [[-45, -40], [245, -48], [250, 242], [-50, 248]];
-// The fold line, and the corner region beyond it that folds over.
-const FOLD_A = [-48, 150], FOLD_B = [150, -46];
-const FLAP = [FOLD_A, FOLD_B, [-46, -44]];
+// The fold runs corner to corner across the lower right; the bottom-right
+// corner of the sheet lifts and folds up over the rest.
+const FOLD_A = [10, 250], FOLD_B = [250, 20];
+const FLAP = [FOLD_A, FOLD_B, [250, 242]];
 
 function foldPoint(p, s) {
   // Moves p across the fold line: s = 1 lies flat, s = -1 is folded over.
@@ -587,17 +588,27 @@ function foldPoint(p, s) {
   return [p[0] - nx * d * (1 - s), p[1] - ny * d * (1 - s)];
 }
 const pts = (list) => list.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+// sketch.js hands back CSS url("…") values; SVG <image> wants the bare URI.
+const bareUrl = (cssUrl) => cssUrl.replace(/^url\("/, "").replace(/"\)$/, "");
+// Pencil outlines for the sheet never change, so they're drawn once.
+const SHEET_LINES = roughPoly(SHEET, { jit: 1.8, over: 7, seed: 4, passes: 3 });
 
 function PaperTransition({ theme, volume }) {
   const [active, setActive] = useState(false);
   const sheetRef = useRef(null);
   const flapRef = useRef(null);
   const flapBackRef = useRef(null);
+  const flapLineRef = useRef(null);
   const shadowRef = useRef(null);
   const busy = useRef(false);
   const motionRef = useRef(theme.motion);
   const volRef = useRef(volume);
   useEffect(() => { motionRef.current = theme.motion; volRef.current = volume; });
+
+  // Pencil textures, baked once per theme as images: a grained hatch for the
+  // back of the sheet (the blocks' own shading) and paper tooth for its face.
+  const hatchImg = useMemo(() => bareUrl(shadeUrl(theme.you, { dir: -1 })), [theme.you]);
+  const grainImg = useMemo(() => bareUrl(GRAIN_URL), []);
 
   useEffect(() => {
     const reduced = () => typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
@@ -613,24 +624,24 @@ function PaperTransition({ theme, volume }) {
         const t = now - t0;
         if (!swapped && t >= P_COVER) { swapped = true; fn(); }
 
-        // The sheet: sweeps in from the lower right, settles, leaves to the upper left.
+        // The sheet: slides in from the bottom-right corner, settles, leaves to the upper left.
         let tx, ty, rot;
         if (t < P_OUT[0]) {
           const k = easeOut(clamp01(t / P_IN));
-          tx = 250 * (1 - k); ty = 190 * (1 - k); rot = 22 * (1 - k) - 3 * k;
+          tx = 240 * (1 - k); ty = 240 * (1 - k); rot = 16 * (1 - k) - 3 * k;
         } else {
           const k = easeIn(clamp01((t - P_OUT[0]) / (P_OUT[1] - P_OUT[0])));
           tx = -270 * k; ty = -210 * k; rot = -3 - 16 * k;
         }
         sheetRef.current?.setAttribute("transform", `translate(${tx.toFixed(1)} ${ty.toFixed(1)}) rotate(${rot.toFixed(2)} 100 100)`);
 
-        // The flap folds over, landing a few degrees off true.
+        // The bottom-right corner folds up over the sheet, landing a few degrees off true.
         const f = easeInOut(clamp01((t - P_FOLD[0]) / (P_FOLD[1] - P_FOLD[0])));
-        const s = 1 - 2 * f;
-        const flap = FLAP.map((p) => foldPoint(p, s));
-        const skew = f * 5; // degrees of misalignment once folded
-        const front = s > 0;
-        const flapTransform = `rotate(${skew.toFixed(2)} ${FOLD_A[0]} ${FOLD_A[1]}) translate(${(f * 3).toFixed(1)} ${(f * 4).toFixed(1)})`;
+        const sF = 1 - 2 * f;
+        const flap = FLAP.map((p) => foldPoint(p, sF));
+        const skew = -f * 5;
+        const front = sF > 0;
+        const flapTransform = `rotate(${skew.toFixed(2)} ${FOLD_B[0]} ${FOLD_B[1]}) translate(${(-f * 3).toFixed(1)} ${(-f * 4).toFixed(1)})`;
         for (const el of [flapRef.current, flapBackRef.current]) {
           if (!el) continue;
           el.setAttribute("points", pts(flap));
@@ -638,10 +649,14 @@ function PaperTransition({ theme, volume }) {
         }
         if (flapRef.current) flapRef.current.style.opacity = front ? 1 : 0;
         if (flapBackRef.current) flapBackRef.current.style.opacity = front ? 0 : 1;
+        if (flapLineRef.current) {
+          flapLineRef.current.setAttribute("d", roughPoly(flap, { jit: 1.8, over: 7, seed: 9, passes: 3 }));
+          flapLineRef.current.setAttribute("transform", flapTransform);
+        }
         if (shadowRef.current) {
-          shadowRef.current.setAttribute("points", pts(flap.map(([x, y]) => [x + 4, y + 5])));
+          shadowRef.current.setAttribute("points", pts(flap.map(([x, y]) => [x - 4, y - 5])));
           shadowRef.current.setAttribute("transform", flapTransform);
-          shadowRef.current.style.opacity = (0.35 * f).toFixed(3);
+          shadowRef.current.style.opacity = (0.28 * f).toFixed(3);
         }
 
         if (t < P_OUT[1]) requestAnimationFrame(frame);
@@ -653,7 +668,7 @@ function PaperTransition({ theme, volume }) {
   }, []);
 
   if (!active) return null;
-  // Same hatching as the blocks: your ink, on the back of the sheet.
+  const edge = { fill: "none", stroke: "var(--tb-text)", strokeLinecap: "round" };
   return (
     <svg aria-hidden="true" viewBox="0 0 200 200" preserveAspectRatio="xMidYMid slice"
       style={{ position: "fixed", inset: 0, width: "100%", height: "100%", zIndex: 80, pointerEvents: "all" }}>
@@ -663,18 +678,27 @@ function PaperTransition({ theme, volume }) {
           <stop offset="0" style={{ stopColor: "color-mix(in srgb, var(--tb-panel) 80%, var(--tb-text))" }} />
           <stop offset="1" style={{ stopColor: "color-mix(in srgb, var(--tb-panel) 90%, var(--tb-text))" }} />
         </linearGradient>
-        <pattern id="tb-paper-hatch" patternUnits="userSpaceOnUse" width="2.4" height="2.4" patternTransform="rotate(-45)">
-          <rect width="2.4" height="2.4" style={{ fill: "color-mix(in srgb, var(--tb-panel) 88%, var(--tb-text))" }} />
-          <line x1="0" y1="0" x2="0" y2="2.4" style={{ stroke: theme.you }} strokeWidth="0.55" opacity="0.75" />
+        {/* Paper tooth: the same grain as the screen overlay, a little stronger. */}
+        <pattern id="tb-paper-grain" patternUnits="userSpaceOnUse" width="40" height="40">
+          <image href={grainImg} width="40" height="40" opacity="0.55" />
+        </pattern>
+        {/* The back of the sheet: the blocks' own pencil hatching, grain and all. */}
+        <pattern id="tb-paper-hatch" patternUnits="userSpaceOnUse" width="20" height="20">
+          <rect width="20" height="20" style={{ fill: "color-mix(in srgb, var(--tb-panel) 88%, var(--tb-text))" }} />
+          <image href={hatchImg} width="20" height="20" />
         </pattern>
       </defs>
-      <g ref={sheetRef} transform="translate(250 190) rotate(22 100 100)">
-        <polygon points={pts(SHEET)} style={{ fill: "url(#tb-paper-face)", stroke: "var(--tb-text)" }} strokeWidth="0.8" strokeOpacity="0.7" />
-        {/* Where the folded corner used to be: the darker underside of the sheet. */}
-        <polygon points={pts(FLAP)} style={{ fill: "var(--tb-ground)" }} opacity="0.55" />
-        <polygon ref={shadowRef} points={pts(FLAP)} style={{ fill: "#000", opacity: 0 }} />
-        <polygon ref={flapRef} points={pts(FLAP)} style={{ fill: "url(#tb-paper-face)", stroke: "var(--tb-text)" }} strokeWidth="0.8" strokeOpacity="0.7" />
-        <polygon ref={flapBackRef} points={pts(FLAP)} style={{ fill: "url(#tb-paper-hatch)", stroke: "var(--tb-text)", opacity: 0 }} strokeWidth="0.7" />
+      <g ref={sheetRef} transform="translate(240 240) rotate(16 100 100)">
+        <polygon points={pts(SHEET)} style={{ fill: "url(#tb-paper-face)" }} />
+        <polygon points={pts(SHEET)} style={{ fill: "url(#tb-paper-grain)" }} />
+        <path d={SHEET_LINES} style={edge} strokeWidth="0.45" opacity="0.6" />
+        {/* Where the corner lifted away: the sheet's darker underside. */}
+        <polygon points={pts(FLAP)} style={{ fill: "var(--tb-ground)" }} opacity="0.5" />
+        {/* A smudged shadow under the fold: stacked soft strokes, no blur filter. */}
+        <polygon ref={shadowRef} points={pts(FLAP)} style={{ fill: "#000", opacity: 0, stroke: "#000", strokeOpacity: 0.35, strokeWidth: 3, strokeLinejoin: "round" }} />
+        <polygon ref={flapRef} points={pts(FLAP)} style={{ fill: "url(#tb-paper-face)" }} />
+        <polygon ref={flapBackRef} points={pts(FLAP)} style={{ fill: "url(#tb-paper-hatch)", opacity: 0 }} />
+        <path ref={flapLineRef} d="" style={edge} strokeWidth="0.45" opacity="0.75" />
       </g>
     </svg>
   );
@@ -3236,13 +3260,13 @@ export default function TurfBlocks() {
       }
       .tb-scroll { -webkit-overflow-scrolling: touch; scrollbar-width: none; }
       .tb-scroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
-      /* Type: Sniglet, a rounded, friendly face, everywhere. The class name is historical.
-         It has no italic, so "italic" text stays upright rather than being
-         slanted by the browser. */
-      .font-mono { font-family: "Sniglet", "Arial Rounded MT Bold", "Nunito", system-ui, sans-serif; }
+      /* Type: Fuzzy Bubbles, a soft hand-lettered face, everywhere. The class name
+         is historical. It has no italic, so "italic" text stays upright rather
+         than being slanted by the browser. */
+      .font-mono { font-family: "Fuzzy Bubbles", "Comic Neue", "Chalkboard SE", system-ui, sans-serif; }
       .font-mono .italic, .font-mono em { font-style: normal; opacity: .85; }
       /* The title is the one piece of text big enough to show the paper's tooth. */
-      .tb-display { font-family: "Sniglet", system-ui, sans-serif; font-weight: 800; filter: url(#tb-pencil-1); }
+      .tb-display { font-family: "Fuzzy Bubbles", system-ui, sans-serif; font-weight: 700; filter: url(#tb-pencil-1); }
       .lucide { stroke-width: 1.6; }
 
       /* Paper: grain and a vignette over everything, drawn once, never animated. */
