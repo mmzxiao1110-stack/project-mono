@@ -7,9 +7,9 @@ import {
 
 /* The rules live in one place and the server imports the same file. */
 import {
-  COLS, ROWS, TURNS, SLOTS, BLOCKS, DEFAULT_LOADOUT, isCentre,
-  sizeOf, key, rotateN, boundsOf, absCells, initialBoard, isLegal,
-  hasAnyMove, resolveTurn, scoreOf, newDeck, advanceDeck, currentPiece, currentPass, upcoming, QUEUE_SHOWN,
+  COLS, ROWS, TURNS, BLOCKS, DEFAULT_LOADOUT, isCentre,
+  key, rotateN, boundsOf, absCells, initialBoard, isLegal,
+  hasAnyMove, resolveTurn, scoreOf, newDeck, advanceDeck, currentPiece, currentPass, upcoming, QUEUE_SHOWN, newSeed,
 } from "../shared/engine.js";
 import { aiPickMove } from "../shared/ai.js";
 import {
@@ -191,13 +191,8 @@ const store = {
 };
 
 
-const loadLoadout = () => {
-  try {
-    const raw = store.get("tb:loadout");
-    const arr = raw ? JSON.parse(raw) : null;
-    return Array.isArray(arr) && arr.length === SLOTS ? arr : [...DEFAULT_LOADOUT];
-  } catch (e) { return [...DEFAULT_LOADOUT]; }
-};
+// Everyone plays the seven tetrominoes; old saved decks are ignored.
+const loadLoadout = () => [...DEFAULT_LOADOUT];
 const saveLoadout = (l) => store.set("tb:loadout", JSON.stringify(l));
 
 /* ============================================================
@@ -1285,10 +1280,11 @@ function gameLayout(stage, theme, P, d, compact) {
   const fixedH = compact
     ? 2 * P + 3 * P + (NUMBOX_H + 3) * P + (d + 3) * P + 4 * P
     : 2 * P + (NUMBOX_H + 1) * P + 3 * P;
-  const cellArt = Math.max(5, Math.floor(Math.min(
+  // Capped, so a big window gets a comfortable board rather than a huge one.
+  const cellArt = Math.max(5, Math.min(15, Math.floor(Math.min(
     (stage.w - wRes - g * (COLS - 1)) / COLS,
     (stage.h - fixedH - g * (ROWS - 1)) / (ROWS + 1)
-  ) / P));
+  ) / P)));
   const cell = cellArt * P;
   const boardW = cell * COLS + g * (COLS - 1);
   const boardH = cell * ROWS + g * (ROWS - 1);
@@ -1525,166 +1521,23 @@ function SettingsModal({ name, rename, status, theme, setTheme, onClose }) {
 /* ============================================================
    DECK
    ============================================================ */
-function DeckModal({ loadout, setLoadout, color, onClose }) {
-  const slotRefs = useRef([]);
-  const dragRef = useRef(null);
-  const [drag, setDrag] = useState(null);
-
-  const groups = useMemo(() => {
-    const g = { SMALL: [], MEDIUM: [], BIG: [] };
-    BLOCKS.forEach((b, i) => g[sizeOf(b.cells.length)].push(i));
-    return g;
-  }, []);
-
-  const hitSlot = (x, y) =>
-    slotRefs.current.findIndex((el) => {
-      if (!el) return false;
-      const r = el.getBoundingClientRect();
-      return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
-    });
-
-  const applyDrop = (blockId, from, slot) => {
-    setLoadout((prev) => {
-      const next = [...prev];
-      if (typeof from === "number") {
-        [next[from], next[slot]] = [next[slot], next[from]];
-      } else {
-        const existing = next.indexOf(blockId);
-        if (existing === slot) return prev;
-        if (existing >= 0) next[existing] = next[slot];
-        next[slot] = blockId;
-      }
-      return next;
-    });
-  };
-
-  const beginDrag = useCallback((blockId, from, x, y) => {
-    dragRef.current = { blockId, from, x, y, over: null };
-    setDrag({ ...dragRef.current });
-    if (navigator.vibrate) try { navigator.vibrate(8); } catch (e) {}
-    const block = (ev) => ev.preventDefault();
-    const onMove = (ev) => {
-      if (!dragRef.current) return;
-      const over = hitSlot(ev.clientX, ev.clientY);
-      dragRef.current = { ...dragRef.current, x: ev.clientX, y: ev.clientY, over: over >= 0 ? over : null };
-      setDrag({ ...dragRef.current });
-    };
-    const stop = (commit) => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onCancel);
-      window.removeEventListener("touchmove", block);
-      const d = dragRef.current;
-      dragRef.current = null;
-      setDrag(null);
-      if (commit && d && d.over !== null) applyDrop(d.blockId, d.from, d.over);
-    };
-    const onUp = () => stop(true);
-    const onCancel = () => stop(false);
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onCancel);
-    window.addEventListener("touchmove", block, { passive: false });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const onPress = (e, blockId, from, instant) => {
-    const sx = e.clientX, sy = e.clientY;
-    if (instant || e.pointerType === "mouse") {
-      e.preventDefault();
-      beginDrag(blockId, from, sx, sy);
-      return;
-    }
-    let armed = false;
-    const timer = setTimeout(() => { armed = true; cleanup(); beginDrag(blockId, from, sx, sy); }, 170);
-    const watch = (ev) => {
-      if (armed) return;
-      if (Math.abs(ev.clientX - sx) > 9 || Math.abs(ev.clientY - sy) > 9) { clearTimeout(timer); cleanup(); }
-    };
-    const release = () => { clearTimeout(timer); cleanup(); };
-    function cleanup() {
-      window.removeEventListener("pointermove", watch);
-      window.removeEventListener("pointerup", release);
-      window.removeEventListener("pointercancel", release);
-    }
-    window.addEventListener("pointermove", watch);
-    window.addEventListener("pointerup", release);
-    window.addEventListener("pointercancel", release);
-  };
-
-  const pinned = (
-    <>
-      <div className="grid grid-cols-4 gap-1.5 pb-3" style={{ ...RULE_BELOW }}>
-        {loadout.map((blockId, i) => {
-          const hot = drag && drag.over === i;
-          return (
-            <div key={i} ref={(el) => (slotRefs.current[i] = el)}
-              onPointerDown={(e) => onPress(e, blockId, i, true)}
-              className="rounded flex flex-col items-center justify-center gap-1 select-none relative"
-              style={{
-                height: 62,
-                background: hot ? UI.cell : "transparent",
-                ...sk(hot ? color : UI.line),
-                touchAction: "none",
-                transform: hot ? "scale(1.06)" : "none",
-                transition: "transform 120ms ease-out",
-                opacity: drag && drag.from === i ? 0.25 : 1,
-              }}>
-              <BlockGlyph blockId={blockId} box={28} color={color} />
-              <span className="tb-t" style={{ color: UI.dim }}>
-                {BLOCKS[blockId].name}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-      <div className="tb-t pt-2 pb-1" style={{ color: UI.dim }}>
-        You play one piece per turn, straight from the front of your queue. These
-        eight come round once per pass, shuffled each time — and your opponent can see them.
-      </div>
-    </>
-  );
-
+function DeckModal({ color, onClose }) {
   return (
-    <Popup title="YOUR BLOCKS" onClose={onClose} pinned={pinned}>
-      <div className="tb-t pt-3 pb-4" style={{ color: UI.dim }}>
-        Hold a block for a moment, then drag it up into a slot.
+    <Popup title="THE PIECES" onClose={onClose} maxW={380}>
+      <div className="pt-4 pb-1">
+        <div className="grid grid-cols-4 gap-2 mb-4">
+          {BLOCKS.map((b, i) => (
+            <div key={b.name} className="flex flex-col items-center justify-center gap-1.5 py-2" style={{ ...glass(UI.line) }}>
+              <BlockGlyph blockId={i} box={30} color={color} />
+              <span className="tb-t" style={{ color: UI.dim }}>{b.name}</span>
+            </div>
+          ))}
+        </div>
+        <div className="tb-t" style={{ color: UI.dim }}>
+          The seven tetrominoes, dealt in bags like Tetris: each bag holds all seven, shuffled.
+          {RULES.sharedSequence ? " Both players get the same pieces in the same order." : ""}
+        </div>
       </div>
-      {["SMALL", "MEDIUM", "BIG"].map((g) => (
-        <div key={g} className="mb-5">
-          <div className="tb-t mb-2" style={{ color: UI.dim }}>
-            {g} · {g === "SMALL" ? "1–3" : g === "MEDIUM" ? "4–7" : "8–12"}
-          </div>
-          <div className="grid grid-cols-4 gap-1.5">
-            {groups[g].map((blockId) => {
-              const inDeck = loadout.includes(blockId);
-              return (
-                <div key={blockId} onPointerDown={(e) => onPress(e, blockId, "lib", false)}
-                  className="rounded flex flex-col items-center justify-center gap-1 select-none"
-                  style={{ height: 68, background: inDeck ? UI.cell : "transparent", ...sk(inDeck ? color : UI.line) }}>
-                  <BlockGlyph blockId={blockId} box={30} color={inDeck ? color : UI.dim} />
-                  <span className="tb-t" style={{ color: UI.dim }}>
-                    {BLOCKS[blockId].name} · {BLOCKS[blockId].cells.length}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ))}
-      {drag && (
-        <div className="fixed z-50 pointer-events-none"
-          style={{ left: drag.x, top: drag.y - 34, transform: "translate(-50%,-50%) scale(1.12)" }}>
-          <div className="p-2.5"
-            style={{
-              background: UI.panel,
-              ...sk(drag.over !== null ? GOLD : color),
-              boxShadow: "0 10px 26px rgba(0,0,0,.6)",
-            }}>
-            <BlockGlyph blockId={drag.blockId} box={46} color={color} />
-          </div>
-        </div>
-      )}
     </Popup>
   );
 }
@@ -2528,7 +2381,7 @@ function HowToModal({ colors, loadout, onClose }) {
           {loadout.slice(1, 5).map((id, i) => <BlockGlyph key={i} blockId={id} box={20} color={colors.you} />)}
         </div>
       ),
-      body: "You don't choose from a hand. You play the piece at the front of your queue — rotate it and place it, or pass. Your whole queue is shown, so plan ahead.",
+      body: `You don't choose from a hand. You play the piece at the front of your queue — rotate it and place it, or pass. The next ${QUEUE_SHOWN} are shown, so plan ahead.`,
     },
     {
       title: "PLACING",
@@ -2555,13 +2408,13 @@ function HowToModal({ colors, loadout, onClose }) {
       body: "Any row or column that fills up completely is wiped — both colours. Build too close to a full line and your opponent can finish it for you and delete your squares.",
     },
     {
-      title: "YOUR DECK",
+      title: "THE PIECES",
       art: (
         <div className="flex flex-wrap items-center justify-center gap-2.5">
           {loadout.map((id, i) => <BlockGlyph key={i} blockId={id} box={26} color={colors.you} />)}
         </div>
       ),
-      body: "Pick eight pieces in the deck editor. They come round in passes, like Tetris bags: every pass deals all eight once, freshly shuffled. Your opponent sees your queue, and you see theirs.",
+      body: `The seven tetrominoes, dealt in bags like Tetris: every bag deals all seven once, freshly shuffled.${RULES.sharedSequence ? " You and your opponent are dealt the exact same pieces in the same order — the difference is what you do with them." : " Your opponent sees your queue, and you see theirs."}`,
     },
   ];
 
@@ -2689,7 +2542,7 @@ function PixelRule({ count = 18 }) {
     </div>
   );
 }
-function Menu({ onPick, loadout, setLoadout, colors, profile, status, name, rename, onLogout, theme, setTheme }) {
+function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout, theme, setTheme }) {
   const [modal, setModal] = useState(null);
   const authed = useAuth() === "authed";
   const verified = !!profile?.emailVerified;
@@ -2771,7 +2624,7 @@ function Menu({ onPick, loadout, setLoadout, colors, profile, status, name, rena
 
         <div className="flex justify-between">
           <div className="flex gap-2.5">
-            <button onClick={() => setModal("DECK")} aria-label="Your blocks" className="flex items-center justify-center" style={{ width: 44, height: 44, ...skFill(color) }}>
+            <button onClick={() => setModal("DECK")} aria-label="The pieces" className="flex items-center justify-center" style={{ width: 44, height: 44, ...skFill(color) }}>
               <div style={{ display: "grid", gridTemplateColumns: "8px 8px", gap: 2 }}>
                 {[0, 1, 2, 3].map((i) => (
                   <div key={i} style={{ background: i === 1 ? "transparent" : color, opacity: 0.85, height: 8 }} />
@@ -2817,7 +2670,7 @@ function Menu({ onPick, loadout, setLoadout, colors, profile, status, name, rena
       )}
       {modal === "SETTINGS" && <SettingsModal name={name} rename={rename} status={status} theme={theme} setTheme={setTheme} onClose={() => setModal(null)} />}
       {modal === "STATS" && <StatsModal profile={profile} status={status} onClose={() => setModal(null)} />}
-      {modal === "DECK" && <DeckModal loadout={loadout} setLoadout={setLoadout} color={color} onClose={() => setModal(null)} />}
+      {modal === "DECK" && <DeckModal color={color} onClose={() => setModal(null)} />}
     </div>
   );
 }
@@ -3008,7 +2861,11 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   const [board, setBoard] = useState(initialBoard);
   const [turn, setTurn] = useState(1);
   const [phase, setPhase] = useState("PLAY_A");
-  const [decks, setDecks] = useState(() => ({ A: newDeck(loadout), B: newDeck(loadout) }));
+  const [decks, setDecks] = useState(() => {
+    // Same seed, same pieces in the same order (RULES.sharedSequence).
+    const seed = newSeed();
+    return { A: newDeck(loadout, seed), B: newDeck(loadout, RULES.sharedSequence ? seed : newSeed()) };
+  });
   const [pendingA, setPendingA] = useState(null);
   const [reveal, setReveal] = useState(null);
   const [lockedOut, setLockedOut] = useState(false);
@@ -3140,7 +2997,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ color: UI.text }}>
       <div className="tb-col relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
-        <div className="shrink-0 pt-3"><PixelLogo small /></div>
+        <div className="shrink-0" style={{ paddingTop: "calc(var(--p) * 10)", paddingBottom: "calc(var(--p) * 2)" }}><PixelLogo small /></div>
         <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center py-2">
           <div className="flex flex-col items-center" style={{ gap: 3 * P }}>
             <ForecastRow
@@ -3327,7 +3184,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ color: UI.text }}>
       <div className="tb-col relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
-        <div className="shrink-0 pt-3"><PixelLogo small /></div>
+        <div className="shrink-0" style={{ paddingTop: "calc(var(--p) * 10)", paddingBottom: "calc(var(--p) * 2)" }}><PixelLogo small /></div>
         <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center py-2">
           <div className="flex flex-col items-center" style={{ gap: 3 * P }}>
             <ForecastRow
@@ -3649,10 +3506,11 @@ export default function TurfBlocks() {
   const [theme, setThemeState] = useState(loadTheme);
   // One pixel size for everything, from the screen: ~2 px on phones, 3 on
   // laptops, up to 5 on big monitors, so text stays readable and the board fits.
-  // One pixel size for everything: 2 on phones and small windows, 4 on big
-  // screens. Kept even, so panels laid out at 2 scale by a whole number.
+  // One pixel size for everything: 2 on phones and small windows, 3 on
+  // laptops, 4 only on very large screens.
   const pickPx = () => (typeof window === "undefined" ? 2 :
-    window.innerWidth >= 900 && window.innerHeight >= 760 ? 4 : 2);
+    window.innerWidth >= 1700 && window.innerHeight >= 1100 ? 4 :
+    window.innerWidth >= 900 && window.innerHeight >= 700 ? 3 : 2);
   const [P, setP] = useState(pickPx);
   useEffect(() => {
     const on = () => setP(pickPx());
@@ -3778,7 +3636,7 @@ export default function TurfBlocks() {
       .tb-scale { --p: ${BASE_P}px; zoom: var(--pz); }
       /* Big screens: the game column gets room for a bigger board. */
       @media (min-width: 1000px) and (min-height: 760px) {
-        .tb-col { max-width: 780px !important; }
+        .tb-col { max-width: 680px !important; }
       }
       /* Buttons light up under the pointer and press down one pixel. */
       button:not(:disabled) { transition: filter 120ms steps(2); }

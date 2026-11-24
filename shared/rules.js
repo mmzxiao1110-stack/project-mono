@@ -12,19 +12,19 @@ export const RULES = {
   /* ----------------------------------------------------------
      BOARD AND MATCH LENGTH
      ---------------------------------------------------------- */
-  size: 12,        // the board is size × size
-  turns: 25,       // rounds per match. Simulated on 12×12: ~3.5 line clears a game, 98% of games have one; longer mostly adds forced passes
+  size: 10,        // the board is size × size
+  turns: 15,       // rounds per match. Simulated on 10×10: ~1.5 line clears and ~2.6 forced passes a game; 15 and 18 rank skill equally well
   // A match also ends early once neither player can place ANY piece from
   // their deck anywhere ("locked").
 
   /* ----------------------------------------------------------
      THE QUEUE
-     You play exactly one piece per turn: the front of your queue. Your
-     8-piece deck comes round in bags, Tetris-style — each pass through it
-     deals all eight pieces once, freshly shuffled, so nothing floods and
-     nothing goes missing.
+     The seven tetrominoes, dealt in a 7-bag like Tetris: each pass deals
+     all seven once, freshly shuffled. You play exactly one piece per turn:
+     the front of your queue.
      ---------------------------------------------------------- */
   queueShown: 4,   // upcoming pieces shown after the current one (both players see both queues)
+  sharedSequence: true, // both players are dealt the exact same sequence: less luck, ranks skill better (simulated)
 
   /* ----------------------------------------------------------
      COLLISIONS
