@@ -63,6 +63,8 @@ export const RULES = {
   pinMax: 4,              // most squares one pin covers
   pinConnected: true,     // must pinned squares touch each other?
   pinHoldMax: Infinity,   // most pinned squares one player may hold at once
+  pinsSurviveClears: true, // false: full lines wipe pinned squares too (pins only stop deletes)
+  stamp: false,           // delete/pin with your current piece's shape, placed anywhere
   pinIsFree: true,        // pins ride along with your action instead of taking the turn (simulated: as a turn of its own, pinning was never worth it)
   monoPiece: false,       // add the single square to the bag (8 pieces)
 

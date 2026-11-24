@@ -250,9 +250,9 @@ export function resolveTurn(board, moveA, moveB, pins = null) {
   [["A", moveA], ["B", moveB]].forEach(([side, m]) => {
     if (kind(m) !== "delete") return;
     for (const [r, c] of m.cells) {
-      if (np[r][c]) continue; // pinned this very turn: it holds
+      if (np[r][c] || nb[r][c] === null) continue; // pinned (even this very turn) holds; nothing to delete
       deleted[side]++;
-      if (nb[r][c] !== null) { gone.push([r, c, nb[r][c]]); nb[r][c] = null; }
+      gone.push([r, c, nb[r][c]]); nb[r][c] = null;
     }
   });
 
@@ -269,8 +269,10 @@ export function resolveTurn(board, moveA, moveB, pins = null) {
   const staged = nb.map((row) => [...row]);
 
   const lines = fullLines(nb);
-  for (const r of lines.rows) for (let c = 0; c < COLS; c++) if (!np[r][c]) nb[r][c] = null;
-  for (const c of lines.cols) for (let r = 0; r < ROWS; r++) if (!np[r][c]) nb[r][c] = null;
+  // Pinned squares survive line clears unless the rules say clears beat pins.
+  const wipe = (r, c) => { if (!np[r][c] || !RULES.pinsSurviveClears) { nb[r][c] = null; np[r][c] = false; } };
+  for (const r of lines.rows) for (let c = 0; c < COLS; c++) wipe(r, c);
+  for (const c of lines.cols) for (let r = 0; r < ROWS; r++) wipe(r, c);
 
   if (RULES.restoreHome) restoreHomes(nb);
 
@@ -280,6 +282,48 @@ export function resolveTurn(board, moveA, moveB, pins = null) {
       if (staged[r][c] !== null && nb[r][c] === null) cleared.push([r, c, staged[r][c]]);
 
   return { board: nb, pins: np, contested, lines, cleared, deleted };
+}
+
+/* ---------- stamps ---------- */
+
+/** Is `cells` the current piece, in some rotation, somewhere on the board? */
+export function isPieceFootprint(cells, blockId) {
+  if (!distinctOnBoard(cells) || !BLOCKS[blockId] || cells.length !== BLOCKS[blockId].cells.length) return false;
+  const want = new Set(cells.map(([r, c]) => key(r, c)));
+  const r0 = Math.min(...cells.map(([r]) => r)), c0 = Math.min(...cells.map(([, c]) => c));
+  for (let rot = 0; rot < 4; rot++) {
+    const shape = rotateN(BLOCKS[blockId].cells, rot);
+    if (shape.every(([dr, dc]) => want.has(key(r0 + dr, c0 + dc)))) return true;
+  }
+  return false;
+}
+
+/** What a stamp actually touches: ink under it (delete) or your own squares under it (pin), never pinned ones. */
+export function stampHits(board, pins, cells, kind, owner) {
+  return cells.filter(([r, c]) => {
+    const v = board[r][c];
+    if (v === null || isPinned(pins, r, c)) return false;
+    return kind === "delete" ? true : !RULES.pinOwnOnly || v === owner;
+  });
+}
+
+/** Every stamp placement of a piece: [{ cells: footprint, hits }], one per distinct set of hits. */
+export function stampOptions(board, pins, blockId, kind, owner) {
+  const out = [], seen = new Set();
+  for (let rot = 0; rot < 4; rot++) {
+    const shape = rotateN(BLOCKS[blockId].cells, rot);
+    const { h, w } = boundsOf(shape);
+    for (let r = 0; r <= ROWS - h; r++) for (let c = 0; c <= COLS - w; c++) {
+      const cells = absCells(shape, [r, c]);
+      const hits = stampHits(board, pins, cells, kind, owner);
+      if (!hits.length) continue;
+      const sig = hits.map(([a, b]) => key(a, b)).sort((x, y) => x - y).join(",");
+      if (seen.has(sig)) continue;
+      seen.add(sig);
+      out.push({ cells, hits });
+    }
+  }
+  return out;
 }
 
 /**
