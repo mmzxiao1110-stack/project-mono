@@ -3,7 +3,7 @@ import {
   RotateCw, Check, SkipForward, RefreshCw, ChevronLeft, Settings2, X, Flag,
   BarChart3, Wifi, WifiOff, Clock, UserRound, LogOut,
   Palette, Lock, MailCheck, ShieldAlert, BookOpen, ChevronRight,
-} from "lucide-react";
+} from "./pixelIcons.jsx";
 
 /* The rules live in one place and the server imports the same file. */
 import {
@@ -29,7 +29,6 @@ import { ACTIONS, getKeys, subscribeKeys, setKey, resetKeys, actionFor, keyLabel
    ============================================================ */
 const PHONE_W = 440;
 const DOCK_H = 140;
-const GAP = 2;
 const REVEAL_MS = 1100;
 const AI_THINK_MS = 550;
 const TOUCH_LIFT = 2;
@@ -55,25 +54,40 @@ const UI = {
 };
 
 /* ------------------------------------------------------------
-   Pixel glass. Every bordered surface goes through sk(): a translucent
-   pane with stepped pixel corners, a 2px edge in `color`, and a one-pixel
-   bevel (light along the top-left, shade along the bottom-right) so it
-   reads as a raised piece of glass. skFill() is the same pane tinted with
-   its colour — the pressed or primary state.
+   Pixel art. One pixel size for the whole screen: --p in CSS, usePx()
+   in JS, set by the app from the screen size. Every frame, fill, tile,
+   icon and letter is made of whole pixels of that size.
+
+   sk(color)      a panel or button: one-pixel edge in `color`, stepped
+                  corners, a lit top-left and shaded bottom-right
+   skFill(color)  the pressed / primary state: filled with `color`
    ------------------------------------------------------------ */
-/** Stepped corners: a polygon that cuts each corner in `step`-px stairs. */
-function pixelClip(step = 2) {
-  const a = step, b = step * 2;
-  return `polygon(0 ${b}px, ${a}px ${b}px, ${a}px ${a}px, ${b}px ${a}px, ${b}px 0, calc(100% - ${b}px) 0, calc(100% - ${b}px) ${a}px, calc(100% - ${a}px) ${a}px, calc(100% - ${a}px) ${b}px, 100% ${b}px, 100% calc(100% - ${b}px), calc(100% - ${a}px) calc(100% - ${b}px), calc(100% - ${a}px) calc(100% - ${a}px), calc(100% - ${b}px) calc(100% - ${a}px), calc(100% - ${b}px) 100%, ${b}px 100%, ${b}px calc(100% - ${a}px), ${a}px calc(100% - ${a}px), ${a}px calc(100% - ${b}px), 0 calc(100% - ${b}px))`;
+const PX = "var(--p)";
+const px = (n) => `calc(var(--p) * ${n})`;
+const PxContext = createContext(3);
+const usePx = () => useContext(PxContext);
+/**
+ * Menus and popups are laid out once at the phone pixel size (BASE_P) and
+ * zoomed by exactly P / BASE_P on bigger screens — so a menu at 3 px pixels
+ * is the phone menu at 1.5×, every pixel still exactly P on screen.
+ */
+const BASE_P = 2;
+function Scaled({ className = "", style, children }) {
+  return (
+    <PxContext.Provider value={BASE_P}>
+      <div className={`tb-scale ${className}`} style={style}>{children}</div>
+    </PxContext.Provider>
+  );
 }
-const CLIP = pixelClip(2);
-const CLIP_BIG = pixelClip(4);
-const BEVEL = "inset 2px 2px 0 var(--tb-edge), inset -2px -2px 0 var(--tb-shade)";
+
+/** Stepped corners, one pixel per step. */
+const CLIP = `polygon(0 ${px(2)}, ${PX} ${px(2)}, ${PX} ${PX}, ${px(2)} ${PX}, ${px(2)} 0, calc(100% - ${px(2)}) 0, calc(100% - ${px(2)}) ${PX}, calc(100% - ${PX}) ${PX}, calc(100% - ${PX}) ${px(2)}, 100% ${px(2)}, 100% calc(100% - ${px(2)}), calc(100% - ${PX}) calc(100% - ${px(2)}), calc(100% - ${PX}) calc(100% - ${PX}), calc(100% - ${px(2)}) calc(100% - ${PX}), calc(100% - ${px(2)}) 100%, ${px(2)} 100%, ${px(2)} calc(100% - ${PX}), ${PX} calc(100% - ${PX}), ${PX} calc(100% - ${px(2)}), 0 calc(100% - ${px(2)}))`;
+const BEVEL = `inset ${PX} ${PX} 0 var(--tb-edge), inset calc(var(--p) * -1) calc(var(--p) * -1) 0 var(--tb-shade)`;
 
 function sk(color = UI.line) {
   return {
-    borderWidth: 2, borderStyle: "solid", borderRadius: 0, borderImage: "none",
-    borderColor: `color-mix(in srgb, ${color} 75%, transparent)`,
+    borderWidth: PX, borderStyle: "solid", borderRadius: 0, borderImage: "none",
+    borderColor: color,
     clipPath: CLIP,
     boxShadow: BEVEL,
   };
@@ -81,16 +95,44 @@ function sk(color = UI.line) {
 function skFill(color = UI.text, { dense = false } = {}) {
   return {
     ...sk(color),
-    background: `linear-gradient(180deg, color-mix(in srgb, ${color} ${dense ? 85 : 38}%, transparent), color-mix(in srgb, ${color} ${dense ? 65 : 20}%, transparent))`,
-    boxShadow: `${BEVEL}, inset 0 0 12px color-mix(in srgb, ${color} 30%, transparent)`,
+    background: `color-mix(in srgb, ${color} ${dense ? 90 : 34}%, var(--tb-panel-solid))`,
+    boxShadow: `inset 0 ${PX} 0 color-mix(in srgb, ${color} 60%, white), inset 0 calc(var(--p) * -1) 0 color-mix(in srgb, ${color} 55%, black)`,
   };
 }
-/** A dotted pixel rule under (or over) a block, in place of a 1px border. */
+/** A dotted pixel rule under (or over) a block: one pixel on, one off. */
 const RULE_BELOW = {
   backgroundImage: "linear-gradient(90deg, var(--tb-edge-strong) 50%, transparent 50%)",
-  backgroundRepeat: "repeat-x", backgroundPosition: "bottom", backgroundSize: "6px 2px",
+  backgroundRepeat: "repeat-x", backgroundPosition: "bottom", backgroundSize: `${px(2)} ${PX}`,
 };
 const RULE_ABOVE = { ...RULE_BELOW, backgroundPosition: "top" };
+
+/** Tile shades for a colour: the outer ring, inner ring and highlight of a block. */
+const shadeCache = new Map();
+function tileShades(color) {
+  const hit = shadeCache.get(color);
+  if (hit) return hit;
+  let out;
+  const h = /^#([0-9a-f]{6})$/i.exec(color || "");
+  if (h) {
+    const n = parseInt(h[1], 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+    const hex = (a, b2, c) => "#" + [a, b2, c].map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0")).join("");
+    out = {
+      base: color,
+      dark: hex(r * 0.74, g * 0.71, b * 0.72),
+      light: hex(r + (255 - r) * 0.22 + 18, g * 1.15 + 6, b * 1.06 + 4),
+      hi: hex(r + (255 - r) * 0.6, g + (255 - g) * 0.55, b + (255 - b) * 0.55),
+    };
+  } else {
+    out = {
+      base: color,
+      dark: `color-mix(in srgb, ${color} 72%, black)`,
+      light: `color-mix(in srgb, ${color} 78%, white)`,
+      hi: `color-mix(in srgb, ${color} 42%, white)`,
+    };
+  }
+  shadeCache.set(color, out);
+  return out;
+}
 
 // AI opponents, weakest first. The names are placeholders: replace each
 // string with the opponent's real name. Adding or removing entries changes
@@ -525,59 +567,94 @@ function useGameKeys(pl, { enabled, onCommit, onDiscard }) {
 const sky = { paused: 0, slow: false };
 
 /**
- * A tiny canvas (64 px wide) blown up to fill the screen with
- * image-rendering: pixelated, so soft glowing blobs become chunky pixel
- * light. Drawing 64×~120 pixels is nearly free, and it runs at ~12 fps,
- * half that during a match, and not at all while hidden or paused.
+ * A night sky in the style of Celeste's later chapters, drawn pixel by
+ * pixel at the screen's pixel size: colour bands from deep top to warmer
+ * horizon with ordered dithering between them, two dithered nebulae in the
+ * theme's colours drifting slowly, pastel stars twinkling and a little wind.
+ * About 10 fps, half that in a match, paused while hidden or under a popup.
  */
+// Pastel star colours, shared by the sky and the dream-block board.
+const DREAM_COLOURS = ["#FFFFFF", "#F7B6C6", "#9FD8F0", "#F2F0A2", "#B7F0AE", "#C9B6F7"];
+const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map((v) => (v + 0.5) / 16);
+const rgbOf = (hex) => { const n = parseInt(String(hex).replace("#", ""), 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
+const mixRgb = (a, b, t) => [0, 1, 2].map((i) => Math.round(a[i] + (b[i] - a[i]) * t));
+
 function PixelSky({ theme }) {
   const ref = useRef(null);
-  const { ground, you, rival, special, panel, motion } = theme;
+  const P = usePx();
+  const { ground, you, rival, panel, motion } = theme;
 
   useEffect(() => {
     const cv = ref.current;
     if (!cv) return;
     const ctx = cv.getContext("2d", { alpha: false });
-    // About 8 screen pixels per sky pixel, whatever the screen.
-    let W = 64, H = 112;
+    let W = 1, H = 1, img = null;
     const size = () => {
-      W = Math.max(48, Math.min(200, Math.round(window.innerWidth / 8)));
-      H = Math.max(40, Math.min(160, Math.round(window.innerHeight / 8)));
+      W = Math.max(1, Math.ceil(window.innerWidth / P));
+      H = Math.max(1, Math.ceil(window.innerHeight / P));
       cv.width = W; cv.height = H;
+      // Exactly W×H pixels of P each: sky pixels match every other pixel.
+      cv.style.width = `${W * P}px`; cv.style.height = `${H * P}px`;
+      img = ctx.createImageData(W, H);
     };
     size();
     window.addEventListener("resize", size);
 
-    const rnd = (a, b) => a + Math.random() * (b - a);
-    const blobs = [you, rival, special, panel, you].map((color, i) => ({
-      color, x: rnd(0, 1), y: rnd(0, 1), r: rnd(0.35, 0.6) * (i === 4 ? 0.6 : 1),
-      vx: rnd(-1, 1) * 0.012, vy: rnd(-1, 1) * 0.01, a: i === 3 ? 0.55 : i === 2 ? 0.22 : 0.38,
+    // Sky bands, top to bottom.
+    const g = rgbOf(ground), pa = rgbOf(panel), ri = rgbOf(rival), yo = rgbOf(you);
+    const BANDS = 7;
+    const band = Array.from({ length: BANDS }, (_, i) => {
+      const t = i / (BANDS - 1);
+      return t < 0.6 ? mixRgb(mixRgb(g, [0, 0, 0], 0.35), pa, t / 0.6) : mixRgb(pa, mixRgb(pa, ri, 0.5), (t - 0.6) / 0.4);
+    });
+    const nebulae = [
+      { c: yo, x: 0.25, y: 0.3, r: 0.38, vx: 0.004, vy: 0.002 },
+      { c: ri, x: 0.75, y: 0.62, r: 0.42, vx: -0.003, vy: -0.0025 },
+    ];
+    const stars = Array.from({ length: Math.round((W * H) / 260) + 12 }, () => ({
+      x: Math.random(), y: Math.random() * 0.85, p: Math.random() * 6.28, s: 0.5 + Math.random(),
+      c: rgbOf(DREAM_COLOURS[Math.floor(Math.random() * DREAM_COLOURS.length)]), big: Math.random() < 0.1,
     }));
-    const stars = Array.from({ length: 24 }, () => ({ x: Math.random(), y: Math.random(), p: Math.random() * 6.28, s: rnd(0.6, 1.6) }));
+    const wind = Array.from({ length: 10 }, () => ({ x: Math.random(), y: Math.random(), v: 0.02 + Math.random() * 0.03 }));
 
-    const hexA = (hex, a) => {
-      const h = hex.replace("#", "");
-      return `rgba(${parseInt(h.slice(0, 2), 16)},${parseInt(h.slice(2, 4), 16)},${parseInt(h.slice(4, 6), 16)},${a})`;
+    const put = (x, y, c, a = 1) => {
+      if (x < 0 || y < 0 || x >= W || y >= H) return;
+      const o = (y * W + x) * 4, d = img.data;
+      d[o] = d[o] + (c[0] - d[o]) * a; d[o + 1] = d[o + 1] + (c[1] - d[o + 1]) * a; d[o + 2] = d[o + 2] + (c[2] - d[o + 2]) * a;
     };
 
     const draw = (t) => {
-      ctx.fillStyle = ground;
-      ctx.fillRect(0, 0, W, H);
-      ctx.globalCompositeOperation = "lighter";
-      for (const b of blobs) {
-        const cx = b.x * W, cy = b.y * H, rr = b.r * Math.max(W, H);
-        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, rr);
-        g.addColorStop(0, hexA(b.color, b.a));
-        g.addColorStop(1, hexA(b.color, 0));
-        ctx.fillStyle = g;
-        ctx.fillRect(0, 0, W, H);
+      const d = img.data;
+      for (let y = 0; y < H; y++) {
+        const fy = (y / Math.max(1, H - 1)) * (BANDS - 1);
+        for (let x = 0; x < W; x++) {
+          const th = BAYER[(y & 3) * 4 + (x & 3)];
+          // Band, with a dithered step between neighbours.
+          const bi = Math.min(BANDS - 1, Math.floor(fy + th - 0.5 + 0.5));
+          let c = band[bi];
+          // Nebulae: quantised glow, dithered at each level's edge.
+          for (const n of nebulae) {
+            const dx = (x / W - n.x) * (W / Math.max(W, H)), dy = (y / H - n.y) * (H / Math.max(W, H));
+            const v = 1 - Math.sqrt(dx * dx + dy * dy) / n.r;
+            if (v <= 0) continue;
+            const lvl = Math.floor(v * 3 + th);
+            if (lvl > 0) c = mixRgb(c, n.c, Math.min(3, lvl) * 0.11);
+          }
+          const o = (y * W + x) * 4;
+          d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = 255;
+        }
       }
-      ctx.globalCompositeOperation = "source-over";
       for (const st of stars) {
-        const tw = 0.5 + 0.5 * Math.sin(st.p + t * 0.0016 * st.s);
-        ctx.fillStyle = `rgba(255,255,255,${(0.06 + 0.3 * tw * tw).toFixed(3)})`;
-        ctx.fillRect(Math.floor(st.x * W), Math.floor(st.y * H), 1, 1);
+        const tw = 0.5 + 0.5 * Math.sin(st.p + t * 0.0018 * st.s);
+        const x = Math.floor(st.x * W), y = Math.floor(st.y * H);
+        put(x, y, st.c, 0.25 + 0.6 * tw);
+        if (st.big && tw > 0.55) { const a = 0.45 * tw; put(x - 1, y, st.c, a); put(x + 1, y, st.c, a); put(x, y - 1, st.c, a); put(x, y + 1, st.c, a); }
       }
+      for (const w of wind) {
+        const x = Math.floor(w.x * W), y = Math.floor(w.y * H);
+        put(x, y, [255, 255, 255], 0.35); put(x - 1, y, [255, 255, 255], 0.18); put(x - 2, y, [255, 255, 255], 0.08);
+      }
+      ctx.putImageData(img, 0, 0);
     };
 
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
@@ -586,24 +663,29 @@ function PixelSky({ theme }) {
     let raf, last = 0;
     const loop = (t) => {
       raf = requestAnimationFrame(loop);
-      const every = sky.slow ? 160 : 80;
+      const every = sky.slow ? 200 : 100;
       if (t - last < every || sky.paused > 0 || document.hidden) return;
-      const dt = Math.min(0.25, (t - last) / 1000);
+      const dt = Math.min(0.3, (t - last) / 1000);
       last = t;
-      for (const b of blobs) {
-        b.x += b.vx * dt * 4; b.y += b.vy * dt * 4;
-        if (b.x < -0.2 || b.x > 1.2) b.vx *= -1;
-        if (b.y < -0.2 || b.y > 1.2) b.vy *= -1;
+      for (const n of nebulae) {
+        n.x += n.vx * dt; n.y += n.vy * dt;
+        if (n.x < 0.1 || n.x > 0.9) n.vx *= -1;
+        if (n.y < 0.15 || n.y > 0.85) n.vy *= -1;
+      }
+      for (const w of wind) {
+        w.x += w.v * dt * 3; w.y += w.v * dt * 0.6;
+        if (w.x > 1.05) { w.x = -0.05; w.y = Math.random(); }
+        if (w.y > 1) w.y = 0;
       }
       draw(t);
     };
     raf = requestAnimationFrame(loop);
     return () => { cancelAnimationFrame(raf); window.removeEventListener("resize", size); };
-  }, [ground, you, rival, special, panel, motion]);
+  }, [ground, you, rival, panel, motion, P]);
 
   return (
     <canvas ref={ref} aria-hidden="true"
-      style={{ position: "fixed", inset: 0, width: "100%", height: "100%", imageRendering: "pixelated", zIndex: 0, pointerEvents: "none" }} />
+      style={{ position: "fixed", left: 0, top: 0, imageRendering: "pixelated", zIndex: 0, pointerEvents: "none" }} />
   );
 }
 
@@ -617,66 +699,69 @@ const InkStyle = createContext("hatch");
 const inkOf = (owner) => (owner === "S" ? { stroke: "cross", dir: 1 } : { stroke: undefined, dir: owner === "B" ? -1 : 1 });
 
 /**
- * One square of a piece: a pixel-glass tile. Pure CSS (no SVG), so a full
- * board stays cheap on phones.
- *   stroke: glass | solid | outline   — a claimed square (theme picks the default)
- *           ghost                     — dashed landing guide
- *           slot                      — faint empty square
- *           pending                   — placed this turn, not yet revealed
- * `fluid` fills its box instead of taking `size`.
+ * One square of a piece, drawn as a pixel tile. At full size (8+ pixels)
+ * it's the block from the art: a dark outer ring, a bright inner ring, a
+ * three-pixel highlight in the top-left and a flat fill. Smaller tiles drop
+ * rings until only the fill and one highlight pixel are left.
+ *   stroke: pixel | flat | outline   — a claimed square (theme picks the default)
+ *           ghost                    — landing guide
+ *           slot                     — faint empty square
+ *           pending                  — placed this turn, not yet revealed (dithered)
+ * `size` is in screen px and should be a whole number of pixels (usePx).
+ * `fluid` fills its box instead.
  */
 function Ink({ size, color, stroke, fluid = false, className, style }) {
   const picked = useContext(InkStyle);
+  const P = usePx();
   const kind = stroke || picked;
-  const px = Math.max(1, Math.round(size / 14));          // one "pixel" at this tile size
-  const inset = Math.max(1, Math.round(size * 0.07));
+  const art = Math.max(1, Math.round(size / P)); // tile width in pixels
   const box = fluid ? "100%" : size;
-  // Square corners on purpose: clip-path would also cut off the glow, and at
-  // this size a square already reads as one big pixel.
-  const base = { width: box, height: box, boxSizing: "border-box", pointerEvents: "none" };
+  const base = { width: box, height: box, boxSizing: "border-box", pointerEvents: "none", flexShrink: 0 };
+  const c = tileShades(color);
+  const layer = (col, x, y, w, h) => `linear-gradient(${col}, ${col}) ${x} ${y} / ${w} ${h} no-repeat`;
+  const rings = (n) => {
+    // n = how many of: outer ring, inner ring, highlight the tile has room for
+    const L = [];
+    if (n >= 3) L.push(layer(c.hi, PX, PX, px(2), PX), layer(c.hi, PX, px(2), PX, PX));
+    else if (n >= 1) L.push(layer(c.hi, n >= 2 ? PX : 0, n >= 2 ? PX : 0, PX, PX));
+    if (n >= 2) {
+      L.push(layer(c.base, px(2), px(2), `calc(100% - ${px(4)})`, `calc(100% - ${px(4)})`));
+      L.push(layer(c.light, PX, PX, `calc(100% - ${px(2)})`, `calc(100% - ${px(2)})`));
+      L.push(c.dark);
+    } else {
+      L.push(layer(c.base, 0, 0, `calc(100% - ${PX})`, `calc(100% - ${PX})`), c.dark);
+    }
+    return L.join(", ");
+  };
+  // Pixel dither (every other pixel): the pixel-art way to say "not quite there".
+  const dither = (col) => `repeating-conic-gradient(${col} 0 25%, transparent 0 50%) 0 0 / ${px(2)} ${px(2)}`;
+
   let look;
   if (kind === "ghost") {
-    look = { border: `${Math.max(1, px)}px dashed ${color}`, background: `color-mix(in srgb, ${color} 14%, transparent)` };
+    look = { background: dither(`color-mix(in srgb, ${color} 55%, transparent)`), boxShadow: `inset 0 0 0 ${PX} ${color}` };
   } else if (kind === "slot") {
-    look = { border: `1px solid color-mix(in srgb, ${color} 55%, transparent)`, background: `color-mix(in srgb, ${color} 8%, transparent)` };
+    look = { background: `color-mix(in srgb, ${color} 14%, transparent)`, boxShadow: `inset 0 0 0 ${PX} color-mix(in srgb, ${color} 40%, transparent)` };
   } else if (kind === "pending") {
-    look = {
-      border: `${Math.max(1, px)}px dashed var(--tb-text)`,
-      background: `color-mix(in srgb, ${color} 38%, transparent)`,
-    };
+    look = { background: `${dither("rgba(0,0,0,.45)")}, ${rings(art >= 8 ? 3 : art >= 5 ? 2 : 1)}` };
   } else if (kind === "outline") {
-    look = {
-      border: `${Math.max(2, px * 2)}px solid ${color}`,
-      background: `color-mix(in srgb, ${color} 10%, transparent)`,
-      boxShadow: `0 0 ${Math.round(size * 0.35)}px color-mix(in srgb, ${color} calc(var(--tb-glow-a) * 50%), transparent)`,
-    };
-  } else if (kind === "solid") {
-    look = {
-      background: color,
-      boxShadow: `inset ${px}px ${px}px 0 rgba(255,255,255,.45), inset -${px}px -${px}px 0 rgba(0,0,0,.35)`,
-    };
+    look = { boxShadow: `inset 0 0 0 ${PX} ${c.light}, inset 0 0 0 ${px(2)} ${c.dark}`, background: `color-mix(in srgb, ${color} 14%, transparent)` };
+  } else if (kind === "flat") {
+    look = { background: `${layer(c.base, 0, 0, `calc(100% - ${PX})`, `calc(100% - ${PX})`)}, ${c.dark}` };
   } else {
-    // Glass: a see-through tint, a bright pixel highlight on the top-left,
-    // a deeper edge on the bottom-right, a sparkle pixel and a soft glow.
-    const spark = Math.max(1, px * 2);
-    look = {
-      background:
-        `linear-gradient(rgba(255,255,255,.85), rgba(255,255,255,.85)) ${inset + px}px ${inset + px}px / ${spark}px ${spark}px no-repeat, ` +
-        `linear-gradient(135deg, color-mix(in srgb, ${color} 78%, white) 0%, color-mix(in srgb, ${color} 62%, transparent) 55%, color-mix(in srgb, ${color} 42%, transparent) 100%)`,
-      boxShadow:
-        `inset ${px}px ${px}px 0 rgba(255,255,255,.55), inset -${px}px -${px}px 0 color-mix(in srgb, ${color} 55%, black), ` +
-        `0 0 ${Math.round(size * 0.45)}px color-mix(in srgb, ${color} calc(var(--tb-glow-a) * 60%), transparent)`,
-    };
+    look = { background: rings(art >= 8 ? 3 : art >= 5 ? 2 : 1) };
   }
   return <div aria-hidden="true" className={className} style={{ ...base, ...look, ...style }} />;
 }
 
 /** A block's silhouette, drawn in ink. Used on cards, in the deck and the tutorial. */
-function BlockGlyph({ blockId, box = 40, color, gap = 1, glow = false }) {
+function BlockGlyph({ blockId, box = 40, color, gap: _gap, glow = false }) {
+  const P = usePx();
   const cells = BLOCKS[blockId].cells;
   const { h, w } = boundsOf(cells);
   const span = Math.max(h, w);
-  const size = Math.max(4, Math.floor((box - gap * (span - 1)) / span));
+  // Whole pixels only: each square is k pixels with no gap — the tile rings separate them.
+  const gap = 0;
+  const size = Math.max(1, Math.floor(box / span / P)) * P;
   const filled = new Set(cells.map(([r, c]) => r * 100 + c));
   return (
     <div className={glow ? "tb-shine" : undefined} style={{
@@ -758,13 +843,69 @@ function FloatingPiece({ cells, cell, gap, color, x, y, lift, legal, flip = fals
   );
 }
 
+/**
+ * The inside of a dream block: coloured pixel stars twinkling in the dark,
+ * behind the board's squares. One canvas pixel = one screen pixel unit.
+ */
+function DreamStars({ width, height }) {
+  const P = usePx();
+  const ref = useRef(null);
+  useEffect(() => {
+    const cv = ref.current;
+    if (!cv) return;
+    const W = Math.max(1, Math.round(width / P)), H = Math.max(1, Math.round(height / P));
+    cv.width = W; cv.height = H;
+    const ctx = cv.getContext("2d");
+    const n = Math.round((W * H) / 70);
+    const stars = Array.from({ length: n }, () => ({
+      x: Math.floor(Math.random() * W), y: Math.floor(Math.random() * H),
+      c: DREAM_COLOURS[Math.floor(Math.random() * DREAM_COLOURS.length)],
+      p: Math.random() * 6.28, s: 0.5 + Math.random(), big: Math.random() < 0.12,
+    }));
+    const draw = (t) => {
+      ctx.clearRect(0, 0, W, H);
+      for (const st of stars) {
+        const tw = 0.5 + 0.5 * Math.sin(st.p + t * 0.002 * st.s);
+        if (tw < 0.15) continue;
+        ctx.globalAlpha = 0.35 + 0.65 * tw;
+        ctx.fillStyle = st.c;
+        ctx.fillRect(st.x, st.y, 1, 1);
+        if (st.big && tw > 0.6) {
+          ctx.globalAlpha = 0.5 * tw;
+          ctx.fillRect(st.x - 1, st.y, 1, 1); ctx.fillRect(st.x + 1, st.y, 1, 1);
+          ctx.fillRect(st.x, st.y - 1, 1, 1); ctx.fillRect(st.x, st.y + 1, 1, 1);
+        }
+      }
+      ctx.globalAlpha = 1;
+    };
+    draw(0);
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (reduced) return;
+    let raf, last = 0;
+    const loop = (t) => {
+      raf = requestAnimationFrame(loop);
+      if (t - last < 125 || sky.paused > 0 || document.hidden) return;
+      last = t;
+      draw(t);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [width, height, P]);
+  return (
+    <canvas ref={ref} aria-hidden="true"
+      style={{ position: "absolute", left: 0, top: 0, width, height, imageRendering: "pixelated", pointerEvents: "none" }} />
+  );
+}
+
 function BoardGrid({
   board, cell, ink, ghostKeys, ghostLegal, ghostInk, contestedKeys,
   boardRef, onPointerDown, theme, youSide = "A", ghostGolden = false,
   pendingKeys = null, pendingInk = null,
 }) {
-  const gap = theme.gap;
+  const P = usePx();
+  const gap = (theme.gap ?? 1) * P;
   const cb = theme.colorblind;
+  const boardW = COLS * cell + (COLS - 1) * gap, boardH = ROWS * cell + (ROWS - 1) * gap;
   const markSize = Math.max(7, Math.round(cell * 0.5));
 
   return (
@@ -777,14 +918,14 @@ function BoardGrid({
         gridTemplateColumns: `repeat(${COLS}, ${cell}px)`,
         gridTemplateRows: `repeat(${ROWS}, ${cell}px)`,
         gap, touchAction: "none",
-        // A pane of frosted glass. The frame is drawn with shadows rather than
-        // padding so cell positions (dragging, clear animations) stay exact.
-        background: "color-mix(in srgb, var(--tb-panel-solid) 30%, transparent)",
-        backdropFilter: "blur(10px) saturate(1.3)",
-        WebkitBackdropFilter: "blur(10px) saturate(1.3)",
-        boxShadow: "0 0 0 4px color-mix(in srgb, var(--tb-panel-solid) 30%, transparent), 0 0 0 6px var(--tb-edge), 0 18px 40px rgba(0,0,0,.35)",
+        // A dream block: near-black inside, a white pixel outline, stars
+        // within. The frame is drawn with shadows rather than padding so cell
+        // positions (dragging, clear animations) stay exact.
+        background: "color-mix(in srgb, var(--tb-ground) 45%, #05040d)",
+        boxShadow: `0 0 0 ${P}px color-mix(in srgb, var(--tb-ground) 45%, #05040d), 0 0 0 ${2 * P}px var(--tb-text), 0 0 0 ${3 * P}px color-mix(in srgb, var(--tb-ground) 60%, black)`,
       }}
     >
+      <DreamStars width={boardW} height={boardH} />
       {board.map((row, r) =>
         row.map((v, c) => {
           const k = key(r, c);
@@ -814,8 +955,9 @@ function BoardGrid({
               className={contestedKeys.has(k) ? "tb-contest" : v ? "tb-drop" : undefined}
               style={{
                 position: "relative",
-                background: v ? undefined : "color-mix(in srgb, var(--tb-line) 22%, transparent)",
-                boxShadow: v ? undefined : "inset 1px 1px 0 var(--tb-edge), inset -1px -1px 0 var(--tb-shade)",
+                // Empty: a faint pixel socket the stars show through.
+                background: v ? undefined : "rgba(255,255,255,.045)",
+                boxShadow: v ? undefined : `inset ${P}px ${P}px 0 rgba(255,255,255,.05)`,
               }}
             >
               {v && (
@@ -864,30 +1006,28 @@ function QueueBar({ piece, queue, pass, selected, dragging, ink, onPress, disabl
     <div className="flex items-stretch gap-1.5 mb-1.5" style={{ height: 66 }}>
       <div
         onPointerDown={(e) => !disabled && onPress(e, 0)}
+        data-queue-card=""
         className="relative flex flex-col items-center justify-center gap-1 select-none shrink-0"
         style={{
           width: 92,
           ...sk(selected ? ink : UI.line),
-          ...(spent ? { borderImage: "none", border: `1.5px dashed ${UI.dim}` } : null),
+          ...(spent ? { borderImage: "none", border: `${PX} dashed ${UI.dim}` } : null),
           background: spent ? "color-mix(in srgb, var(--tb-ground) 70%, black)" : selected ? UI.panel : "transparent",
           touchAction: "none",
           opacity: spent ? 0.3 : disabled ? 0.35 : selected && dragging ? 0.25 : 1,
-          transform: selected && !dragging ? "rotate(-1.2deg) translateY(-2px)" : "none",
-          transition: "transform 140ms ease-out",
+          transform: selected && !dragging ? `translateY(calc(var(--p) * -1))` : "none",
         }}
       >
         {HAS_KEYBOARD && (
-          <span className="absolute text-[10px]" style={{ top: 5, left: 8, color: UI.dim, opacity: 0.8 }}>
+          <span className="absolute tb-t" style={{ top: 5, left: 8, color: UI.dim, opacity: 0.8 }}>
             {keyLabel(keys.slot1)}
           </span>
         )}
         <BlockGlyph blockId={piece} box={34} color={ink} dir={dir} />
-        <div className="text-[11px] tracking-wider" style={{ color: UI.dim }}>
-          {BLOCKS[piece].name} · {BLOCKS[piece].cells.length}
-        </div>
+        <div className="tb-t" style={{ color: UI.dim }}>{BLOCKS[piece].name}</div>
       </div>
       <div className="flex-1 min-w-0 flex flex-col justify-center px-2" style={{ ...sk(UI.line) }}>
-        <div className="flex items-center justify-between text-[10px] tracking-[0.2em] mb-1" style={{ color: UI.dim }}>
+        <div className="flex items-center justify-between tb-t mb-1" style={{ color: UI.dim }}>
           <span>NEXT</span>
           <span>PASS {pass}</span>
         </div>
@@ -907,7 +1047,7 @@ function QueueBar({ piece, queue, pass, selected, dragging, ink, onPress, disabl
 function OppQueue({ piece, queue, ink, dir }) {
   if (piece === undefined || piece === null) return null;
   return (
-    <div className="flex items-center gap-2 shrink-0 pb-1.5 text-[10px] tracking-[0.2em]" style={{ color: UI.dim }}>
+    <div className="flex items-center gap-2 shrink-0 pb-1.5 tb-t" style={{ color: UI.dim }}>
       <span>THEM</span>
       <BlockGlyph blockId={piece} box={18} color={ink} dir={dir} />
       <span style={{ opacity: 0.6 }}>then</span>
@@ -922,17 +1062,17 @@ function ActionBar({ onRotate, onCommit, onDiscard, canRotate, canCommit, canDis
   return (
     <div className="flex items-center gap-1.5 mb-1">
       <button onClick={onRotate} disabled={!canRotate}
-        className="flex items-center justify-center gap-1.5 text-[12px] tracking-widest disabled:opacity-30 flex-1"
+        className="flex items-center justify-center gap-1.5 tb-t disabled:opacity-30 flex-1"
         style={{ height: 42, ...sk() }}>
         <RotateCw size={13} /> TURN
       </button>
       <button onClick={onCommit} disabled={!canCommit}
-        className="flex items-center justify-center gap-1.5 text-[12px] tracking-widest disabled:opacity-40"
+        className="flex items-center justify-center gap-1.5 tb-t disabled:opacity-40"
         style={{ height: 42, flex: 1.4, ...(canCommit ? skFill(ink) : sk(UI.line)), color: canCommit ? UI.text : UI.dim }}>
         <Check size={13} /> LOCK IN
       </button>
       <button onClick={onDiscard} disabled={!canDiscard}
-        className="flex items-center justify-center gap-1.5 text-[12px] tracking-widest disabled:opacity-30 flex-1"
+        className="flex items-center justify-center gap-1.5 tb-t disabled:opacity-30 flex-1"
         style={{ height: 42, ...sk(), color: UI.dim }}>
         <SkipForward size={13} /> PASS
       </button>
@@ -941,35 +1081,48 @@ function ActionBar({ onRotate, onCommit, onDiscard, canRotate, canCommit, canDis
 }
 
 /** Territory as three pencil-shaded strips over a drawn baseline. */
-/** A segmented pixel fill: 4px blocks with 1px gaps, glowing in its colour. */
-const pixelFill = (color) => ({
-  background: `repeating-linear-gradient(90deg, ${color} 0 4px, color-mix(in srgb, ${color} 35%, transparent) 4px 5px)`,
-  boxShadow: `0 0 8px color-mix(in srgb, ${color} 60%, transparent)`,
-});
+const METER_W = 8; // pixels wide
+
+/**
+ * The score meter, standing beside the board: the bottom player's share
+ * fills up from the bottom, the top player's down from the top, meeting
+ * where the scores stand. Heights step in whole pixels.
+ */
+function VMeter({ a, b, inkA, inkB, height }) {
+  const P = usePx();
+  const inner = Math.max(0, height - 4 * P);
+  const total = Math.max(1, a + b);
+  const hA = Math.round(((a / total) * inner) / P) * P;
+  const hB = Math.round(((b / total) * inner) / P) * P;
+  const bar = (color) => ({
+    background: tileShades(color).base,
+    boxShadow: `inset ${P}px 0 0 ${tileShades(color).light}, inset -${P}px 0 0 ${tileShades(color).dark}`,
+    transition: "height 400ms steps(6)",
+  });
+  return (
+    <div aria-label={`Score ${a} to ${b}`} className="relative shrink-0"
+      style={{ width: METER_W * P, height, padding: 2 * P - P, ...sk(UI.dim), background: "color-mix(in srgb, var(--tb-ground) 50%, black)", boxSizing: "border-box" }}>
+      <div className="absolute" style={{ left: P, right: P, top: P, height: hB, ...bar(inkB) }} />
+      <div className="absolute" style={{ left: P, right: P, bottom: P, height: hA, ...bar(inkA) }} />
+    </div>
+  );
+}
 
 function ScoreBar({ score, turn, turns, inkA, inkB, labelA, labelB }) {
-  // Scores can exceed the square count (centre squares are worth more), so
-  // the bar is each side's share of what's been scored so far.
-  const total = Math.max(1, score.a + score.b);
   return (
     <div className="shrink-0 pb-2">
       <div className="flex items-end justify-between mb-1.5">
         <span className="flex items-baseline gap-1.5" style={{ color: inkA }}>
-          <span className="tb-num text-[26px] leading-none tabular-nums">{score.a}</span>
-          <span className="text-[11px] tracking-[0.25em]">{labelA}</span>
+          <span className="tb-num tb-t tabular-nums">{score.a}</span>
+          <span className="tb-t">{labelA}</span>
         </span>
-        <span className="text-[12px] tracking-[0.15em] pb-0.5" style={{ color: UI.dim }}>
+        <span className="tb-t pb-0.5" style={{ color: UI.dim }}>
           TURN {Math.min(turn, turns)}/{turns}
         </span>
         <span className="flex items-baseline gap-1.5" style={{ color: inkB }}>
-          <span className="text-[11px] tracking-[0.25em]">{labelB}</span>
-          <span className="tb-num text-[26px] leading-none tabular-nums">{score.b}</span>
+          <span className="tb-t">{labelB}</span>
+          <span className="tb-num tb-t tabular-nums">{score.b}</span>
         </span>
-      </div>
-      <div className="flex w-full p-[2px]" style={{ height: 12, background: "color-mix(in srgb, var(--tb-panel-solid) 35%, transparent)", clipPath: CLIP, boxShadow: BEVEL }}>
-        <div style={{ width: `${(score.a / total) * 100}%`, ...pixelFill(inkA), transition: "width 400ms steps(8)" }} />
-        <div style={{ flex: 1 }} />
-        <div style={{ width: `${(score.b / total) * 100}%`, ...pixelFill(inkB), transition: "width 400ms steps(8)" }} />
       </div>
     </div>
   );
@@ -1066,14 +1219,19 @@ function AmbientField({ colors, theme, paused }) {
   }, [animate, dims]);
 
   const ink = { A: colors.you, B: colors.rival, S: colors.special };
-  const size = FIELD_CELL - 6;
+  // Snapped to the pixel grid: squares sit on whole pixels, no tilt.
+  const P = usePx();
+  const cellPx = Math.round(FIELD_CELL / P) * P;
+  const size = cellPx - 2 * P;
+  const W = dims.cols * cellPx, H = dims.rows * cellPx;
+  const vw = typeof window === "undefined" ? 1200 : window.innerWidth;
+  const vh = typeof window === "undefined" ? 800 : window.innerHeight;
+  const ox = Math.round((vw - W) / 2 / P) * P, oy = Math.round((vh - H) / 2 / P) * P;
 
   return (
     <div aria-hidden="true" className="absolute inset-0 overflow-hidden pointer-events-none">
       <div style={{
-        position: "absolute", left: "50%", top: "50%",
-        width: dims.cols * FIELD_CELL, height: dims.rows * FIELD_CELL,
-        transform: "translate(-50%, -50%) rotate(-14deg)",
+        position: "absolute", left: ox, top: oy, width: W, height: H,
         opacity: field.fading ? 0 : 0.2,
         transition: "opacity 1400ms ease",
       }}>
@@ -1082,7 +1240,7 @@ function AmbientField({ colors, theme, paused }) {
           return (
             // Every square fades in once, when it first appears, at its own pace.
             <div key={k} className={animate ? "tb-fadein" : undefined}
-              style={{ position: "absolute", left: c * FIELD_CELL + 3, top: r * FIELD_CELL + 3, width: size, height: size }}>
+              style={{ position: "absolute", left: c * cellPx + P, top: r * cellPx + P, width: size, height: size }}>
               <Ink size={size} color={ink[v.owner]} {...inkOf(v.owner)} seed={r * 7 + c} />
             </div>
           );
@@ -1101,33 +1259,32 @@ function Popup({ title, onClose, children, pinned, maxW = 430 }) {
         // A dimmed, see-through backdrop. The sky behind is paused while a
         // popup is open (see PixelSky), so the frosted panel isn't re-blurring
         // a moving picture every frame.
-        background: "color-mix(in srgb, var(--tb-ground) 62%, transparent)",
+        // Dimmed with a pixel dither rather than a blur.
+        background: "repeating-conic-gradient(rgba(0,0,0,.55) 0 25%, rgba(0,0,0,.25) 0 50%) 0 0 / calc(var(--p) * 2) calc(var(--p) * 2)",
         padding: "clamp(14px, 5vw, 56px) clamp(14px, 5vw, 56px)",
         paddingTop: "max(clamp(14px,5vw,56px), env(safe-area-inset-top,0px))",
         paddingBottom: "max(clamp(14px,5vw,56px), env(safe-area-inset-bottom,0px))",
       }}
       onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
+      <PxContext.Provider value={BASE_P}>
       <div
-        className="tb-pop tb-scale-pop w-full flex flex-col overflow-hidden"
+        className="tb-pop tb-scale w-full flex flex-col overflow-hidden"
         style={{
           maxWidth: maxW,
           maxHeight: "100%",
-          background: "color-mix(in srgb, var(--tb-panel-solid) 55%, transparent)",
-          backdropFilter: "blur(18px) saturate(1.4)",
-          WebkitBackdropFilter: "blur(18px) saturate(1.4)",
-          ...sk(UI.dim),
-          clipPath: CLIP_BIG,
-          boxShadow: `${BEVEL}, inset 0 1px 30px rgba(255,255,255,.04)`,
+          background: "color-mix(in srgb, var(--tb-panel-solid) 92%, black)",
+          ...sk("var(--tb-text)"),
         }}
       >
         <div className="flex items-center justify-between px-4 h-12 shrink-0 mx-2" style={RULE_BELOW}>
-          <span className="text-[13px] tracking-[0.3em]" style={{ color: UI.text }}>{title}</span>
+          <span className="tb-t" style={{ color: UI.text }}>{title}</span>
           <button onClick={onClose} style={{ color: UI.dim }} aria-label="Close" className="p-2 -mr-2"><X size={17} /></button>
         </div>
         {pinned && <div className="px-4 pt-3 shrink-0">{pinned}</div>}
         <div className="tb-scroll flex-1 min-h-0 overflow-y-auto px-4 pb-5">{children}</div>
       </div>
+      </PxContext.Provider>
     </div>
   );
 }
@@ -1146,17 +1303,17 @@ function SettingsModal({ name, rename, status, theme, setTheme, onClose }) {
   return (
     <Popup title="SETTINGS" onClose={onClose}>
       <div className="pt-4">
-        <div className="text-[13px] tracking-[0.2em] mb-3">HANDLE</div>
+        <div className="tb-t mb-3">HANDLE</div>
         <input value={draft} maxLength={16}
           onChange={(e) => { setDraft(e.target.value); setNameErr(null); }} onBlur={() => rename(draft)}
           onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-          className={`w-full rounded px-3 ${nameErr ? "mb-2" : "mb-7"} text-sm font-mono`}
+          className={`w-full rounded px-3 ${nameErr ? "mb-2" : "mb-7"} tb-t font-mono`}
           style={{ height: 44, background: UI.ground, ...sk(nameErr ? UI.badSoft : UI.line), color: UI.text, outline: "none" }} />
-        {nameErr && <div className="text-[12px] mb-6" style={{ color: UI.bad }}>{nameErr}</div>}
+        {nameErr && <div className="tb-t mb-6" style={{ color: UI.bad }}>{nameErr}</div>}
 
         {HAS_KEYBOARD && <ControlsSection />}
 
-        <div className="text-[11px] tracking-[0.24em] mb-1" style={{ color: UI.dim }}>ACCESSIBILITY</div>
+        <div className="tb-t mb-1" style={{ color: UI.dim }}>ACCESSIBILITY</div>
         <Row label="COLOURBLIND MARKS">
           <Toggle on={theme.colorblind} onClick={() => set({ colorblind: !theme.colorblind })} />
         </Row>
@@ -1169,21 +1326,21 @@ function SettingsModal({ name, rename, status, theme, setTheme, onClose }) {
         <Row label="SHOW TURN CLOCK">
           <Toggle on={theme.showTimer} onClick={() => set({ showTimer: !theme.showTimer })} />
         </Row>
-        <div className="text-[11px] leading-relaxed mt-2 mb-7" style={{ color: UI.dim }}>
+        <div className="tb-t mt-2 mb-7" style={{ color: UI.dim }}>
           Marks put ○ on your squares
           and ✕ on your opponent's, so the board reads without colour.
         </div>
 
-        <div className="text-[11px] tracking-[0.24em] mb-2" style={{ color: UI.dim }}>CONNECTION</div>
-        <div className="flex items-center gap-2 text-[12px] mb-1" style={{ color: status === "online" ? UI.good : UI.dim }}>
+        <div className="tb-t mb-2" style={{ color: UI.dim }}>CONNECTION</div>
+        <div className="flex items-center gap-2 tb-t mb-1" style={{ color: status === "online" ? UI.good : UI.dim }}>
           {status === "online" ? <Wifi size={12} /> : <WifiOff size={12} />}
           SERVER {status.toUpperCase()}
         </div>
-        <div className="flex items-center gap-2 text-[12px] mb-1.5" style={{ color: IS_SECURE ? UI.good : GOLD }}>
+        <div className="flex items-center gap-2 tb-t mb-1.5" style={{ color: IS_SECURE ? UI.good : GOLD }}>
           {IS_SECURE ? <Lock size={12} /> : <ShieldAlert size={12} />}
           {IS_SECURE ? "ENCRYPTED (TLS)" : "NOT ENCRYPTED"}
         </div>
-        <div className="text-[11px] leading-relaxed pb-2" style={{ color: UI.dim }}>
+        <div className="tb-t pb-2" style={{ color: UI.dim }}>
           {SERVER_URL}
           {!IS_SECURE && " — fine on your own machine, unsafe over a real network."}
         </div>
@@ -1302,14 +1459,14 @@ function DeckModal({ loadout, setLoadout, color, onClose }) {
                 opacity: drag && drag.from === i ? 0.25 : 1,
               }}>
               <BlockGlyph blockId={blockId} box={28} color={color} />
-              <span className="text-[9px] tracking-wider" style={{ color: UI.dim }}>
+              <span className="tb-t" style={{ color: UI.dim }}>
                 {BLOCKS[blockId].name}
               </span>
             </div>
           );
         })}
       </div>
-      <div className="text-[11px] leading-relaxed pt-2 pb-1" style={{ color: UI.dim }}>
+      <div className="tb-t pt-2 pb-1" style={{ color: UI.dim }}>
         You play one piece per turn, straight from the front of your queue. These
         eight come round once per pass, shuffled each time — and your opponent can see them.
       </div>
@@ -1318,12 +1475,12 @@ function DeckModal({ loadout, setLoadout, color, onClose }) {
 
   return (
     <Popup title="YOUR BLOCKS" onClose={onClose} pinned={pinned}>
-      <div className="text-[12px] leading-relaxed pt-3 pb-4" style={{ color: UI.dim }}>
+      <div className="tb-t pt-3 pb-4" style={{ color: UI.dim }}>
         Hold a block for a moment, then drag it up into a slot.
       </div>
       {["SMALL", "MEDIUM", "BIG"].map((g) => (
         <div key={g} className="mb-5">
-          <div className="text-[12px] tracking-[0.2em] mb-2" style={{ color: UI.dim }}>
+          <div className="tb-t mb-2" style={{ color: UI.dim }}>
             {g} · {g === "SMALL" ? "1–3" : g === "MEDIUM" ? "4–7" : "8–12"}
           </div>
           <div className="grid grid-cols-4 gap-1.5">
@@ -1334,7 +1491,7 @@ function DeckModal({ loadout, setLoadout, color, onClose }) {
                   className="rounded flex flex-col items-center justify-center gap-1 select-none"
                   style={{ height: 68, background: inDeck ? UI.cell : "transparent", ...sk(inDeck ? color : UI.line) }}>
                   <BlockGlyph blockId={blockId} box={30} color={inDeck ? color : UI.dim} />
-                  <span className="text-[9px] tracking-wider" style={{ color: UI.dim }}>
+                  <span className="tb-t" style={{ color: UI.dim }}>
                     {BLOCKS[blockId].name} · {BLOCKS[blockId].cells.length}
                   </span>
                 </div>
@@ -1391,9 +1548,9 @@ function Sparkline({ values, color, height = 58 }) {
 function StatCell({ label, value, sub, color }) {
   return (
     <div className="rounded p-2.5" style={{ background: UI.panel, ...sk(UI.line) }}>
-      <div className="text-[10px] tracking-[0.24em] mb-1.5" style={{ color: UI.dim }}>{label}</div>
-      <div className="text-lg leading-none" style={{ color: color || UI.text }}>{value}</div>
-      {sub && <div className="text-[11px] mt-1.5" style={{ color: UI.dim }}>{sub}</div>}
+      <div className="tb-t mb-1.5" style={{ color: UI.dim }}>{label}</div>
+      <div className="tb-t" style={{ color: color || UI.text }}>{value}</div>
+      {sub && <div className="tb-t mt-1.5" style={{ color: UI.dim }}>{sub}</div>}
     </div>
   );
 }
@@ -1409,7 +1566,7 @@ function StatsModal({ profile, status, onClose }) {
           {connected
             ? <UserRound size={20} style={{ color: UI.dim, margin: "0 auto 12px" }} />
             : <WifiOff size={20} style={{ color: UI.dim, margin: "0 auto 12px" }} />}
-          <div className="text-[13px] leading-relaxed" style={{ color: UI.dim }}>
+          <div className="tb-t" style={{ color: UI.dim }}>
             {connected ? (
               <>Sign in to see your ranked stats.<br />Solo and take-turns matches aren't ranked.</>
             ) : status === "connecting" ? (
@@ -1439,16 +1596,16 @@ function StatsModal({ profile, status, onClose }) {
         <div className="flex items-center gap-4">
           <div className="rounded flex items-center justify-center shrink-0"
             style={{ width: 74, height: 74, background: placed ? `${rank.color}1F` : UI.cell, ...sk(placed ? rank.color : UI.line) }}>
-            <span className="text-3xl leading-none" style={{ color: placed ? rank.color : UI.dim }}>{placed ? rank.name : "–"}</span>
+            <span className="text-3xl" style={{ color: placed ? rank.color : UI.dim }}>{placed ? rank.name : "–"}</span>
           </div>
           <div className="min-w-0 flex-1">
             {placed ? (
               <>
                 <div className="flex items-baseline gap-1.5">
-                  <span className="text-2xl leading-none">{tr}</span>
-                  <span className="text-[12px]" style={{ color: UI.dim }}>TR ±{Math.round(profile.rating.rd)}</span>
+                  <span className="tb-t">{tr}</span>
+                  <span className="tb-t" style={{ color: UI.dim }}>TR ±{Math.round(profile.rating.rd)}</span>
                 </div>
-                <div className="text-[11px] tracking-[0.2em] mt-2 mb-1.5" style={{ color: UI.dim }}>
+                <div className="tb-t mt-2 mb-1.5" style={{ color: UI.dim }}>
                   {next ? `${toNext} TR TO ${next.name}` : "TOP OF THE LADDER"}
                 </div>
                 <div className="h-1 w-full rounded overflow-hidden" style={{ background: UI.cell }}>
@@ -1457,8 +1614,8 @@ function StatsModal({ profile, status, onClose }) {
               </>
             ) : (
               <>
-                <div className="text-sm mb-1">UNRANKED</div>
-                <div className="text-[12px] leading-relaxed" style={{ color: UI.dim }}>
+                <div className="tb-t mb-1">UNRANKED</div>
+                <div className="tb-t" style={{ color: UI.dim }}>
                   {PLACEMENT_GAMES - st.games} more ranked {PLACEMENT_GAMES - st.games === 1 ? "match" : "matches"} to place.
                 </div>
               </>
@@ -1468,7 +1625,7 @@ function StatsModal({ profile, status, onClose }) {
       </div>
 
       <div className="mt-4">
-        <div className="text-[11px] tracking-[0.24em] mb-2" style={{ color: UI.dim }}>LADDER</div>
+        <div className="tb-t mb-2" style={{ color: UI.dim }}>LADDER</div>
         <div className="flex gap-[3px]">
           {RANKS.map((r, i) => {
             const here = placed && i === ri;
@@ -1480,7 +1637,7 @@ function StatsModal({ profile, status, onClose }) {
                   background: here ? r.color : past ? `${r.color}66` : UI.cell,
                   transition: "height 180ms ease",
                 }} />
-                <span className="text-[9px]" style={{ color: here ? r.color : UI.dim, opacity: here ? 1 : 0.5 }}>{r.name}</span>
+                <span className="tb-t" style={{ color: here ? r.color : UI.dim, opacity: here ? 1 : 0.5 }}>{r.name}</span>
               </div>
             );
           })}
@@ -1490,8 +1647,8 @@ function StatsModal({ profile, status, onClose }) {
       {st.history.length > 1 && (
         <div className="mt-5 rounded p-3" style={{ background: UI.panel, ...sk(UI.line) }}>
           <div className="flex items-center justify-between mb-1">
-            <span className="text-[11px] tracking-[0.24em]" style={{ color: UI.dim }}>TR · LAST {st.history.length}</span>
-            <span className="text-[11px]" style={{ color: UI.dim }}>{Math.min(...st.history)} – {Math.max(...st.history)}</span>
+            <span className="tb-t" style={{ color: UI.dim }}>TR · LAST {st.history.length}</span>
+            <span className="tb-t" style={{ color: UI.dim }}>{Math.min(...st.history)} – {Math.max(...st.history)}</span>
           </div>
           <Sparkline values={st.history} color={rank.color} />
         </div>
@@ -1507,22 +1664,22 @@ function StatsModal({ profile, status, onClose }) {
       </div>
 
       <div className="mt-5 mb-2">
-        <div className="text-[11px] tracking-[0.24em] mb-2" style={{ color: UI.dim }}>RECENT MATCHES</div>
+        <div className="tb-t mb-2" style={{ color: UI.dim }}>RECENT MATCHES</div>
         {st.recent.length === 0 ? (
-          <div className="rounded p-4 text-center text-[12px] leading-relaxed" style={{ background: UI.panel, ...sk(UI.line), color: UI.dim }}>
+          <div className="rounded p-4 text-center tb-t" style={{ background: UI.panel, ...sk(UI.line), color: UI.dim }}>
             No ranked matches yet.
           </div>
         ) : (
           <div className="space-y-1">
             {st.recent.map((m, i) => (
               <div key={i} className="flex items-center gap-2.5 rounded px-3 py-2" style={{ background: UI.panel, ...sk(UI.line) }}>
-                <span className="text-[12px] w-4 shrink-0" style={{ color: m.drew ? UI.dim : m.won ? UI.good : UI.bad }}>
+                <span className="tb-t w-4 shrink-0" style={{ color: m.drew ? UI.dim : m.won ? UI.good : UI.bad }}>
                   {m.drew ? "D" : m.won ? "W" : "L"}
                 </span>
-                <span className="text-[13px] flex-1 truncate">{m.name}</span>
-                <span className="text-[11px]" style={{ color: UI.dim }}>{m.score[0]}–{m.score[1]}</span>
-                <span className="text-[11px] w-8 text-right" style={{ color: UI.dim }}>{fmtTime(m.seconds)}</span>
-                <span className="text-[12px] w-9 text-right" style={{ color: m.delta > 0 ? UI.good : UI.bad }}>
+                <span className="tb-t flex-1 truncate">{m.name}</span>
+                <span className="tb-t" style={{ color: UI.dim }}>{m.score[0]}–{m.score[1]}</span>
+                <span className="tb-t w-8 text-right" style={{ color: UI.dim }}>{fmtTime(m.seconds)}</span>
+                <span className="tb-t w-9 text-right" style={{ color: m.delta > 0 ? UI.good : UI.bad }}>
                   {m.delta > 0 ? "+" : ""}{m.delta}
                 </span>
               </div>
@@ -1531,7 +1688,7 @@ function StatsModal({ profile, status, onClose }) {
         )}
       </div>
 
-      <div className="text-[11px] leading-relaxed pt-3 pb-2" style={{ color: UI.dim, ...RULE_ABOVE }}>
+      <div className="tb-t pt-3 pb-2" style={{ color: UI.dim, ...RULE_ABOVE }}>
         Ranked only. Rating is Glicko-2 and computed on the server — TR is your rating,
         ± is how sure the system is about it. It narrows as you play.
       </div>
@@ -1578,11 +1735,11 @@ function ControlsSection() {
   return (
     <div className="mb-7">
       <div className="flex items-center justify-between mb-1">
-        <span className="text-[13px] tracking-[0.2em]">CONTROLS</span>
+        <span className="tb-t">CONTROLS</span>
         <button onClick={() => { resetKeys(); setListening(null); setWarn(null); }}
-          className="text-[11px] tracking-[0.2em] py-1" style={{ color: UI.dim }}>RESET</button>
+          className="tb-t py-1" style={{ color: UI.dim }}>RESET</button>
       </div>
-      <div className="text-[11px] leading-relaxed mb-2" style={{ color: UI.dim }}>
+      <div className="tb-t mb-2" style={{ color: UI.dim }}>
         Click a key, then press the new one. Esc cancels.
       </div>
       <div className="grid grid-cols-2 gap-x-4">
@@ -1590,9 +1747,9 @@ function ControlsSection() {
           const on = listening === a.id;
           return (
             <div key={a.id} className="flex items-center justify-between py-1.5" style={RULE_BELOW}>
-              <span className="text-[12px]" style={{ color: UI.dim }}>{a.label}</span>
+              <span className="tb-t" style={{ color: UI.dim }}>{a.label}</span>
               <button onClick={() => { setWarn(null); setListening(on ? null : a.id); }}
-                className={`text-[12px] ${on ? "tb-pulse" : ""}`}
+                className={`tb-t ${on ? "tb-pulse" : ""}`}
                 style={{ minWidth: 52, height: 30, padding: "0 8px", ...(on ? skFill(UI.text) : sk(UI.line)), color: UI.text }}>
                 {on ? "…" : keyLabel(keys[a.id])}
               </button>
@@ -1600,7 +1757,7 @@ function ControlsSection() {
           );
         })}
       </div>
-      {warn && <div className="text-[12px] mt-2" style={{ color: UI.bad }}>{warn}</div>}
+      {warn && <div className="tb-t mt-2" style={{ color: UI.bad }}>{warn}</div>}
     </div>
   );
 }
@@ -1608,7 +1765,7 @@ function ControlsSection() {
 function Row({ label, children }) {
   return (
     <div className="flex items-center justify-between gap-3 py-2.5" style={{ ...RULE_BELOW }}>
-      <span className="text-[12px] tracking-[0.2em] shrink-0" style={{ color: UI.dim }}>{label}</span>
+      <span className="tb-t shrink-0" style={{ color: UI.dim }}>{label}</span>
       <div className="flex items-center gap-1.5 flex-wrap justify-end">{children}</div>
     </div>
   );
@@ -1659,7 +1816,7 @@ function ThemeModal({ theme, setTheme, onClose }) {
       <div className="flex gap-1.5 mb-3">
         {[["preset", "PRESETS"], ["colour", "COLOURS"], ["blocks", "BLOCKS"]].map(([k, label]) => (
           <button key={k} onClick={() => setTab(k)}
-            className="flex-1 rounded text-[11px] tracking-[0.2em]"
+            className="flex-1 rounded tb-t"
             style={{
               height: 34,
               color: tab === k ? UI.text : UI.dim,
@@ -1681,12 +1838,12 @@ function ThemeModal({ theme, setTheme, onClose }) {
                     <span key={i} style={{ width: 16, height: 16, borderRadius: 3, background: c, display: "block" }} />
                   ))}
                 </div>
-                <div className="text-[11px] tracking-[0.2em]" style={{ color: p.text }}>{p.label}</div>
+                <div className="tb-t" style={{ color: p.text }}>{p.label}</div>
               </button>
             );
           })}
           {theme.preset === "custom" && (
-            <div className="rounded p-2.5 col-span-2 text-[11px] tracking-[0.2em]"
+            <div className="rounded p-2.5 col-span-2 tb-t"
               style={{ ...sk(UI.line), color: UI.dim }}>
               CUSTOM — edited from a preset
             </div>
@@ -1705,12 +1862,12 @@ function ThemeModal({ theme, setTheme, onClose }) {
           <Row label="CENTRE">
             {INKS.map((c) => <Swatch key={c} color={c} on={theme.special === c} onClick={() => set({ special: c })} />)}
           </Row>
-          <div className="text-[11px] tracking-[0.2em] mt-4 mb-2" style={{ color: UI.dim }}>SURFACES</div>
+          <div className="tb-t mt-4 mb-2" style={{ color: UI.dim }}>SURFACES</div>
           {[["BACKGROUND", "ground"], ["PANELS", "panel"], ["EMPTY CELL", "cell"], ["LINES", "line"], ["TEXT", "text"]].map(([label, k]) => (
             <Row key={k} label={label}>
               <input type="color" value={theme[k]} onChange={(e) => set({ [k]: e.target.value })}
                 style={{ width: 44, height: 26, background: "transparent", ...sk(UI.line), borderRadius: 5, padding: 0 }} />
-              <span className="text-[11px] tabular-nums" style={{ color: UI.dim }}>{theme[k]}</span>
+              <span className="tb-t tabular-nums" style={{ color: UI.dim }}>{theme[k]}</span>
             </Row>
           ))}
         </div>
@@ -1718,7 +1875,7 @@ function ThemeModal({ theme, setTheme, onClose }) {
 
       {tab === "blocks" && (
         <div className="pb-2">
-          <div className="text-[11px] tracking-[0.2em] mb-2" style={{ color: UI.dim }}>STROKE</div>
+          <div className="tb-t mb-2" style={{ color: UI.dim }}>STROKE</div>
           <div className="grid grid-cols-3 gap-2 mb-5">
             {Object.entries(STROKES).map(([k, st]) => {
               const on = theme.stroke === k;
@@ -1730,7 +1887,7 @@ function ThemeModal({ theme, setTheme, onClose }) {
                     <Ink size={22} color={theme.you} stroke={k} dir={1} seed={2} />
                     <Ink size={22} color={theme.rival} stroke={k} dir={-1} seed={5} />
                   </div>
-                  <span className="text-[10px] tracking-wider" style={{ color: on ? UI.text : UI.dim }}>{st.label}</span>
+                  <span className="tb-t" style={{ color: on ? UI.text : UI.dim }}>{st.label}</span>
                 </button>
               );
             })}
@@ -1739,7 +1896,7 @@ function ThemeModal({ theme, setTheme, onClose }) {
           <Row label="GRID GAP">
             {GRID_GAPS.map((g) => (
               <button key={g} onClick={() => set({ gap: g })}
-                className="rounded text-[12px] tabular-nums"
+                className="rounded tb-t tabular-nums"
                 style={{
                   width: 34, height: 30,
 
@@ -1749,14 +1906,14 @@ function ThemeModal({ theme, setTheme, onClose }) {
             ))}
           </Row>
           <Row label="COLOURBLIND MARKS"><Toggle on={theme.colorblind} onClick={() => set({ colorblind: !theme.colorblind })} /></Row>
-          <div className="text-[11px] leading-relaxed pt-3" style={{ color: UI.dim }}>
+          <div className="tb-t pt-3" style={{ color: UI.dim }}>
             Marks put ○ on your squares, ✕ on your opponent's and ◆ on contested ones,
             so the board reads without relying on colour.
           </div>
         </div>
       )}
 
-      <div className="text-[11px] leading-relaxed pt-4 mt-2" style={{ color: UI.dim, ...RULE_ABOVE }}>
+      <div className="tb-t pt-4 mt-2" style={{ color: UI.dim, ...RULE_ABOVE }}>
         Themes are stored on this device only. Your opponent sees their own.
       </div>
     </Popup>
@@ -1799,7 +1956,7 @@ function GoogleButton({ onCredential }) {
     <>
       <div className="flex items-center gap-3 my-4">
         <span className="flex-1 h-px" style={{ background: UI.line }} />
-        <span className="text-[11px] tracking-[0.2em]" style={{ color: UI.dim }}>OR</span>
+        <span className="tb-t" style={{ color: UI.dim }}>OR</span>
         <span className="flex-1 h-px" style={{ background: UI.line }} />
       </div>
       <div ref={box} className="flex justify-center" />
@@ -1846,32 +2003,32 @@ function AuthModal({ mode, onClose, onSwitch }) {
   return (
     <Popup title={signup ? "NEW PLAYER" : "LOG IN"} onClose={onClose} maxW={360}>
       <div className="pt-4 pb-1">
-        <div className="text-[11px] tracking-[0.24em] mb-2" style={{ color: UI.dim }}>USERNAME</div>
+        <div className="tb-t mb-2" style={{ color: UI.dim }}>USERNAME</div>
         <input value={username} autoCapitalize="none" autoCorrect="off" maxLength={16}
           onChange={(e) => setUsername(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()}
-          className="w-full px-3 mb-4 text-sm font-mono" style={fieldStyle} />
+          className="w-full px-3 mb-4 tb-t font-mono" style={fieldStyle} />
 
         {signup && (
           <>
-            <div className="text-[11px] tracking-[0.24em] mb-2" style={{ color: UI.dim }}>EMAIL</div>
+            <div className="tb-t mb-2" style={{ color: UI.dim }}>EMAIL</div>
             <input value={email} type="email" autoCapitalize="none" autoCorrect="off"
               onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()}
-              className="w-full px-3 mb-4 text-sm font-mono" style={fieldStyle} />
+              className="w-full px-3 mb-4 tb-t font-mono" style={fieldStyle} />
           </>
         )}
 
-        <div className="text-[11px] tracking-[0.24em] mb-2" style={{ color: UI.dim }}>PASSWORD</div>
+        <div className="tb-t mb-2" style={{ color: UI.dim }}>PASSWORD</div>
         <input type="password" value={password} autoCapitalize="none"
           onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()}
-          className="w-full px-3 mb-4 text-sm font-mono" style={fieldStyle} />
+          className="w-full px-3 mb-4 tb-t font-mono" style={fieldStyle} />
 
         {signup && (
           <>
-            <div className="text-[11px] tracking-[0.24em] mb-2" style={{ color: UI.dim }}>CONFIRM PASSWORD</div>
+            <div className="tb-t mb-2" style={{ color: UI.dim }}>CONFIRM PASSWORD</div>
             <input type="password" value={confirm} autoCapitalize="none"
               onChange={(e) => setConfirm(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()}
-              className="w-full px-3 mb-4 text-sm font-mono" style={fieldStyle} />
-            <div className="text-[11px] leading-relaxed mb-4" style={{ color: UI.dim }}>
+              className="w-full px-3 mb-4 tb-t font-mono" style={fieldStyle} />
+            <div className="tb-t mb-4" style={{ color: UI.dim }}>
               3–16 letters, numbers or underscores. Password at least 8 characters.
               We'll email you a 5-digit code.
             </div>
@@ -1879,12 +2036,12 @@ function AuthModal({ mode, onClose, onSwitch }) {
         )}
 
         {err && (
-          <div className="text-[12px] leading-relaxed mb-4 rounded px-3 py-2"
+          <div className="tb-t mb-4 rounded px-3 py-2"
             style={{ color: UI.bad, ...sk(UI.badSoft), background: UI.badFaint }}>{err}</div>
         )}
 
         <button onClick={submit} disabled={net.authBusy}
-          className="w-full rounded text-[12px] tracking-[0.3em] disabled:opacity-40"
+          className="w-full rounded tb-t disabled:opacity-40"
           style={{ height: 48, ...skFill(UI.text), color: UI.text }}>
           {net.authBusy ? "…" : signup ? "CREATE ACCOUNT" : "LOG IN"}
         </button>
@@ -1892,18 +2049,18 @@ function AuthModal({ mode, onClose, onSwitch }) {
         <GoogleButton onCredential={(c) => net.google(c)} />
 
         <button onClick={() => onSwitch(signup ? "login" : "signup")}
-          className="w-full text-[12px] tracking-[0.2em] mt-4 py-2" style={{ color: UI.dim }}>
+          className="w-full tb-t mt-4 py-2" style={{ color: UI.dim }}>
           {signup ? "I ALREADY HAVE AN ACCOUNT" : "CREATE AN ACCOUNT"}
         </button>
         {!signup && (
           <button onClick={() => { net.authError = null; net.resetSent = false; onSwitch("reset"); }}
-            className="w-full text-[12px] tracking-[0.2em] py-2" style={{ color: UI.dim }}>
+            className="w-full tb-t py-2" style={{ color: UI.dim }}>
             FORGOT PASSWORD?
           </button>
         )}
         {signup && <div className="text-center mt-2"><LegalLinks prefix="By creating an account you agree to the " /></div>}
 
-        <div className="flex items-center gap-2 text-[11px] mt-4 pt-4"
+        <div className="flex items-center gap-2 tb-t mt-4 pt-4"
           style={{ color: IS_SECURE ? UI.dim : GOLD, ...RULE_ABOVE }}>
           {IS_SECURE ? <Lock size={11} /> : <ShieldAlert size={11} />}
           {IS_SECURE ? "Encrypted connection." : "Unencrypted connection — local testing only."}
@@ -1917,7 +2074,7 @@ function AuthModal({ mode, onClose, onSwitch }) {
 function LegalLinks({ prefix = null }) {
   const a = { color: UI.dim, textDecoration: "underline", textUnderlineOffset: 2 };
   return (
-    <div className="text-[11px] leading-relaxed" style={{ color: UI.dim }}>
+    <div className="tb-t" style={{ color: UI.dim }}>
       {prefix}
       <a href="/terms" target="_blank" rel="noopener" style={a}>Terms</a>
       {prefix ? " and " : " · "}
@@ -1959,24 +2116,24 @@ function ResetModal({ onClose, onBack }) {
     if (password !== confirm) return setLocal("Passwords don't match.");
     net.confirmReset(email.trim(), code, password);
   };
-  const label = (t) => <div className="text-[11px] tracking-[0.24em] mb-2" style={{ color: UI.dim }}>{t}</div>;
+  const label = (t) => <div className="tb-t mb-2" style={{ color: UI.dim }}>{t}</div>;
 
   return (
     <Popup title="RESET PASSWORD" onClose={onClose} maxW={360}>
       <div className="pt-4 pb-1">
         {!sent ? (
           <>
-            <div className="text-[12px] leading-relaxed mb-4" style={{ color: UI.dim }}>
+            <div className="tb-t mb-4" style={{ color: UI.dim }}>
               Enter the email on your account and we'll send a 5-digit code.
             </div>
             {label("EMAIL")}
             <input value={email} type="email" autoCapitalize="none" autoCorrect="off" autoFocus
               onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && request()}
-              className="w-full px-3 mb-4 text-sm font-mono" style={fieldStyle} />
+              className="w-full px-3 mb-4 tb-t font-mono" style={fieldStyle} />
           </>
         ) : (
           <>
-            <div className="text-[12px] leading-relaxed mb-4" style={{ color: UI.dim }}>
+            <div className="tb-t mb-4" style={{ color: UI.dim }}>
               If <span style={{ color: UI.text }}>{email.trim()}</span> has an account, a code is on its way.
               It expires in 15 minutes.
             </div>
@@ -1987,32 +2144,32 @@ function ResetModal({ onClose, onBack }) {
             {label("NEW PASSWORD")}
             <input type="password" value={password} autoCapitalize="none"
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-3 mb-4 text-sm font-mono" style={fieldStyle} />
+              className="w-full px-3 mb-4 tb-t font-mono" style={fieldStyle} />
             {label("CONFIRM PASSWORD")}
             <input type="password" value={confirm} autoCapitalize="none"
               onChange={(e) => setConfirm(e.target.value)} onKeyDown={(e) => e.key === "Enter" && confirmReset()}
-              className="w-full px-3 mb-4 text-sm font-mono" style={fieldStyle} />
+              className="w-full px-3 mb-4 tb-t font-mono" style={fieldStyle} />
           </>
         )}
 
         {err && (
-          <div className="text-[12px] leading-relaxed mb-4 px-3 py-2"
+          <div className="tb-t mb-4 px-3 py-2"
             style={{ color: UI.bad, ...sk(UI.badSoft), background: UI.badFaint }}>{err}</div>
         )}
 
         <button onClick={sent ? confirmReset : request} disabled={net.authBusy}
-          className="w-full text-[12px] tracking-[0.3em] disabled:opacity-40"
+          className="w-full tb-t disabled:opacity-40"
           style={{ height: 48, ...skFill(UI.text), color: UI.text }}>
           {net.authBusy ? "…" : sent ? "SET NEW PASSWORD" : "SEND CODE"}
         </button>
 
         {sent && (
           <button onClick={() => { net.resetSent = false; setCode(""); net.bumpAuth(); }}
-            className="w-full text-[12px] tracking-[0.2em] mt-3 py-2" style={{ color: UI.dim }}>
+            className="w-full tb-t mt-3 py-2" style={{ color: UI.dim }}>
             DIDN'T GET IT? SEND AGAIN
           </button>
         )}
-        <button onClick={onBack} className="w-full text-[12px] tracking-[0.2em] mt-2 py-2" style={{ color: UI.dim }}>
+        <button onClick={onBack} className="w-full tb-t mt-2 py-2" style={{ color: UI.dim }}>
           BACK TO LOG IN
         </button>
       </div>
@@ -2045,8 +2202,8 @@ function VerifyModal({ profile, onClose }) {
     <Popup title="VERIFY EMAIL" onClose={onClose} maxW={340}>
       <div className="pt-5 pb-1 text-center">
         <MailCheck size={24} style={{ color: UI.dim, margin: "0 auto 14px" }} />
-        <div className="text-[13px] leading-relaxed mb-1">We sent a 5-digit code to</div>
-        <div className="text-sm mb-6">{profile.email}</div>
+        <div className="tb-t mb-1">We sent a 5-digit code to</div>
+        <div className="tb-t mb-6">{profile.email}</div>
 
         <input
           value={digits} inputMode="numeric" autoFocus maxLength={5}
@@ -2056,25 +2213,25 @@ function VerifyModal({ profile, onClose }) {
         />
 
         {net.authError && (
-          <div className="text-[12px] leading-relaxed mb-4 rounded px-3 py-2"
+          <div className="tb-t mb-4 rounded px-3 py-2"
             style={{ color: UI.bad, ...sk(UI.badSoft), background: UI.badFaint }}>
             {net.authError}
           </div>
         )}
         {net.codeSent && !net.authError && (
-          <div className="text-[12px] mb-4" style={{ color: UI.good }}>New code sent.</div>
+          <div className="tb-t mb-4" style={{ color: UI.good }}>New code sent.</div>
         )}
 
         <button onClick={() => submit(digits)} disabled={digits.length !== 5 || net.authBusy}
-          className="w-full rounded text-[12px] tracking-[0.3em] disabled:opacity-40 mb-3"
+          className="w-full rounded tb-t disabled:opacity-40 mb-3"
           style={{ height: 48, ...skFill(UI.text), color: UI.text }}>VERIFY</button>
 
         <button onClick={() => { net.resend(); setCooldown(60); }} disabled={cooldown > 0}
-          className="w-full text-[12px] tracking-[0.2em] py-2 disabled:opacity-40" style={{ color: UI.dim }}>
+          className="w-full tb-t py-2 disabled:opacity-40" style={{ color: UI.dim }}>
           {cooldown > 0 ? `RESEND IN ${cooldown}s` : "RESEND CODE"}
         </button>
 
-        <div className="text-[11px] leading-relaxed mt-4 pt-4" style={{ color: UI.dim, ...RULE_ABOVE }}>
+        <div className="tb-t mt-4 pt-4" style={{ color: UI.dim, ...RULE_ABOVE }}>
           Ranked play unlocks once your email is verified. Solo and take-turns work now.
         </div>
       </div>
@@ -2089,7 +2246,7 @@ function AccountModal({ profile, onLogout, onClose }) {
   if (!profile) {
     return (
       <Popup title="ACCOUNT" onClose={onClose} maxW={380}>
-        <div className="py-10 text-center text-[13px]" style={{ color: UI.dim }}>Signed out.</div>
+        <div className="py-10 text-center tb-t" style={{ color: UI.dim }}>Signed out.</div>
       </Popup>
     );
   }
@@ -2108,14 +2265,14 @@ function AccountModal({ profile, onLogout, onClose }) {
         <div className="flex items-center gap-4 mb-5">
           <div className="rounded flex items-center justify-center shrink-0"
             style={{ width: 62, height: 62, background: placed ? `${rank.color}1F` : UI.ground, ...sk(placed ? rank.color : UI.line) }}>
-            <span className="text-2xl" style={{ color: placed ? rank.color : UI.dim }}>{placed ? rank.name : "–"}</span>
+            <span className="tb-t" style={{ color: placed ? rank.color : UI.dim }}>{placed ? rank.name : "–"}</span>
           </div>
           <div className="min-w-0">
-            <div className="text-lg truncate">{profile.name}</div>
-            <div className="text-[12px] mt-1" style={{ color: UI.dim }}>
+            <div className="tb-t truncate">{profile.name}</div>
+            <div className="tb-t mt-1" style={{ color: UI.dim }}>
               {placed ? `${tr} TR ±${Math.round(profile.rating.rd)}` : `${PLACEMENT_GAMES - st.games} matches to place`}
             </div>
-            <div className="text-[11px] mt-0.5" style={{ color: UI.dim }}>member since {since}</div>
+            <div className="tb-t mt-0.5" style={{ color: UI.dim }}>member since {since}</div>
           </div>
         </div>
 
@@ -2126,27 +2283,27 @@ function AccountModal({ profile, onLogout, onClose }) {
             ["PLAYED", fmtTime(st.seconds), UI.text],
           ].map(([label, value, color]) => (
             <div key={label} className="rounded p-2.5" style={{ background: UI.ground, ...sk(UI.line) }}>
-              <div className="text-[10px] tracking-[0.2em] mb-1.5" style={{ color: UI.dim }}>{label}</div>
-              <div className="text-sm leading-none" style={{ color }}>{value}</div>
+              <div className="tb-t mb-1.5" style={{ color: UI.dim }}>{label}</div>
+              <div className="tb-t" style={{ color }}>{value}</div>
             </div>
           ))}
         </div>
 
         <div className="grid grid-cols-2 gap-2 mb-6">
           <div className="rounded p-2.5" style={{ background: UI.ground, ...sk(UI.line) }}>
-            <div className="text-[10px] tracking-[0.2em] mb-1.5" style={{ color: UI.dim }}>PEAK</div>
-            <div className="text-sm leading-none" style={{ color: st.peakRank !== null ? RANKS[st.peakRank].color : UI.dim }}>
+            <div className="tb-t mb-1.5" style={{ color: UI.dim }}>PEAK</div>
+            <div className="tb-t" style={{ color: st.peakRank !== null ? RANKS[st.peakRank].color : UI.dim }}>
               {st.peakRank !== null ? `${RANKS[st.peakRank].name} · ${st.peakTr}` : "unplaced"}
             </div>
           </div>
           <div className="rounded p-2.5" style={{ background: UI.ground, ...sk(UI.line) }}>
-            <div className="text-[10px] tracking-[0.2em] mb-1.5" style={{ color: UI.dim }}>BEST STREAK</div>
-            <div className="text-sm leading-none">W{st.bestStreak}</div>
+            <div className="tb-t mb-1.5" style={{ color: UI.dim }}>BEST STREAK</div>
+            <div className="tb-t">W{st.bestStreak}</div>
           </div>
         </div>
 
         <button onClick={onLogout}
-          className="w-full rounded text-[12px] tracking-[0.25em] flex items-center justify-center gap-2"
+          className="w-full rounded tb-t flex items-center justify-center gap-2"
           style={{ height: 44, ...sk(UI.line), color: UI.dim }}>
           <LogOut size={13} /> SIGN OUT
         </button>
@@ -2252,27 +2409,27 @@ function HowToModal({ colors, loadout, onClose }) {
           ))}
         </div>
 
-        <div className="text-[12px] tracking-[0.3em] mb-4" style={{ color: UI.dim }}>{p.title}</div>
+        <div className="tb-t mb-4" style={{ color: UI.dim }}>{p.title}</div>
 
         <div className="rounded py-5 mb-4 flex items-center justify-center"
           style={{ background: UI.ground, ...sk(UI.line), minHeight: 132 }}>
           {p.art}
         </div>
 
-        <div className="text-[13px] leading-relaxed mb-5" style={{ minHeight: 76 }}>{p.body}</div>
+        <div className="tb-t mb-5" style={{ minHeight: 76 }}>{p.body}</div>
 
         <div className="flex gap-2">
           <button
             onClick={() => setPage((n) => Math.max(0, n - 1))}
             disabled={page === 0}
-            className="rounded text-[12px] tracking-[0.25em] disabled:opacity-30"
+            className="rounded tb-t disabled:opacity-30"
             style={{ height: 46, flex: 1, ...sk(UI.line), color: UI.dim }}
           >
             BACK
           </button>
           <button
             onClick={() => (last ? onClose() : setPage((n) => n + 1))}
-            className="rounded text-[12px] tracking-[0.25em]"
+            className="rounded tb-t"
             style={{ height: 46, flex: 1.6, ...skFill(UI.text), color: UI.text }}
           >
             {last ? "GOT IT" : "NEXT"}
@@ -2287,6 +2444,59 @@ function HowToModal({ colors, loadout, onClose }) {
    MENU
    ============================================================ */
 /** A pen underline that tapers at both ends: two loose strokes, never quite parallel. */
+/**
+ * The title, drawn as pixel art rather than set in a font: a bigger font
+ * would mean bigger pixels. Letters are 19×25 pixels with thin 2-pixel
+ * strokes, shaded in bands from your colour to your rival's.
+ */
+const LOGO_W = 19, LOGO_H = 25;
+const LOGO = (() => {
+  const W = LOGO_W, H = LOGO_H, mid = Math.floor(W / 2);
+  const glyph = (paint) => { const g = Array.from({ length: H }, () => Array(W).fill(0)); paint((x, y) => { if (x >= 0 && y >= 0 && x < W && y < H) g[y][x] = 1; }); return g; };
+  const rect = (set, x0, y0, w, h) => { for (let y = y0; y < y0 + h; y++) for (let x = x0; x < x0 + w; x++) set(x, y); };
+  const diag = (set, x0, y0, x1, y1) => {
+    const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0));
+    for (let i = 0; i <= n; i++) { const x = Math.round(x0 + ((x1 - x0) * i) / n), y = Math.round(y0 + ((y1 - y0) * i) / n); set(x, y); set(x + 1, y); }
+  };
+  return [
+    glyph((s2) => { rect(s2, 0, 0, 2, H); rect(s2, W - 2, 0, 2, H); diag(s2, 1, 1, mid - 1, 13); diag(s2, W - 3, 1, mid, 13); }), // M
+    glyph((s2) => { rect(s2, 4, 0, W - 8, 2); rect(s2, 4, H - 2, W - 8, 2); rect(s2, mid - 1, 0, 2, H); }),                      // I
+    glyph((s2) => { rect(s2, 0, 0, 2, H); rect(s2, W - 2, 0, 2, H); diag(s2, 1, 1, W - 4, H - 2); }),                             // N
+    glyph((s2) => { rect(s2, 2, 0, W - 4, 2); rect(s2, 2, H - 2, W - 4, 2); rect(s2, 0, 2, 2, H - 4); rect(s2, W - 2, 2, 2, H - 4);
+      s2(1, 1); s2(W - 2, 1); s2(1, H - 2); s2(W - 2, H - 2); }),                                                               // O
+  ];
+})();
+
+function PixelLogo() {
+  const P = usePx();
+  const W = LOGO_W, H = LOGO_H, GAP = 5;
+  const total = LOGO.length * W + (LOGO.length - 1) * GAP;
+  // One rect per horizontal run, per row band colour.
+  const runs = [];
+  LOGO.forEach((g, li) => g.forEach((row, y) => {
+    let x = 0;
+    while (x < W) {
+      if (!row[x]) { x++; continue; }
+      const st = x; while (x < W && row[x]) x++;
+      runs.push([li * (W + GAP) + st, y, x - st]);
+    }
+  }));
+  const BANDS = 6;
+  return (
+    <svg aria-label="MINO" role="img" className="tb-bob" viewBox={`0 0 ${total + 1} ${H + 1}`}
+      style={{ width: (total + 1) * P, height: (H + 1) * P, display: "block", margin: "0 auto", shapeRendering: "crispEdges" }}>
+      {runs.map(([x, y, w], i) => <rect key={`s${i}`} x={x + 1} y={y + 1} width={w} height={1} fill="rgba(0,0,0,.55)" />)}
+      {runs.map(([x, y, w], i) => {
+        const band = Math.min(BANDS - 1, Math.floor((y / H) * BANDS));
+        return <rect key={i} x={x} y={y} width={w} height={1}
+          style={{ fill: `color-mix(in srgb, var(--tb-you) ${100 - band * 19}%, var(--tb-rival))` }} />;
+      })}
+      {/* A one-pixel highlight along the top of each letter. */}
+      {runs.filter(([, y]) => y === 0).map(([x, y, w], i) => <rect key={`h${i}`} x={x} y={y} width={w} height={1} fill="rgba(255,255,255,.75)" />)}
+    </svg>
+  );
+}
+
 /** Under the title: a row of pixels with a light running along it. */
 function PixelRule({ count = 18 }) {
   return (
@@ -2322,10 +2532,9 @@ function Menu({ onPick, loadout, setLoadout, colors, profile, status, name, rena
       <AmbientField colors={colors} theme={theme} paused={!!modal} />
       <div className="absolute inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse at 50% 46%, color-mix(in srgb, var(--tb-ground) 45%, transparent) 0%, color-mix(in srgb, var(--tb-ground) 20%, transparent) 50%, transparent 80%)" }} />
 
-      <div className="relative w-full tb-scale" style={{ maxWidth: 330 }}>
+      <Scaled className="relative w-full" style={{ maxWidth: 330 }}>
         <div className="text-center mb-9">
-          <div className="tb-display tb-title text-[76px] leading-none tracking-[0.12em]"
-            style={{ marginRight: "-0.12em" }}>MINO</div>
+          <PixelLogo />
           <PixelRule />
         </div>
 
@@ -2340,24 +2549,24 @@ function Menu({ onPick, loadout, setLoadout, colors, profile, status, name, rena
           className="w-full rounded flex flex-col items-center justify-center gap-1 mb-2.5 disabled:opacity-40"
           style={{ height: 98, background: UI.panel, ...sk(authed && verified && placed ? rank.color : UI.line) }}
         >
-          <span className="text-[11px] tracking-[0.28em]" style={{ color: UI.dim }}>
+          <span className="tb-t" style={{ color: UI.dim }}>
             {status !== "online" ? (status === "connecting" ? "CONNECTING…" : "SERVER OFFLINE")
               : !authed ? "ACCOUNT REQUIRED"
               : !verified ? "VERIFY YOUR EMAIL"
               : placed ? `RANKED · ${rank.name} · ${tr}` : "RANKED · UNPLACED"}
           </span>
-          <span className="text-base tracking-[0.28em]" style={{ textDecoration: authed && verified ? "none" : "line-through", textDecorationThickness: 1 }}>
+          <span className="tb-t" style={{ textDecoration: authed && verified ? "none" : "line-through", textDecorationThickness: 1 }}>
             MULTIPLAYER
           </span>
           {status === "online" && online !== null && (
-            <span className="text-[11px] italic" style={{ color: UI.dim }}>
+            <span className="tb-t italic" style={{ color: UI.dim }}>
               {online === 1 ? "just you online right now" : `${online} people online`}
             </span>
           )}
         </button>
 
         {notice && (
-          <button onClick={() => net.setNotice(null)} className="w-full text-left text-[12px] leading-relaxed px-3 py-2 mb-2.5"
+          <button onClick={() => net.setNotice(null)} className="w-full text-left tb-t px-3 py-2 mb-2.5"
             style={{ ...sk(GOLD_SOFT), color: GOLD }}>
             {notice} <span style={{ color: UI.dim }}>(tap to dismiss)</span>
           </button>
@@ -2368,22 +2577,22 @@ function Menu({ onPick, loadout, setLoadout, colors, profile, status, name, rena
             <button onClick={() => setModal("login")} disabled={status !== "online"}
               className="flex-1 rounded flex items-center justify-center disabled:opacity-40"
               style={{ height: 44, background: UI.panel, ...sk(UI.line) }}>
-              <span className="text-[13px] tracking-[0.24em]">LOGIN</span>
+              <span className="tb-t">LOGIN</span>
             </button>
             <button onClick={() => setModal("signup")} disabled={status !== "online"}
               className="flex-1 rounded flex items-center justify-center disabled:opacity-40"
               style={{ height: 44, ...skFill(UI.text), color: UI.text }}>
-              <span className="text-[13px] tracking-[0.24em]">NEW PLAYER</span>
+              <span className="tb-t">NEW PLAYER</span>
             </button>
           </div>
         )}
 
         <div className="flex gap-2.5 mb-2.5">
           <button onClick={() => { onPick("DIFFICULTY"); }} className="flex-1 rounded flex items-center justify-center" style={{ height: 44, background: UI.panel, ...sk(UI.line) }}>
-            <span className="text-sm tracking-[0.28em]">SP</span>
+            <span className="tb-t">SP</span>
           </button>
           <button onClick={() => { onPick("HOTSEAT"); }} className="flex-1 rounded flex items-center justify-center" style={{ height: 44, background: UI.panel, ...sk(UI.line) }}>
-            <span className="text-sm tracking-[0.2em]">TAKE TURNS</span>
+            <span className="tb-t">TAKE TURNS</span>
           </button>
         </div>
 
@@ -2421,7 +2630,7 @@ function Menu({ onPick, loadout, setLoadout, colors, profile, status, name, rena
             </button>
           </div>
         </div>
-      </div>
+      </Scaled>
 
       {(modal === "login" || modal === "signup") && (
         <AuthModal mode={modal} onClose={() => setModal(null)} onSwitch={setModal} />
@@ -2447,17 +2656,17 @@ function Difficulty({ onStart, onBack, colors }) {
   const [lv, setLv] = useState(DEFAULT_LEVEL);
   return (
     <div className="tb-screen tb-safe w-full flex items-center justify-center px-5 font-mono" style={{ color: UI.text }}>
-      <div className="w-full tb-scale" style={{ maxWidth: 330 }}>
-        <button onClick={onBack} className="flex items-center gap-1 text-[12px] tracking-[0.25em] mb-6 py-2" style={{ color: UI.dim }}>
+      <Scaled className="w-full" style={{ maxWidth: 330 }}>
+        <button onClick={onBack} className="flex items-center gap-1 tb-t mb-6 py-2" style={{ color: UI.dim }}>
           <ChevronLeft size={13} /> MENU
         </button>
-        <div className="text-[12px] tracking-[0.28em] mb-3" style={{ color: UI.dim }}>OPPONENT STRENGTH</div>
+        <div className="tb-t mb-3" style={{ color: UI.dim }}>OPPONENT STRENGTH</div>
         <div className="grid grid-cols-5 gap-1.5 mb-4">
           {LEVELS.map((nm, i) => {
             const n = i + 1, on = lv === n;
             return (
               <button key={n} onClick={() => { setLv(n); }}
-                className="rounded flex items-center justify-center text-sm"
+                className="rounded flex items-center justify-center tb-t"
                 style={{
                   height: 44,
                   color: UI.text,
@@ -2468,13 +2677,13 @@ function Difficulty({ onStart, onBack, colors }) {
           })}
         </div>
         <div className="rounded p-3 mb-4" style={{ background: UI.panel, ...sk(UI.line), minHeight: 76 }}>
-          <div className="text-sm tracking-[0.22em] mb-1" style={{ color: colors.rival }}>{LEVELS[lv - 1]}</div>
-          <div className="text-[13px] leading-relaxed" style={{ color: UI.dim }}>{levelBlurb(lv)}</div>
+          <div className="tb-t mb-1" style={{ color: colors.rival }}>{LEVELS[lv - 1]}</div>
+          <div className="tb-t" style={{ color: UI.dim }}>{levelBlurb(lv)}</div>
         </div>
-        <button onClick={() => onStart(lv)} className="w-full rounded text-[13px] tracking-[0.3em]" style={{ height: 50, ...skFill(UI.text), color: UI.text }}>
+        <button onClick={() => onStart(lv)} className="w-full rounded tb-t" style={{ height: 50, ...skFill(UI.text), color: UI.text }}>
           START MATCH
         </button>
-      </div>
+      </Scaled>
     </div>
   );
 }
@@ -2505,16 +2714,16 @@ function Matchmaking({ profile, loadout, colors, onCancel, onPlayAi }) {
 
   return (
     <div className="tb-screen tb-safe w-full flex flex-col items-center justify-center px-6 font-mono" style={{ color: UI.text }}>
-      <div className="w-full tb-scale" style={{ maxWidth: 330 }}>
+      <Scaled className="w-full" style={{ maxWidth: 330 }}>
         {!found ? (
           <>
             <div className="text-center mb-8">
-              <div className="text-[12px] tracking-[0.28em] tb-pulse mb-2" style={{ color: colors.you }}>SEARCHING</div>
-              <div className="text-[28px] leading-none tabular-nums">{elapsed.toFixed(1)}s</div>
+              <div className="tb-t tb-pulse mb-2" style={{ color: colors.you }}>SEARCHING</div>
+              <div className="tb-t tabular-nums">{elapsed.toFixed(1)}s</div>
             </div>
 
             <div className="mb-6">
-              <div className="flex justify-between text-[11px] mb-2" style={{ color: UI.dim }}>
+              <div className="flex justify-between tb-t mb-2" style={{ color: UI.dim }}>
                 <span>±{band} TR</span>
                 <span>{search?.queued ?? 1} in queue</span>
               </div>
@@ -2529,14 +2738,14 @@ function Matchmaking({ profile, loadout, colors, onCancel, onPlayAi }) {
                 }} />
                 <div className="absolute inset-y-0" style={{ left: "50%", width: 2, background: colors.you, transform: "translateX(-1px)" }} />
               </div>
-              <div className="text-center text-[11px] mt-2 flex items-center justify-center gap-1.5"
+              <div className="text-center tb-t mt-2 flex items-center justify-center gap-1.5"
                 style={{ color: status === "online" ? UI.dim : GOLD }}>
                 {status !== "online" && <WifiOff size={11} />}
                 {tr} TR · {rank.name}
               </div>
             </div>
 
-            <div className="text-[12px] leading-relaxed text-center mb-8" style={{ color: UI.dim }}>
+            <div className="tb-t text-center mb-8" style={{ color: UI.dim }}>
               {status === "online"
                 ? null
                 : status === "kicked"
@@ -2546,43 +2755,43 @@ function Matchmaking({ profile, loadout, colors, onCancel, onPlayAi }) {
 
             {elapsed >= LONELY_AFTER_S && (
               <div className="mb-3 tb-fade">
-                <div className="text-[12px] italic text-center mb-2" style={{ color: UI.dim }}>
+                <div className="tb-t italic text-center mb-2" style={{ color: UI.dim }}>
                   Quiet right now. Play the AI instead? Ranked can wait.
                 </div>
-                <button onClick={() => { net.unqueue(); onPlayAi(); }} className="w-full text-[12px] tracking-[0.3em]"
+                <button onClick={() => { net.unqueue(); onPlayAi(); }} className="w-full tb-t"
                   style={{ height: 46, ...skFill(UI.text), color: UI.text }}>
                   PLAY THE AI
                 </button>
               </div>
             )}
-            <button onClick={() => { net.unqueue(); onCancel(); }} className="w-full rounded text-[12px] tracking-[0.3em]" style={{ height: 46, ...sk(UI.line), color: UI.dim }}>
+            <button onClick={() => { net.unqueue(); onCancel(); }} className="w-full rounded tb-t" style={{ height: 46, ...sk(UI.line), color: UI.dim }}>
               CANCEL
             </button>
           </>
         ) : (
           <div className="text-center">
-            <div className="text-[12px] tracking-[0.28em] mb-7" style={{ color: UI.dim }}>MATCH FOUND</div>
+            <div className="tb-t mb-7" style={{ color: UI.dim }}>MATCH FOUND</div>
             <div className="flex items-center justify-center gap-4 mb-6">
               <div className="flex-1">
                 <div className="rounded mx-auto flex items-center justify-center mb-2" style={{ width: 52, height: 52, background: `${rank.color}1F`, ...sk(rank.color) }}>
-                  <span className="text-xl" style={{ color: rank.color }}>{rank.name}</span>
+                  <span className="tb-t" style={{ color: rank.color }}>{rank.name}</span>
                 </div>
-                <div className="text-[12px] truncate">{profile.name}</div>
-                <div className="text-[11px]" style={{ color: UI.dim }}>{tr}</div>
+                <div className="tb-t truncate">{profile.name}</div>
+                <div className="tb-t" style={{ color: UI.dim }}>{tr}</div>
               </div>
-              <span className="text-[12px] tracking-[0.2em]" style={{ color: UI.dim }}>VS</span>
+              <span className="tb-t" style={{ color: UI.dim }}>VS</span>
               <div className="flex-1">
                 <div className="rounded mx-auto flex items-center justify-center mb-2" style={{ width: 52, height: 52, background: `${oppRank.color}1F`, ...sk(oppRank.color) }}>
-                  <span className="text-xl" style={{ color: oppRank.color }}>{oppRank.name}</span>
+                  <span className="tb-t" style={{ color: oppRank.color }}>{oppRank.name}</span>
                 </div>
-                <div className="text-[12px] truncate">{found.opponent.name}</div>
-                <div className="text-[11px]" style={{ color: UI.dim }}>{found.opponent.rating}</div>
+                <div className="tb-t truncate">{found.opponent.name}</div>
+                <div className="tb-t" style={{ color: UI.dim }}>{found.opponent.rating}</div>
               </div>
             </div>
-            <div className="text-[11px]" style={{ color: UI.dim }}>{found.gap} TR apart</div>
+            <div className="tb-t" style={{ color: UI.dim }}>{found.gap} TR apart</div>
           </div>
         )}
-      </div>
+      </Scaled>
     </div>
   );
 }
@@ -2593,19 +2802,19 @@ function ForfeitButton({ onConfirm, ranked = false, disabled = false }) {
   return (
     <>
       <button onClick={() => setAsking(true)} disabled={disabled}
-        className="flex items-center gap-1 text-[12px] tracking-[0.25em] py-2 disabled:opacity-30" style={{ color: UI.dim }}>
+        className="flex items-center gap-1 tb-t py-2 disabled:opacity-30" style={{ color: UI.dim }}>
         <Flag size={12} /> FORFEIT
       </button>
       {asking && (
         <Popup title="FORFEIT?" onClose={() => setAsking(false)} maxW={320}>
           <div className="pt-4 pb-1">
-            <div className="text-[13px] leading-relaxed mb-5" style={{ color: UI.dim }}>
+            <div className="tb-t mb-5" style={{ color: UI.dim }}>
               {ranked ? "You'll lose this match and the rating that goes with it." : "This match ends now and counts as a loss."}
             </div>
             <div className="flex gap-2">
-              <button onClick={() => setAsking(false)} className="flex-1 text-[12px] tracking-[0.25em]"
+              <button onClick={() => setAsking(false)} className="flex-1 tb-t"
                 style={{ height: 44, ...sk(UI.line), color: UI.dim }}>KEEP PLAYING</button>
-              <button onClick={() => { setAsking(false); onConfirm(); }} className="flex-1 text-[12px] tracking-[0.25em]"
+              <button onClick={() => { setAsking(false); onConfirm(); }} className="flex-1 tb-t"
                 style={{ height: 44, ...skFill(UI.text), color: UI.bad }}>FORFEIT</button>
             </div>
           </div>
@@ -2646,12 +2855,18 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   const contestedKeys = useMemo(() => new Set((reveal ? reveal.contested : []).map(([r, c]) => key(r, c))), [reveal]);
   const stuck = useMemo(() => (inPlay ? !hasAnyMove(board, hand, player) : false), [board, hand, player, inPlay]);
 
-  const g = theme.gap;
-  const cell = Math.max(6, Math.floor(Math.min(
-    (stage.w - g * (COLS + 1)) / COLS,
-    (stage.h - g * (ROWS + 1)) / ROWS
-  )));
-  const boardH = cell * ROWS + g * (ROWS + 1);
+  const P = usePx();
+  const g = (theme.gap ?? 1) * P;
+  // Whole pixels: the square size is a whole number of pixels. Leave room for
+  // the board's 3-pixel frame and the score meter standing beside it.
+  const side = 7 * P, meterRoom = METER_W * P + side;
+  const cellArt = Math.max(5, Math.floor(Math.min(
+    (stage.w - meterRoom - side - g * (COLS - 1)) / COLS,
+    (stage.h - side - g * (ROWS - 1)) / ROWS
+  ) / P));
+  const cell = cellArt * P;
+  const boardW = cell * COLS + g * (COLS - 1);
+  const boardH = cell * ROWS + g * (ROWS - 1);
 
   // Played or passed, the current piece is spent and the queue moves on.
   const advance = (side) => setDecks((st) => ({ ...st, [side]: advanceDeck(st[side], loadout) }));
@@ -2713,10 +2928,10 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
     <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ color: UI.text }}>
       <div className="tb-col relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
         <div className="flex items-center justify-between h-9 shrink-0">
-          <button onClick={onExit} className="flex items-center gap-1 text-[12px] tracking-[0.25em] py-2 -ml-1" style={{ color: UI.dim }}>
+          <button onClick={onExit} className="flex items-center gap-1 tb-t py-2 -ml-1" style={{ color: UI.dim }}>
             <ChevronLeft size={13} /> MENU
           </button>
-          <div className="text-[12px] tracking-[0.2em]" style={{ color: UI.dim }}>{solo ? oppName : "TAKE TURNS"}</div>
+          <div className="tb-t" style={{ color: UI.dim }}>{solo ? oppName : "TAKE TURNS"}</div>
           <ForfeitButton disabled={phase === "DONE"}
             onConfirm={() => { pl.reset(); setForfeitBy(solo ? "A" : player); setPhase("DONE"); }} />
         </div>
@@ -2726,8 +2941,8 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
           <OppQueue piece={currentPiece(decks[them])} queue={upcoming(decks[them])} ink={INK[them]} dir={them === "B" ? -1 : 1} />
         )}
 
-        <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center">
-          <div className="relative" style={{ width: cell * COLS + g * (COLS + 1), height: boardH }}>
+        <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center" style={{ gap: 7 * P }}>
+          <div className="relative" style={{ width: boardW, height: boardH }}>
             <BoardGrid
               board={board} cell={cell} ink={INK} theme={theme} youSide={player}
               pendingKeys={phase === "AI_THINK" && pendingA ? new Set(pendingA.cells.map(([r, c]) => key(r, c))) : null}
@@ -2746,7 +2961,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
 
             {pl.drag && pl.rotated && (
               <FloatingPiece
-                cells={pl.rotated} cell={cell} gap={theme.gap}
+                cells={pl.rotated} cell={cell} gap={g}
                 color={INK[player]} legal={pl.ghostLegal}
                 dir={player === "B" ? -1 : 1}
                 x={pl.drag.x} y={pl.drag.y} lift={pl.drag.lift} faint={pl.holding && !!pl.sel.pos}
@@ -2755,9 +2970,9 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
 
             {phase === "HANDOFF" && (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-5 rounded" style={{ background: UI.ground }}>
-                <div className="text-[12px] tracking-[0.3em] mb-2" style={{ color: UI.dim }}>MOVE LOCKED IN</div>
-                <div className="text-sm mb-6 leading-relaxed">Hand the device to <span style={{ color: INK.B }}>Player 2</span>.</div>
-                <button onClick={() => setPhase("PLAY_B")} className="px-5 rounded text-[13px] tracking-widest" style={{ height: 44, ...skFill(INK.B), color: UI.text }}>
+                <div className="tb-t mb-2" style={{ color: UI.dim }}>MOVE LOCKED IN</div>
+                <div className="tb-t mb-6">Hand the device to <span style={{ color: INK.B }}>Player 2</span>.</div>
+                <button onClick={() => setPhase("PLAY_B")} className="px-5 rounded tb-t" style={{ height: 44, ...skFill(INK.B), color: UI.text }}>
                   I'M PLAYER 2
                 </button>
               </div>
@@ -2765,10 +2980,10 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
 
             {phase === "DONE" && (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-4 rounded" style={{ background: "color-mix(in srgb, var(--tb-ground) 94%, transparent)" }}>
-                <div className="text-[11px] tracking-[0.3em] mb-3" style={{ color: lockedOut || forfeitBy ? GOLD : UI.dim }}>
+                <div className="tb-t mb-3" style={{ color: lockedOut || forfeitBy ? GOLD : UI.dim }}>
                   {forfeitBy ? (solo ? "YOU FORFEITED" : `PLAYER ${forfeitBy === "A" ? 1 : 2} FORFEITED`) : lockedOut ? "BOARD LOCKED" : "MATCH OVER"}
                 </div>
-                <div className="text-xl mb-1.5 tracking-wider">
+                <div className="tb-t mb-1.5">
                   {(() => {
                     // A forfeit decides it regardless of the score.
                     const winner = forfeitBy ? (forfeitBy === "A" ? "B" : "A") : score.a > score.b ? "A" : score.b > score.a ? "B" : null;
@@ -2780,21 +2995,22 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
                     );
                   })()}
                 </div>
-                <div className="text-xs mb-6" style={{ color: UI.dim }}>
+                <div className="tb-t mb-6" style={{ color: UI.dim }}>
                   {score.a} — {score.b}{score.s > 0 && <span style={{ color: GOLD }}> · {score.s}◆</span>}
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={onExit} className="px-4 rounded text-[12px] tracking-widest" style={{ height: 40, ...sk(UI.line), color: UI.dim }}>MENU</button>
-                  <button onClick={onRestart} className="flex items-center gap-1.5 px-4 rounded text-[12px] tracking-widest" style={{ height: 40, ...skFill(UI.text), color: UI.text }}>
+                  <button onClick={onExit} className="px-4 rounded tb-t" style={{ height: 40, ...sk(UI.line), color: UI.dim }}>MENU</button>
+                  <button onClick={onRestart} className="flex items-center gap-1.5 px-4 rounded tb-t" style={{ height: 40, ...skFill(UI.text), color: UI.text }}>
                     <RefreshCw size={12} /> AGAIN
                   </button>
                 </div>
               </div>
             )}
           </div>
+          <VMeter a={score.a} b={score.b} inkA={INK.A} inkB={INK.B} height={boardH} />
         </div>
 
-        <div className="shrink-0 flex flex-col justify-end" style={{ height: DOCK_H }}>
+        <div className="shrink-0 flex flex-col justify-end" style={{ height: `calc(${DOCK_H - 14}px + var(--p) * 11)` }}>
           {inPlay && (
             <>
               <QueueBar piece={piece} queue={upcoming(decks[player])} pass={currentPass(decks[player])}
@@ -2805,7 +3021,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
                 onRotate={pl.rotate} onCommit={commit} onDiscard={discard}
                 canRotate={pl.sel.handIdx !== null} canCommit={pl.ghostLegal} canDiscard={inPlay}
               />
-              <div className="text-[12px] truncate" style={{ color: UI.dim, height: 14 }}>
+              <div className="tb-t truncate" style={{ color: UI.dim, height: px(11) }}>
                 {stuck ? <span style={{ color: UI.bad }}>No room for this piece — pass.</span>
                   : pl.sel.handIdx === null ? "Pick up your piece and place it."
                   : !pl.sel.pos ? "Drag it onto the grid."
@@ -2816,11 +3032,11 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
           )}
 
           {phase === "AI_THINK" && (
-            <div className="text-[13px] tracking-[0.25em] tb-pulse pb-4" style={{ color: INK.B }}>{oppName} IS THINKING</div>
+            <div className="tb-t tb-pulse pb-4" style={{ color: INK.B }}>{oppName} IS THINKING</div>
           )}
 
           {phase === "REVEAL" && reveal && (
-            <div className="text-[12px] space-y-1.5 pb-4">
+            <div className="tb-t space-y-1.5 pb-4">
               {[["A", reveal.a, "P1"], ["B", reveal.b, solo ? "AI" : "P2"]].map(([side, mv, label]) => (
                 <div key={side} className="flex items-center gap-2.5">
                   <span style={{ color: INK[side], width: 20 }}>{label}</span>
@@ -2894,11 +3110,18 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   const pendingKeys = useMemo(() => new Set((pending?.cells || []).map(([r, c]) => key(r, c))), [pending]);
   const stuck = useMemo(() => (canAct && board ? !hasAnyMove(board, hand, you) : false), [canAct, board, hand, you]);
 
-  const g = theme.gap;
-  const cell = Math.max(6, Math.floor(Math.min(
-    (stage.w - g * (COLS + 1)) / COLS,
-    (stage.h - g * (ROWS + 1)) / ROWS
-  )));
+  const P = usePx();
+  const g = (theme.gap ?? 1) * P;
+  // Whole pixels: the square size is a whole number of pixels. Leave room for
+  // the board's 3-pixel frame and the score meter standing beside it.
+  const side = 7 * P, meterRoom = METER_W * P + side;
+  const cellArt = Math.max(5, Math.floor(Math.min(
+    (stage.w - meterRoom - side - g * (COLS - 1)) / COLS,
+    (stage.h - side - g * (ROWS - 1)) / ROWS
+  ) / P));
+  const cell = cellArt * P;
+  const boardW = cell * COLS + g * (COLS - 1);
+  const boardH = cell * ROWS + g * (ROWS - 1);
 
   // null until one player locks in; the server then broadcasts a deadline.
   const secsLeft = m?.deadline ? Math.max(0, Math.ceil((m.deadline - now) / 1000)) : null;
@@ -2926,7 +3149,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   if (!m || !board) {
     return (
       <div className="tb-screen tb-safe w-full flex items-center justify-center font-mono" style={{ color: UI.dim }}>
-        <div className="text-[13px] tracking-[0.3em] tb-pulse">DEALING…</div>
+        <div className="tb-t tb-pulse">DEALING…</div>
       </div>
     );
   }
@@ -2941,16 +3164,16 @@ function NetGame({ colors, theme, onResult, onAbort }) {
           <ForfeitButton ranked disabled={!m || !!m.over} onConfirm={() => net.forfeit()} />
           <div className="flex items-center gap-2">
             {graceLeft !== null && (
-              <span className="flex items-center gap-1 text-[12px] tabular-nums" style={{ color: GOLD }}>
+              <span className="flex items-center gap-1 tb-t tabular-nums" style={{ color: GOLD }}>
                 <Clock size={11} /> {graceLeft}
               </span>
             )}
             {theme.showTimer && secsLeft !== null && graceLeft === null && (
-              <span className="flex items-center gap-1 text-[12px] tabular-nums" style={{ color: secsLeft <= 5 ? UI.bad : GOLD }}>
+              <span className="flex items-center gap-1 tb-t tabular-nums" style={{ color: secsLeft <= 5 ? UI.bad : GOLD }}>
                 <Clock size={11} /> {secsLeft}
               </span>
             )}
-            <span className="text-[12px] tracking-[0.2em]" style={{ color: UI.dim }}>
+            <span className="tb-t" style={{ color: UI.dim }}>
               {m.opponent.name} · {m.opponent.rating}
             </span>
           </div>
@@ -2963,8 +3186,8 @@ function NetGame({ colors, theme, onResult, onAbort }) {
         />
         {m.opp && <OppQueue piece={m.opp.piece} queue={m.opp.queue} ink={colors.rival} dir={them === "B" ? -1 : 1} />}
 
-        <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center">
-          <div className="relative" style={{ width: cell * COLS + g * (COLS + 1), height: cell * ROWS + g * (ROWS + 1) }}>
+        <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center" style={{ gap: 7 * P }}>
+          <div className="relative" style={{ width: boardW, height: boardH }}>
             <div className="relative" style={{ transform: flip ? "rotate(180deg)" : "none" }}>
               <BoardGrid
                 board={board} cell={cell} ink={INK} theme={theme} youSide={you}
@@ -2982,7 +3205,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
 
             {pl.drag && pl.rotated && (
               <FloatingPiece
-                cells={pl.rotated} cell={cell} gap={theme.gap}
+                cells={pl.rotated} cell={cell} gap={g}
                 color={colors.you} legal={pl.ghostLegal} flip={flip}
                 dir={you === "B" ? -1 : 1}
                 x={pl.drag.x} y={pl.drag.y} lift={pl.drag.lift} faint={pl.holding && !!pl.sel.pos}
@@ -2992,19 +3215,20 @@ function NetGame({ colors, theme, onResult, onAbort }) {
             {m.oppDropped && (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-5 rounded"
                 style={{ background: "color-mix(in srgb, var(--tb-ground) 94%, transparent)" }}>
-                <div className="text-[12px] tracking-[0.3em] mb-3" style={{ color: GOLD }}>OPPONENT DROPPED</div>
+                <div className="tb-t mb-3" style={{ color: GOLD }}>OPPONENT DROPPED</div>
                 {graceLeft !== null && (
-                  <div className="text-[38px] leading-none tabular-nums mb-3" style={{ color: GOLD }}>{graceLeft}</div>
+                  <div className="tb-t tabular-nums mb-3" style={{ color: GOLD }}>{graceLeft}</div>
                 )}
-                <div className="text-[13px] leading-relaxed" style={{ color: UI.dim }}>
+                <div className="tb-t" style={{ color: UI.dim }}>
                   Holding their seat. If they don't return, you take the win.
                 </div>
               </div>
             )}
           </div>
+          <VMeter a={myScore} b={theirScore} inkA={colors.you} inkB={colors.rival} height={boardH} />
         </div>
 
-        <div className="shrink-0 flex flex-col justify-end" style={{ height: DOCK_H }}>
+        <div className="shrink-0 flex flex-col justify-end" style={{ height: `calc(${DOCK_H - 14}px + var(--p) * 11)` }}>
           <QueueBar
             piece={piece} queue={m.queue || []} pass={m.pass || 1}
             selected={pl.sel.handIdx === 0} dragging={pl.dragging || pl.holding}
@@ -3018,7 +3242,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
             canCommit={canAct && pl.ghostLegal}
             canDiscard={canAct}
           />
-          <div className="text-[12px] truncate" style={{ color: UI.dim, height: 14 }}>
+          <div className="tb-t truncate" style={{ color: UI.dim, height: px(11) }}>
             {err ? <span style={{ color: UI.bad }}>{err}</span>
               : m.reveal ? (
                 m.reveal.contested.length
@@ -3077,33 +3301,33 @@ function Result({ over, colors, onQueue, onMenu }) {
           background: `radial-gradient(ellipse at 50% 34%, color-mix(in srgb, ${verdictInk} 26%, transparent) 0%, transparent 62%)`,
         }}
       />
-      <div className="relative w-full tb-scale" style={{ maxWidth: 330 }}>
+      <Scaled className="relative w-full" style={{ maxWidth: 330 }}>
         <div className="text-center mb-7">
-          <div className="text-[32px] leading-none tracking-[0.15em]" style={{ color: verdictInk }}>
+          <div className="tb-t" style={{ color: verdictInk }}>
             {drew ? "DRAW" : won ? "VICTORY" : "DEFEAT"}
           </div>
-          <div className="text-[13px] mt-3" style={{ color: UI.dim }}>
+          <div className="tb-t mt-3" style={{ color: UI.dim }}>
             {myScore} — {oppScore} vs {opponent.name}
             {special > 0 && <span style={{ color: GOLD }}> · {special}◆</span>}
           </div>
           {forfeit ? (
-            <div className="text-[12px] mt-1.5" style={{ color: GOLD }}>opponent forfeited</div>
+            <div className="tb-t mt-1.5" style={{ color: GOLD }}>opponent forfeited</div>
           ) : reason === "forfeit" ? (
-            <div className="text-[12px] mt-1.5" style={{ color: GOLD }}>you forfeited</div>
+            <div className="tb-t mt-1.5" style={{ color: GOLD }}>you forfeited</div>
           ) : reason === "locked" ? (
-            <div className="text-[12px] mt-1.5" style={{ color: GOLD }}>board locked — no legal moves left</div>
+            <div className="tb-t mt-1.5" style={{ color: GOLD }}>board locked — no legal moves left</div>
           ) : null}
         </div>
 
         <div className="rounded p-4 mb-4" style={{ background: UI.panel, ...sk(UI.line) }}>
           <div className="flex items-center gap-3.5 mb-4">
             <div className="rounded flex items-center justify-center shrink-0" style={{ width: 58, height: 58, background: `${rank.color}1F`, ...sk(rank.color) }}>
-              <span className="text-2xl" style={{ color: rank.color }}>{rank.name}</span>
+              <span className="tb-t" style={{ color: rank.color }}>{rank.name}</span>
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-baseline gap-2">
-                <span className="text-2xl leading-none tabular-nums">{shown}</span>
-                <span className="text-sm tabular-nums" style={{ color: deltaInk }}>
+                <span className="tb-t tabular-nums">{shown}</span>
+                <span className="tb-t tabular-nums" style={{ color: deltaInk }}>
                   {delta >= 0 ? "+" : ""}{delta}
                 </span>
               </div>
@@ -3112,24 +3336,24 @@ function Result({ over, colors, onQueue, onMenu }) {
               </div>
             </div>
           </div>
-          <div className="flex justify-between text-[11px]" style={{ color: UI.dim }}>
+          <div className="flex justify-between tb-t" style={{ color: UI.dim }}>
             <span>DEVIATION ±{Math.round(rating.after.rd)}</span>
             <span>from ±{Math.round(rating.before.rd)}</span>
           </div>
         </div>
 
         {riTo !== riFrom && (
-          <div className="rounded px-3.5 py-2.5 mb-4 text-[12px] tracking-[0.2em] text-center"
+          <div className="rounded px-3.5 py-2.5 mb-4 tb-t text-center"
             style={{ background: `${rank.color}14`, ...sk(rank.color), color: rank.color }}>
             {riTo > riFrom ? `PROMOTED TO ${rank.name}` : `DEMOTED TO ${rank.name}`}
           </div>
         )}
 
         <div className="flex gap-2.5">
-          <button onClick={onMenu} className="flex-1 rounded text-[12px] tracking-[0.25em]" style={{ height: 48, ...sk(UI.line), color: UI.dim }}>MENU</button>
-          <button onClick={onQueue} className="rounded text-[12px] tracking-[0.25em]" style={{ height: 48, flex: 1.5, ...skFill(UI.text), color: UI.text }}>QUEUE AGAIN</button>
+          <button onClick={onMenu} className="flex-1 rounded tb-t" style={{ height: 48, ...sk(UI.line), color: UI.dim }}>MENU</button>
+          <button onClick={onQueue} className="rounded tb-t" style={{ height: 48, flex: 1.5, ...skFill(UI.text), color: UI.text }}>QUEUE AGAIN</button>
         </div>
-      </div>
+      </Scaled>
     </div>
   );
 }
@@ -3152,6 +3376,16 @@ export default function TurfBlocks() {
   const [seed, setSeed] = useState(0);
   const [loadout, setLoadoutState] = useState(loadLoadout);
   const [theme, setThemeState] = useState(loadTheme);
+  // One pixel size for everything, from the screen: ~2 px on phones, 3 on
+  // laptops, up to 5 on big monitors, so text stays readable and the board fits.
+  const pickPx = () => (typeof window === "undefined" ? 3 :
+    Math.max(2, Math.min(5, Math.round(Math.min(window.innerWidth, window.innerHeight * 0.6) / 180))));
+  const [P, setP] = useState(pickPx);
+  useEffect(() => {
+    const on = () => setP(pickPx());
+    window.addEventListener("resize", on);
+    return () => window.removeEventListener("resize", on);
+  }, []);
   const [over, setOver] = useState(null);
 
   const status = useStatus();
@@ -3187,7 +3421,7 @@ export default function TurfBlocks() {
 
   const shell = (
     <style>{`
-      :root { ${themeVars(theme)} }
+      :root { ${themeVars(theme)} --p: ${P}px; --pz: ${P / BASE_P}; }
       html, body, #root { background: var(--tb-ground); }
       .tb-screen { height: 100vh; height: 100dvh; overscroll-behavior: none; position: relative; z-index: 1; }
       .tb-safe {
@@ -3199,37 +3433,24 @@ export default function TurfBlocks() {
       .tb-scroll { -webkit-overflow-scrolling: touch; scrollbar-width: none; }
       .tb-scroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
 
-      /* Type: Bitcount Single, a pixel face, everywhere. The class name is historical. */
-      .font-mono { font-family: "Bitcount Single", ui-monospace, monospace; font-weight: 420; font-synthesis: none; }
-      .font-mono .italic, .font-mono em { font-style: normal; opacity: .85; }
-      .tb-display { font-family: "Bitcount Single", ui-monospace, monospace; font-weight: 800; }
-      .tb-num { font-weight: 700; }
-      .lucide { stroke-width: 2; shape-rendering: crispEdges; }
-
-      /* The title: a slow shimmer through your colours, with a hard pixel shadow. */
-      .tb-title {
-        background: linear-gradient(90deg, var(--tb-you), var(--tb-special), var(--tb-rival), var(--tb-you));
-        background-size: 300% 100%;
-        -webkit-background-clip: text; background-clip: text; color: transparent;
-        filter: drop-shadow(4px 4px 0 rgba(0,0,0,.45)) drop-shadow(0 0 18px color-mix(in srgb, var(--tb-you) 40%, transparent));
-        animation: tbShimmer 7s linear infinite;
-      }
-      @keyframes tbShimmer { from { background-position: 0% 0 } to { background-position: 300% 0 } }
+      /* Type: Bitcount Single, a pixel face whose dots sit on a grid of one
+         tenth of the font size — so at 10 pixels, every dot is exactly one
+         pixel. All text uses that one size, like a pixel-art game would. */
+      .font-mono { font-family: "Bitcount Single", ui-monospace, monospace; font-weight: 400; font-synthesis: none; }
+      .tb-t { font-size: calc(var(--p) * 10); line-height: calc(var(--p) * 11); letter-spacing: 0; }
+      .font-mono .italic, .font-mono em { font-style: normal; opacity: .8; }
+      .tb-display { font-family: "Bitcount Single", ui-monospace, monospace; font-weight: 400; }
+      .tb-num { font-weight: 400; }
+      /* The logo bobs one pixel up and down, like a title screen. */
+      @keyframes tbBob { 0%,100% { transform: none } 50% { transform: translateY(calc(var(--p) * -1)) } }
+      .tb-bob { animation: tbBob 1.6s steps(1) infinite; }
       /* A point of light running along the pixel rule under the title. */
       .tb-runner {
-        position: absolute; top: 0; left: 0; width: 6px; height: 6px; background: #fff;
-        box-shadow: 0 0 8px #fff, 0 0 16px var(--tb-you);
+        position: absolute; top: 0; left: 0; width: calc(var(--p) * 2); height: calc(var(--p) * 2); background: #fff;
         animation: tbRun 2.6s steps(18) infinite;
       }
-      @keyframes tbRun { from { left: 0 } to { left: calc(100% - 6px) } }
-
-      /* A pixel screen: faint scanlines and a vignette over everything. Static. */
-      body::after {
-        content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 60;
-        background:
-          repeating-linear-gradient(0deg, rgba(0,0,0,.07) 0 1px, transparent 1px 3px),
-          radial-gradient(ellipse at 50% 45%, transparent 55%, rgba(0,0,0,.45) 100%);
-      }
+      @keyframes tbRun { from { left: 0 } to { left: calc(100% - var(--p) * 2) } }
+      canvas, svg { image-rendering: pixelated; }
 
       /* Animations step rather than glide: motion in whole pixels. */
       @keyframes tbDrop {
@@ -3242,8 +3463,8 @@ export default function TurfBlocks() {
       .tb-fadein { animation: tbFadeIn 1.6s steps(8) both; }
       /* A collision: the square glitches side to side. */
       @keyframes tbContest {
-        0%,100% { transform: none } 20% { transform: translate(-2px, 0) } 40% { transform: translate(2px, -1px) }
-        60% { transform: translate(-1px, 1px) } 80% { transform: translate(1px, 0) }
+        0%,100% { transform: none } 25% { transform: translateX(calc(var(--p) * -1)) } 50% { transform: translateX(var(--p)) }
+        75% { transform: translateY(calc(var(--p) * -1)) }
       }
       .tb-contest { animation: tbContest .4s steps(5) 2; z-index: 2; }
       /* Cleared: a white flash, then the square breaks down to nothing. */
@@ -3269,20 +3490,20 @@ export default function TurfBlocks() {
       /* Popups open like a window on an old screen: a quick stepped scale-in. */
       @keyframes tbPop { from { opacity: 0; transform: scale(.9) } to { opacity: 1; transform: none } }
       .tb-pop { animation: tbPop .2s steps(4) both; }
-      ${theme.motion ? "" : ".tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-title,.tb-runner,.tb-line,.tb-vanish { animation: none !important }"}
+      ${theme.motion ? "" : ".tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-bob,.tb-runner,.tb-line,.tb-vanish { animation: none !important }"}
       @media (prefers-reduced-motion: reduce) {
-        .tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-title,.tb-runner,.tb-line { animation: none }
+        .tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-bob,.tb-runner,.tb-line { animation: none }
       }
-      /* Big screens: menus scale up, and the game column gets room for a bigger board. */
+      /* Menus and popups: phone layout at BASE_P, zoomed by P / BASE_P (see Scaled). */
+      .tb-scale { --p: ${BASE_P}px; zoom: var(--pz); }
+      /* Big screens: the game column gets room for a bigger board. */
       @media (min-width: 1000px) and (min-height: 760px) {
-        .tb-scale { zoom: 1.3; }
-        .tb-scale-pop { zoom: 1.15; }
-        .tb-col { max-width: 600px !important; }
+        .tb-col { max-width: 640px !important; }
       }
       /* Buttons light up under the pointer and press down one pixel. */
-      button:not(:disabled) { transition: filter 120ms steps(2), transform 60ms steps(1); }
-      button:not(:disabled):hover { filter: brightness(1.18); }
-      button:not(:disabled):active { transform: translateY(1px); }
+      button:not(:disabled) { transition: filter 120ms steps(2); }
+      button:not(:disabled):hover { filter: brightness(1.2); }
+      button:not(:disabled):active { transform: translateY(var(--p)); }
       button { cursor: pointer; }
       /* A phone held sideways leaves the board too short to aim at. */
       .tb-rotate { display: none; }
@@ -3350,13 +3571,15 @@ export default function TurfBlocks() {
     );
 
   return (
+    <PxContext.Provider value={P}>
     <InkStyle.Provider value={theme.stroke}>
       <PixelSky theme={theme} />{shell}{view}
       <div className="tb-rotate font-mono" aria-live="polite">
         <RotateCw size={26} style={{ color: UI.dim }} />
-        <div className="text-[16px]">Turn your phone upright</div>
-        <div className="text-[12px]" style={{ color: UI.dim }}>The board needs the height. Your game is still here.</div>
+        <div className="tb-t">Turn your phone upright</div>
+        <div className="tb-t" style={{ color: UI.dim }}>The board needs the height. Your game is still here.</div>
       </div>
     </InkStyle.Provider>
+    </PxContext.Provider>
   );
 }

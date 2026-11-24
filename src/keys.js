@@ -16,7 +16,7 @@ export const ACTIONS = [
   { id: "right", label: "Move right", def: "d" },
   { id: "ccw", label: "Rotate left", def: "q" },
   { id: "cw", label: "Rotate right", def: "e" },
-  { id: "commit", label: "Lock in", def: "Enter" },
+  { id: "commit", label: "Lock in", def: " " },
   { id: "discard", label: "Pass", def: "x" },
 ];
 

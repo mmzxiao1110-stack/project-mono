@@ -1,5 +1,5 @@
 /**
- * Theming — pixel glass.
+ * Theming — pixel art.
  *
  * Entirely client-side: nothing here is sent to the server, and your opponent
  * never sees your choices.
@@ -8,70 +8,71 @@
  * without React re-rendering the tree. Ink colours stay plain hex in JS because
  * the UI mixes them (color-mix) per element.
  *
- * The look: frosted, translucent panels with stepped pixel corners floating
- * over a slowly moving pixelated sky. `panel` is the tint of the glass;
- * the CSS turns it see-through.
+ * The look: everything is drawn in one pixel size (--p, set by the app from
+ * the screen size) over a dithered pixel sky. Palettes lean on Celeste's
+ * night levels; ink swatches are the block palette.
  */
 
 export const PRESETS = {
-  neon: {
-    label: "NEON",
-    ground: "#0A0A1F", panel: "#1C1F4A", line: "#3A3F7A", cell: "#14163A",
-    text: "#EAF2FF", dim: "#8B93C9",
-    you: "#43E8FF", rival: "#FF4FD8", special: "#FFD447",
+  dream: {
+    label: "DREAM",
+    ground: "#0F0C29", panel: "#231C5A", line: "#3D3488", cell: "#1A1546",
+    text: "#F4F0FF", dim: "#9C93D6",
+    you: "#5EA0C1", rival: "#DB4F6D", special: "#C1C15E",
   },
-  sunset: {
-    label: "SUNSET",
-    ground: "#170A1C", panel: "#3A1A3E", line: "#6B3460", cell: "#24102A",
-    text: "#FFEFF6", dim: "#C58DB0",
-    you: "#FFB547", rival: "#8F7BFF", special: "#FFE45C",
+  farewell: {
+    label: "FAREWELL",
+    ground: "#170D30", panel: "#3A2470", line: "#5E3FA0", cell: "#23164A",
+    text: "#FFF0FA", dim: "#B79AD8",
+    you: "#B25EC1", rival: "#5EA0C1", special: "#C1C15E",
   },
-  mint: {
-    label: "MINT",
-    ground: "#061614", panel: "#123A34", line: "#24605A", cell: "#0C2420",
-    text: "#E8FFF7", dim: "#7FB9AA",
-    you: "#4DFFB0", rival: "#FF6B7A", special: "#FFE45C",
+  summit: {
+    label: "SUMMIT",
+    ground: "#1D0E17", panel: "#4A1F2C", line: "#7A3A45", cell: "#2A121C",
+    text: "#FFF1E6", dim: "#D09A8E",
+    you: "#C18A5E", rival: "#5E63C1", special: "#C1C15E",
   },
-  ember: {
-    label: "EMBER",
-    ground: "#140A06", panel: "#3A1C10", line: "#6E3A22", cell: "#22110A",
-    text: "#FFF1E6", dim: "#C99A7E",
-    you: "#FF8A3D", rival: "#46C8FF", special: "#FFE066",
+  forest: {
+    label: "FOREST",
+    ground: "#0A1A14", panel: "#1F4030", line: "#2F6046", cell: "#11261C",
+    text: "#EFFFF0", dim: "#8FBFA2",
+    you: "#6DC15E", rival: "#DB4F6D", special: "#C1C15E",
   },
-  frost: {
-    label: "FROST",
-    ground: "#C9D6F0", panel: "#FFFFFF", line: "#8EA0C8", cell: "#B4C3E4",
-    text: "#141B33", dim: "#4F5B82",
-    you: "#2F6BFF", rival: "#FF3D71", special: "#E59A00",
+  snow: {
+    label: "SNOW",
+    ground: "#B9C4E4", panel: "#E8ECF8", line: "#8F99C2", cell: "#A9B4D8",
+    text: "#1A1F3A", dim: "#4C5584",
+    you: "#5E63C1", rival: "#DB4F6D", special: "#C18A5E",
   },
   mono: {
     label: "MONO",
-    ground: "#0B0B0D", panel: "#26262C", line: "#45454F", cell: "#16161A",
-    text: "#F4F4F6", dim: "#9A9AA6",
-    you: "#F4F4F6", rival: "#7E7E8C", special: "#FFD447",
+    ground: "#0C0C0E", panel: "#2A2A30", line: "#4A4A52", cell: "#18181C",
+    text: "#F2F2F2", dim: "#9A9AA2",
+    you: "#BBBBBB", rival: "#828282", special: "#C1C15E",
   },
 };
 
-/** Ink swatches offered in the customiser. */
+/** Ink swatches offered in the customiser — the block palette. */
 export const INKS = [
-  "#43E8FF", "#FF4FD8", "#FFD447", "#4DFFB0", "#FF8A3D", "#8F7BFF",
-  "#FF6B7A", "#46C8FF", "#2F6BFF", "#FF3D71", "#F4F4F6", "#7E7E8C",
+  "#DB4F6D", "#C18A5E", "#C1C15E", "#6DC15E", "#5EA0C1",
+  "#5E63C1", "#B25EC1", "#BBBBBB", "#828282",
 ];
 
 /** How a claimed square is drawn. */
 export const STROKES = {
-  glass: { label: "GLASS" },
-  solid: { label: "SOLID" },
+  pixel: { label: "PIXEL" },
+  flat: { label: "FLAT" },
   outline: { label: "OUTLINE" },
 };
 
-export const GRID_GAPS = [0, 1, 2, 3, 4];
+// Space between squares, in pixel units (--p), not screen px.
+export const GRID_GAPS = [0, 1, 2];
 
 export const defaultTheme = () => ({
-  preset: "neon",
-  ...stripLabel(PRESETS.neon),
-  stroke: "glass",
-  gap: 2,
+  preset: "dream",
+  ...stripLabel(PRESETS.dream),
+  stroke: "pixel",
+  gap: 1,
   colorblind: false,
   motion: true,
   haptics: true,
@@ -90,15 +91,16 @@ export function applyPreset(theme, key) {
 /** Any manual colour edit drops the preset label — it isn't that preset any more. */
 export const editTheme = (theme, patch) => ({ ...theme, ...patch, preset: "custom" });
 
-// v5: pixel glass. Older saves were for looks that no longer exist.
-const KEY = "tb:theme:v5";
+// v6: full pixel art. Older saves were for looks that no longer exist.
+const KEY = "tb:theme:v6";
 
 export function loadTheme() {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return defaultTheme();
     const t = { ...defaultTheme(), ...JSON.parse(raw) };
-    if (!STROKES[t.stroke]) t.stroke = "glass";
+    if (!STROKES[t.stroke]) t.stroke = "pixel";
+    if (!GRID_GAPS.includes(t.gap)) t.gap = 1;
     return t;
   } catch {
     return defaultTheme();
@@ -127,7 +129,7 @@ export function themeVars(t) {
   const shade = light ? "20,27,51" : "0,0,0";
   return `
     --tb-ground: ${t.ground};
-    --tb-panel: color-mix(in srgb, ${t.panel} ${light ? 62 : 58}%, transparent);
+    --tb-panel: color-mix(in srgb, ${t.panel} ${light ? 88 : 80}%, transparent);
     --tb-panel-solid: ${t.panel};
     --tb-line: ${t.line};
     --tb-cell: color-mix(in srgb, ${t.cell} 55%, transparent);
