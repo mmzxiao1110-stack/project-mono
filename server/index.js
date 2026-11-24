@@ -405,12 +405,16 @@ async function handle(ws, msg) {
       break;
 
     case "move":
+    case "delete":
+    case "pin":
     case "discard": {
       const active = inMatch.get(ws.userId);
       if (!active) return fail(ws, "Not in a match.");
       const err = msg.t === "move"
         ? active.match.submitMove(active.side, msg)
-        : active.match.submitDiscard(active.side, msg);
+        : msg.t === "discard"
+          ? active.match.submitDiscard(active.side, msg)
+          : active.match.submitAction(active.side, msg, msg.t);
       if (err) fail(ws, err);
       break;
     }

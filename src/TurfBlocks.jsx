@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef, useSyncExtern
 import {
   RotateCw, Check, SkipForward, ChevronLeft, Settings2, X,
   BarChart3, Wifi, WifiOff, UserRound, LogOut,
-  Palette, Lock, MailCheck, ShieldAlert, BookOpen, ChevronRight,
+  Palette, Lock, MailCheck, ShieldAlert, BookOpen, ChevronRight, Eraser, Pin,
 } from "./pixelIcons.jsx";
 
 /* The rules live in one place and the server imports the same file. */
@@ -10,8 +10,9 @@ import {
   COLS, ROWS, TURNS, BLOCKS, DEFAULT_LOADOUT, isCentre,
   key, rotateN, boundsOf, absCells, initialBoard, isLegal,
   hasAnyMove, resolveTurn, scoreOf, newDeck, advanceDeck, currentPiece, currentPass, upcoming, QUEUE_SHOWN, newSeed,
+  emptyPins, nextMeters, isLegalDelete, isLegalPin,
 } from "../shared/engine.js";
-import { aiPickMove } from "../shared/ai.js";
+import { aiPickAction } from "../shared/ai.js";
 import {
   RANKS, PLACEMENT_GAMES, rankIndexFor, rankMin, rankProgress,
 } from "../shared/glicko.js";
@@ -524,14 +525,127 @@ function usePlacement({ board, owner, hand, enabled, flip = false }) {
 }
 
 /**
+ * Delete and pin: which mode you're in, the shape you've traced, and pins
+ * waiting to ride along with your move.
+ *
+ * In delete or pin mode, press on the board and drag: every square the
+ * pointer passes over joins the shape, as long as it touches a square
+ * already in it — drag straight for an I, trace an S, or run along three
+ * and step off the middle for a T. Up to four squares (pins: up to your
+ * meter). Press again to start over.
+ */
+function useActions({ board, pins, owner, meter, enabled, boardRef, flip = false, onLeavePlace }) {
+  const [mode, setModeState] = useState("place");
+  const [trace, setTrace] = useState([]);
+  const [staged, setStaged] = useState(null); // free pins, confirmed, riding along with the move
+  const pinsSafe = pins || EMPTY_PINS;
+
+  const max = mode === "delete" ? RULES.deleteMax : Math.min(RULES.deleteMax, meter);
+  const stagedKeys = useMemo(() => new Set((staged || []).map(([r, c]) => key(r, c))), [staged]);
+  const ok = useCallback((r, c) => {
+    if (!board || r < 0 || c < 0 || r >= ROWS || c >= COLS) return false;
+    const v = board[r][c];
+    if (v === null || pinsSafe[r][c]) return false;
+    if (mode === "delete") return !stagedKeys.has(key(r, c));
+    return !RULES.pinOwnOnly || v === owner;
+  }, [board, pinsSafe, mode, owner, stagedKeys]);
+
+  const cellAt = useCallback((x, y) => {
+    const el = boardRef.current;
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    const sc = Math.floor(((x - rect.left) / rect.width) * COLS), sr = Math.floor(((y - rect.top) / rect.height) * ROWS);
+    if (sc < 0 || sr < 0 || sc >= COLS || sr >= ROWS) return null;
+    return flip ? [ROWS - 1 - sr, COLS - 1 - sc] : [sr, sc];
+  }, [boardRef, flip]);
+
+  const touches = (cells, [r, c]) => cells.some(([a, b]) => {
+    const dr = Math.abs(a - r), dc = Math.abs(b - c);
+    return RULES.connectDiagonal ? Math.max(dr, dc) === 1 : dr + dc === 1;
+  });
+
+  /** Grow the shape toward the pointer, one square at a time, so fast drags don't skip. */
+  const grow = useCallback((cells, target) => {
+    let cur = cells;
+    for (let guard = 0; guard < 8; guard++) {
+      if (cur.length >= max || cur.some(([a, b]) => a === target[0] && b === target[1])) return cur;
+      if (touches(cur, target)) return ok(...target) ? [...cur, target] : cur;
+      // Step from the nearest square in the shape toward the target, the long way first.
+      let near = cur[0], nd = Infinity;
+      for (const q of cur) { const d = Math.abs(q[0] - target[0]) + Math.abs(q[1] - target[1]); if (d < nd) { nd = d; near = q; } }
+      const dr = target[0] - near[0], dc = target[1] - near[1];
+      const step = Math.abs(dr) >= Math.abs(dc) ? [near[0] + Math.sign(dr), near[1]] : [near[0], near[1] + Math.sign(dc)];
+      if (cur.some(([a, b]) => a === step[0] && b === step[1]) || !ok(...step)) return cur;
+      cur = [...cur, step];
+    }
+    return cur;
+  }, [max, ok]);
+
+  const onPointerDown = useCallback((e) => {
+    if (!enabled || mode === "place" || e.button > 0) return;
+    e.preventDefault();
+    const start = cellAt(e.clientX, e.clientY);
+    if (!start || !ok(...start) || max < 1) { setTrace([]); return; }
+    let cur = [start];
+    setTrace(cur);
+    const onMove = (ev) => {
+      ev.preventDefault();
+      const c = cellAt(ev.clientX, ev.clientY);
+      if (!c) return;
+      const next = grow(cur, c);
+      if (next !== cur) { cur = next; setTrace(cur); }
+    };
+    const noScroll = (ev) => { if (ev.cancelable) ev.preventDefault(); };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      window.removeEventListener("touchmove", noScroll);
+    };
+    window.addEventListener("pointermove", onMove, { passive: false });
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    window.addEventListener("touchmove", noScroll, { passive: false });
+  }, [enabled, mode, cellAt, ok, grow, max]);
+
+  /** 1 / 2 / 3: switch modes. Pressing the mode you're in again goes back to placing. */
+  const setMode = useCallback((m) => {
+    const next = m === mode && m !== "place" ? "place" : m;
+    if (next === "pin" && (meter < 1 || !RULES.actions)) return;
+    if (next === "delete" && !RULES.actions) return;
+    if (next !== "place") onLeavePlace?.();
+    setTrace([]);
+    setModeState(next);
+  }, [mode, meter, onLeavePlace]);
+
+  const deleteValid = mode === "delete" && !!board && isLegalDelete(board, pinsSafe, trace);
+  const pinValid = mode === "pin" && !!board && isLegalPin(board, pinsSafe, trace, owner, meter);
+
+  /** Free pins: keep the traced squares for this turn's move and go back to placing. */
+  const confirmPins = useCallback(() => {
+    if (!pinValid) return false;
+    setStaged(trace);
+    setTrace([]);
+    setModeState("place");
+    return true;
+  }, [pinValid, trace]);
+
+  const reset = useCallback(() => { setModeState("place"); setTrace([]); setStaged(null); }, []);
+
+  return { mode, setMode, trace, staged, onPointerDown, deleteValid, pinValid, confirmPins, reset, setStaged };
+}
+const EMPTY_PINS = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+
+/**
  * Keyboard play, shared by the local and ranked games. Movement is relative
  * to the screen, so on a board rotated for seat B, "up" still means up.
  */
-function useGameKeys(pl, { enabled, onCommit, onDiscard }) {
+function useGameKeys(pl, { enabled, onCommit, onDiscard, onMode, mode = "place" }) {
   // Handlers change every render; the listener reads the latest through a ref
   // instead of re-binding on every keystroke.
   const ref = useRef(null);
-  useLayoutEffect(() => { ref.current = { pl, enabled, onCommit, onDiscard }; });
+  const modeRef = useRef(mode);
+  useLayoutEffect(() => { ref.current = { pl, enabled, onCommit, onDiscard, onMode }; modeRef.current = mode; });
 
   useEffect(() => {
     const onKey = (e) => {
@@ -539,14 +653,17 @@ function useGameKeys(pl, { enabled, onCommit, onDiscard }) {
       const t = e.target;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
       if (!ref.current) return;
-      const { pl, enabled, onCommit, onDiscard } = ref.current;
+      const { pl, enabled, onCommit, onDiscard, onMode } = ref.current;
       if (e.key === "Escape" && pl.holding) { e.preventDefault(); return pl.reset(); }
       const action = actionFor(e.key);
       if (!action) return;
       e.preventDefault();
       if (!enabled || pl.dragging) return;
 
-      if (action === "slot1") return pl.select(0);
+      if (action === "erase") return onMode?.("delete");
+      if (action === "pinmode") return onMode?.("pin");
+      if (action === "slot1") { onMode?.("place"); return pl.select(0); }
+      if (action === "commit" && modeRef.current !== "place") return onCommit();
       // Passing is always available, picked up or not.
       if (action === "discard") return onDiscard();
       if (pl.sel.handIdx === null) return;
@@ -900,6 +1017,7 @@ function BoardGrid({
   board, cell, ink, ghostKeys, ghostLegal, ghostInk, contestedKeys,
   boardRef, onPointerDown, theme, youSide = "A", ghostGolden = false,
   pendingKeys = null, pendingInk = null,
+  pins = null, traceKeys = null, traceKind = null, traceOk = false, stagedKeys = null,
 }) {
   const P = usePx();
   const gap = (theme.gap ?? 1) * P;
@@ -908,6 +1026,10 @@ function BoardGrid({
   const art = Math.round(cell / P);
   const clip = art >= 9 ? CLIP : CLIP1;
   const shine = glassShine(art);
+  // A pinned square wears a chessboard: four by four checks, in whole pixels.
+  const q = Math.max(1, Math.floor(art / 4)) * P;
+  const CHESS = `repeating-conic-gradient(rgba(255,255,255,.26) 0 25%, rgba(0,0,0,.30) 0 50%) 0 0 / ${2 * q}px ${2 * q}px`;
+  const DITHER = (col) => `repeating-conic-gradient(${col} 0 25%, transparent 0 50%) 0 0 / ${2 * P}px ${2 * P}px`;
 
   return (
     <div
@@ -972,6 +1094,20 @@ function BoardGrid({
                   
                   style={{ position: "absolute", inset: 0 }} />
               )}
+              {v && pins?.[r]?.[c] && (
+                <span aria-hidden="true" style={{ position: "absolute", inset: 0, pointerEvents: "none", background: CHESS, boxShadow: `inset 0 0 0 ${P}px rgba(255,255,255,.45)` }} />
+              )}
+              {stagedKeys?.has(k) && (
+                // Pins riding along with this move: the chessboard, dimmed until it lands.
+                <span aria-hidden="true" style={{ position: "absolute", inset: 0, pointerEvents: "none", background: CHESS, opacity: 0.6, boxShadow: `inset 0 0 0 ${P}px ${UI.text}` }} />
+              )}
+              {traceKeys?.has(k) && (
+                <span aria-hidden="true" style={{
+                  position: "absolute", inset: 0, pointerEvents: "none",
+                  background: traceKind === "pin" ? CHESS : DITHER("rgba(255,90,110,.75)"),
+                  boxShadow: `inset 0 0 0 ${P}px ${traceOk ? (traceKind === "pin" ? UI.text : UI.bad) : UI.dim}`,
+                }} />
+              )}
               <span aria-hidden="true" style={{ position: "absolute", inset: 0, pointerEvents: "none", background: shine }} />
               {mark}
             </div>
@@ -1025,10 +1161,10 @@ function BubbleShape({ w, h, tint, fill = 14 }) {
   );
 }
 
-/** Button size in pixels: never smaller than a fingertip, and odd, so a 9-pixel icon sits dead centre. */
-function useBubble() {
+/** Button size in pixels: a fingertip (a little less in the phone's crowded row), and odd, so a 9-pixel icon sits dead centre. */
+function useBubble(compact = false) {
   const P = usePx();
-  const d = Math.max(13, Math.ceil(40 / P));
+  const d = Math.max(13, Math.ceil((compact ? 36 : 40) / P));
   return d % 2 ? d : d + 1;
 }
 
@@ -1049,13 +1185,31 @@ function Bubble({ w, h, tint = UI.text, fill, label, children, className = "", s
   );
 }
 
+/** Delete and pin mode buttons; the pin button carries your pin count. */
+function ModeButtons({ d, mode, onMode, meter, enabled }) {
+  const P = usePx();
+  if (!RULES.actions) return null;
+  return (
+    <>
+      <Bubble w={d} h={d} label="Delete" tint={mode === "delete" ? UI.bad : UI.dim} fill={mode === "delete" ? 34 : 10}
+        onClick={() => onMode("delete")} disabled={!enabled} aria-pressed={mode === "delete"}><Eraser /></Bubble>
+      <div className="relative shrink-0">
+        <Bubble w={d} h={d} label={`Pin (${meter})`} tint={mode === "pin" ? UI.text : UI.dim} fill={mode === "pin" ? 30 : 10}
+          onClick={() => onMode("pin")} disabled={!enabled || meter < 1} aria-pressed={mode === "pin"}><Pin /></Bubble>
+        <span className="absolute tb-t tb-b tabular-nums pointer-events-none" aria-hidden="true"
+          style={{ right: -P, bottom: -2 * P, color: meter ? GOLD : UI.dim, textShadow: `${P}px ${P}px 0 rgba(0,0,0,.6)` }}>{meter}</span>
+      </div>
+    </>
+  );
+}
+
 /**
  * The right rail: TURN, LOCK IN (the tall one) and PASS at the top, the
  * turn number in the middle, FORFEIT at the bottom.
  */
 function ActionRail({
   height, ink, onRotate, onCommit, onDiscard, canRotate, canCommit, canDiscard,
-  turn, waiting = false, timer = null, forfeit,
+  turn, waiting = false, timer = null, forfeit, mode = "place", onMode, meter = 0, canMode = false,
 }) {
   const P = usePx();
   const d = useBubble();
@@ -1063,11 +1217,12 @@ function ActionRail({
     <div className="shrink-0 flex flex-col items-center justify-between" style={{ width: d * P, height }}>
       <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
         <Bubble w={d} h={d} label="Turn" onClick={onRotate} disabled={!canRotate}><RotateCw /></Bubble>
-        <Bubble w={d} h={2 * d + 3} label="LOCK IN" tint={canCommit || waiting ? ink : UI.dim} fill={canCommit ? 40 : 10}
+        <Bubble w={d} h={d + 8} label="LOCK IN" tint={canCommit || waiting ? ink : UI.dim} fill={canCommit ? 40 : 10}
           onClick={onCommit} disabled={!canCommit} className={waiting ? "tb-pulse" : undefined}
           style={{ color: canCommit ? UI.text : undefined }}>
           <Check />
         </Bubble>
+        <ModeButtons d={d} mode={mode} onMode={onMode} meter={meter} enabled={canMode} />
         <Bubble w={d} h={d} label="Pass" tint={UI.dim} onClick={onDiscard} disabled={!canDiscard}><SkipForward /></Bubble>
       </div>
       <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
@@ -1098,7 +1253,7 @@ function PiecePane({ id, size, ink, dir, dim = 1, lit = false, ...rest }) {
  * One player's side of the top row: name and score, then the piece they play
  * now and the next four. Mirrored for the player on the right.
  */
-function ForecastSide({ name, ink, now, queue, dir = 1, right = false, card = null, busy = false, compact = false, pane }) {
+function ForecastSide({ name, ink, now, queue, dir = 1, right = false, card = null, busy = false, compact = false, pane, meter }) {
   const P = usePx();
   const nowW = pane, soonW = pane;
   const soon = (queue || []).slice(0, QUEUE_SHOWN);
@@ -1109,7 +1264,14 @@ function ForecastSide({ name, ink, now, queue, dir = 1, right = false, card = nu
   return (
     <div className={`flex flex-col min-w-0 ${right ? "items-end" : "items-start"} ${busy ? "tb-pulse" : ""}`} style={{ gap: P }}>
       {!compact && (
-        <div className="tb-t truncate max-w-full" style={{ color: ink }}>{name}</div>
+        <div className={`flex items-center max-w-full ${right ? "flex-row-reverse" : ""}`} style={{ gap: 3 * P }}>
+          <div className="tb-t truncate" style={{ color: ink }}>{name}</div>
+          {RULES.actions && meter !== undefined && (
+            <span className="flex items-center tb-t tabular-nums" title={`${meter} pins`} style={{ gap: P, color: meter ? GOLD : UI.dim }}>
+              <Pin />{meter}
+            </span>
+          )}
+        </div>
       )}
       <div className={`flex items-end ${right ? "flex-row-reverse" : ""}`} style={{ gap: P }}>{panes}</div>
     </div>
@@ -1246,24 +1408,26 @@ function HMeter({ a, b, inkA, inkB, width }) {
 /** Phone: the buttons in one row under the board — turn, lock in (wide), pass · turn number · forfeit. */
 function ActionRow({
   width, ink, onRotate, onCommit, onDiscard, canRotate, canCommit, canDiscard, turn, waiting = false, timer = null, forfeit,
+  mode = "place", onMode, meter = 0, canMode = false,
 }) {
   const P = usePx();
-  const d = useBubble();
+  const d = useBubble(true);
   return (
     <div className="flex items-center justify-between shrink-0" style={{ width }}>
       <div className="flex items-center" style={{ gap: 2 * P }}>
         <Bubble w={d} h={d} label="Turn" onClick={onRotate} disabled={!canRotate}><RotateCw /></Bubble>
-        <Bubble w={2 * d + 3} h={d} label="LOCK IN" tint={canCommit || waiting ? ink : UI.dim} fill={canCommit ? 40 : 10}
+        <Bubble w={d + 8} h={d} label="LOCK IN" tint={canCommit || waiting ? ink : UI.dim} fill={canCommit ? 40 : 10}
           onClick={onCommit} disabled={!canCommit} className={waiting ? "tb-pulse" : undefined}
           style={{ color: canCommit ? UI.text : undefined }}>
           <Check />
         </Bubble>
+        <ModeButtons d={d} mode={mode} onMode={onMode} meter={meter} enabled={canMode} />
         <Bubble w={d} h={d} label="Pass" tint={UI.dim} onClick={onDiscard} disabled={!canDiscard}><SkipForward /></Bubble>
       </div>
       <div className="flex items-center" style={{ gap: 2 * P }}>
         {timer}
         <NumBox value={turn} color={LAVENDER} label={`Turn ${turn}`} />
-        <ForfeitButton {...forfeit} />
+        <ForfeitButton {...forfeit} compact />
       </div>
     </div>
   );
@@ -1526,9 +1690,9 @@ function DeckModal({ color, onClose }) {
     <Popup title="THE PIECES" onClose={onClose} maxW={380}>
       <div className="pt-4 pb-1">
         <div className="grid grid-cols-4 gap-2 mb-4">
-          {BLOCKS.map((b, i) => (
+          {DEFAULT_LOADOUT.map((i) => BLOCKS[i]).map((b, j) => (
             <div key={b.name} className="flex flex-col items-center justify-center gap-1.5 py-2" style={{ ...glass(UI.line) }}>
-              <BlockGlyph blockId={i} box={30} color={color} />
+              <BlockGlyph blockId={DEFAULT_LOADOUT[j]} box={30} color={color} />
               <span className="tb-t" style={{ color: UI.dim }}>{b.name}</span>
             </div>
           ))}
@@ -2407,6 +2571,16 @@ function HowToModal({ colors, loadout, onClose }) {
       }} />,
       body: "Any row or column that fills up completely is wiped — both colours. Build too close to a full line and your opponent can finish it for you and delete your squares.",
     },
+    ...(RULES.actions ? [{
+      title: "DELETE AND PIN",
+      art: (
+        <div className="flex items-center justify-center gap-4" style={{ color: UI.dim }}>
+          <span className="flex items-center gap-1.5 tb-t"><Eraser /> 2</span>
+          <span className="flex items-center gap-1.5 tb-t"><Pin /> 3</span>
+        </div>
+      ),
+      body: `Instead of placing, you can DELETE up to ${RULES.deleteMax} connected squares — anyone's. Press 2 and drag across them. But every square you delete gives your opponent a pin. ${RULES.pinIsFree ? "Pins ride along with your move:" : "Pinning takes your turn:"} press 3 and drag over your own squares to make them permanent — line clears and deletes can't touch them.`,
+    }] : []),
     {
       title: "THE PIECES",
       art: (
@@ -2823,9 +2997,9 @@ function Matchmaking({ profile, loadout, colors, onCancel, onPlayAi }) {
 }
 
 /** The FORFEIT bubble (red): asks before ending the match. */
-function ForfeitButton({ onConfirm, ranked = false, disabled = false }) {
+function ForfeitButton({ onConfirm, ranked = false, disabled = false, compact = false }) {
   const [asking, setAsking] = useState(false);
-  const d = useBubble();
+  const d = useBubble(compact);
   return (
     <>
       <Bubble w={d} h={d} label="Forfeit" tint="#DB4F6D" fill={22} onClick={() => setAsking(true)} disabled={disabled}>
@@ -2859,6 +3033,8 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   const INK = useMemo(() => ({ A: colors.you, B: colors.rival, S: colors.special }), [colors]);
 
   const [board, setBoard] = useState(initialBoard);
+  const [pins, setPins] = useState(emptyPins);          // permanent squares
+  const [meters, setMeters] = useState({ A: 0, B: 0 }); // pins each side may spend
   const [turn, setTurn] = useState(1);
   const [phase, setPhase] = useState("PLAY_A");
   const [decks, setDecks] = useState(() => {
@@ -2881,12 +3057,13 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   const oppName = solo ? `AI ${LEVELS[aiLevel - 1]}` : "PLAYER 2";
 
   const pl = usePlacement({ board, owner: player, hand, enabled: inPlay });
+  const act = useActions({ board, pins, owner: player, meter: meters[player], enabled: inPlay, boardRef: pl.boardRef, onLeavePlace: pl.reset });
   const contestedKeys = useMemo(() => new Set((reveal ? reveal.contested : []).map(([r, c]) => key(r, c))), [reveal]);
   const stuck = useMemo(() => (inPlay ? !hasAnyMove(board, hand, player) : false), [board, hand, player, inPlay]);
 
   const P = usePx();
   const compact = useCompact();
-  const railD = useBubble();
+  const railD = useBubble(compact);
   const { g, side, cell, boardW, boardH, groupW, pane } = gameLayout(stage, theme, P, railD, compact);
 
   // The match is over: wash to the result screen.
@@ -2903,30 +3080,44 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   const advance = (side) => setDecks((st) => ({ ...st, [side]: advanceDeck(st[side], loadout) }));
 
   const finish = (mA, mB) => {
-    const res = resolveTurn(board, mA, mB);
+    const res = resolveTurn(board, mA, mB, pins);
     setBoard(res.board);
+    setPins(res.pins);
+    setMeters((m) => nextMeters(m, mA, mB, res.deleted));
     setReveal({ contested: res.contested, cleared: res.cleared, lines: res.lines, a: mA, b: mB });
     setPhase("REVEAL");
   };
 
   const handOver = (move) => { setPendingA(move); setPhase(solo ? "AI_THINK" : "HANDOFF"); };
 
-  const commit = () => {
-    if (pl.sel.handIdx === null || !pl.ghost || !pl.ghostLegal) return;
+  // Pins riding along with this move (when pinning is free).
+  const extra = act.staged && RULES.pinIsFree ? { pins: act.staged } : null;
+  const canCommit = inPlay && (act.mode === "delete" ? act.deleteValid : act.mode === "pin" ? act.pinValid : pl.ghostLegal);
+  const send = (move) => {
     advance(player);
-    const move = { cells: pl.ghost, value: BLOCKS[piece].cells.length, blockId: piece };
     if (player === "A") handOver(move); else finish(pendingA, move);
     pl.reset();
+    act.reset();
+  };
+  const commit = () => {
+    if (act.mode === "delete") {
+      if (act.deleteValid) send({ type: "delete", cells: act.trace, ...extra });
+      return;
+    }
+    if (act.mode === "pin") {
+      if (!act.pinValid) return;
+      if (RULES.pinIsFree) { act.confirmPins(); pl.select(0); } else send({ type: "pin", cells: act.trace });
+      return;
+    }
+    if (pl.sel.handIdx === null || !pl.ghost || !pl.ghostLegal) return;
+    send({ type: "place", cells: pl.ghost, value: BLOCKS[piece].cells.length, blockId: piece, ...extra });
   };
 
-  // Passing spends the current piece without placing it.
-  const discard = () => {
-    advance(player);
-    if (player === "A") handOver(null); else finish(pendingA, null);
-    pl.reset();
-  };
+  // Passing spends the current piece without placing it (free pins still land).
+  const discard = () => send(extra ? { type: "pass", ...extra } : null);
 
-  useGameKeys(pl, { enabled: inPlay, onCommit: commit, onDiscard: discard });
+  const onMode = (m) => { act.setMode(m); if (m === "place" || m === act.mode) setTimeout(() => pl.select(0), 0); };
+  useGameKeys(pl, { enabled: inPlay, onCommit: commit, onDiscard: discard, onMode, mode: act.mode });
 
   // Each turn starts with the piece already in hand: under the cursor with a
   // mouse, on the nearest legal square on a touch screen.
@@ -2938,9 +3129,9 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   useEffect(() => {
     if (phase !== "AI_THINK") return;
     const t = setTimeout(() => {
-      const move = aiPickMove(board, currentPiece(decks.B), "B", aiLevel, LEVELS.length);
+      const move = aiPickAction({ board, pins, meters }, currentPiece(decks.B), "B", aiLevel, LEVELS.length);
       advance("B");
-      finish(pendingA, move ? { cells: move.cells, value: move.value, blockId: move.blockId } : null);
+      finish(pendingA, move);
     }, AI_THINK_MS);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2951,8 +3142,10 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
     const t = setTimeout(() => {
       setReveal(null);
       setPendingA(null);
-      // Locked: neither player can place any piece of their deck anywhere.
-      const locked = !hasAnyMove(board, loadout, "A") && !hasAnyMove(board, loadout, "B");
+      // Locked: neither player can place any piece of their deck anywhere
+      // (and, with deleting on, there's nothing left to delete).
+      const deletable = RULES.actions && board.some((row, r) => row.some((v, c) => v !== null && !pins[r][c]));
+      const locked = !deletable && !hasAnyMove(board, loadout, "A") && !hasAnyMove(board, loadout, "B");
       if (locked || turn >= TURNS) {
         setLockedOut(locked);
         setPhase("DONE");
@@ -2960,7 +3153,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
       else { setTurn((t2) => t2 + 1); setPhase("PLAY_A"); }
     }, REVEAL_MS);
     return () => clearTimeout(t);
-  }, [phase, board, turn, loadout]);
+  }, [phase, board, pins, turn, loadout]);
 
   if (showEnd) {
     // A forfeit decides it regardless of the score.
@@ -2984,10 +3177,13 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
     );
   }
 
+  const traceKeys = new Set(act.trace.map(([r, c]) => key(r, c)));
+  const stagedKeys = new Set((act.staged || []).map(([r, c]) => key(r, c)));
   const rail = {
     ink: INK[player], turn: Math.min(turn, TURNS),
     onRotate: () => pl.rotate(1), onCommit: commit, onDiscard: discard,
-    canRotate: inPlay && pl.sel.handIdx !== null, canCommit: inPlay && pl.ghostLegal, canDiscard: inPlay,
+    canRotate: inPlay && act.mode === "place" && pl.sel.handIdx !== null, canCommit, canDiscard: inPlay,
+    mode: act.mode, onMode, meter: meters[player], canMode: inPlay,
     forfeit: {
       disabled: phase === "DONE",
       onConfirm: () => { pl.reset(); setForfeitBy(solo ? "A" : player); setPhase("DONE"); },
@@ -3004,14 +3200,14 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
               width={groupW} compact={compact} pane={pane}
               bag={currentPass(decks[inPlay ? player : "A"])}
               left={{
-                name: "P1", ink: INK.A, now: currentPiece(decks.A), queue: upcoming(decks.A),
+                name: "P1", ink: INK.A, now: currentPiece(decks.A), queue: upcoming(decks.A), meter: meters.A,
                 card: inPlay && player === "A" ? (
                   <NowCard key="now" pane={pane} id={piece} ink={INK.A} selected={pl.sel.handIdx === 0}
                     dragging={pl.dragging || pl.holding} onPress={pl.onCardPointerDown} />
                 ) : null,
               }}
               right={{
-                name: oppName, ink: INK.B, dir: -1, now: currentPiece(decks.B), queue: upcoming(decks.B),
+                name: oppName, ink: INK.B, dir: -1, now: currentPiece(decks.B), queue: upcoming(decks.B), meter: meters.B,
                 busy: phase === "AI_THINK",
                 card: inPlay && player === "B" ? (
                   <NowCard key="now" pane={pane} id={piece} ink={INK.B} dir={-1} selected={pl.sel.handIdx === 0}
@@ -3030,7 +3226,9 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
                   pendingInk={INK.A}
                   ghostKeys={pl.ghostKeys} ghostLegal={pl.ghostLegal}
                   ghostInk={INK[player]}
-                  contestedKeys={contestedKeys} boardRef={pl.boardRef} onPointerDown={(e) => pl.onBoardPointerDown(e, commit)}
+                  contestedKeys={contestedKeys} boardRef={pl.boardRef}
+                  onPointerDown={(e) => (act.mode === "place" ? pl.onBoardPointerDown(e, commit) : act.onPointerDown(e))}
+                  pins={pins} traceKeys={traceKeys} traceKind={act.mode} traceOk={act.deleteValid || act.pinValid} stagedKeys={stagedKeys}
                 />
 
                 {reveal && (
@@ -3115,6 +3313,9 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   const flip = you === "B";
 
   const pl = usePlacement({ board, owner: you, hand, enabled: canAct, flip });
+  const pins = m?.pins || EMPTY_PINS;
+  const meter = m?.meters?.me ?? 0;
+  const act = useActions({ board, pins, owner: you, meter, enabled: canAct, boardRef: pl.boardRef, flip, onLeavePlace: pl.reset });
   const contestedKeys = useMemo(
     () => new Set((m?.reveal ? m.reveal.contested : []).map(([r, c]) => key(r, c))),
     [m?.reveal]
@@ -3126,18 +3327,34 @@ function NetGame({ colors, theme, onResult, onAbort }) {
 
   const P = usePx();
   const compact = useCompact();
-  const railD = useBubble();
+  const railD = useBubble(compact);
   const { g, side, cell, boardW, boardH, groupW, pane } = gameLayout(stage, theme, P, railD, compact);
 
   const secsLeft = m?.deadline ? Math.max(0, Math.ceil((m.deadline - now) / 1000)) : null;
   const graceLeft = m?.graceUntil ? Math.max(0, Math.ceil((m.graceUntil - now) / 1000)) : null;
 
+  // Pins riding along with this move (when pinning is free).
+  const pinsOut = act.staged && RULES.pinIsFree ? act.staged : undefined;
+  const canCommit = canAct && (act.mode === "delete" ? act.deleteValid : act.mode === "pin" ? act.pinValid : pl.ghostLegal);
   const commit = () => {
-    if (!pl.ghostLegal || pl.sel.handIdx === null) return;
-    // Show the block where it went (dotted, not yet real) until the turn resolves.
-    setPlaced({ turn: m.turn, cells: pl.ghost, handIdx: pl.sel.handIdx });
-    net.move({ turn: m.turn, handIdx: pl.sel.handIdx, rot: ((pl.sel.rot % 4) + 4) % 4, pos: pl.sel.pos });
+    if (!canAct) return;
+    if (act.mode === "delete") {
+      if (!act.deleteValid) return;
+      setPlaced({ turn: m.turn, cells: [], handIdx: 0 });
+      net.erase({ turn: m.turn, cells: act.trace, pins: pinsOut });
+    } else if (act.mode === "pin") {
+      if (!act.pinValid) return;
+      if (RULES.pinIsFree) { act.confirmPins(); pl.select(0); return; }
+      setPlaced({ turn: m.turn, cells: [], handIdx: 0 });
+      net.send({ t: "pin", turn: m.turn, cells: act.trace });
+    } else {
+      if (!pl.ghostLegal || pl.sel.handIdx === null) return;
+      // Show the block where it went (dotted, not yet real) until the turn resolves.
+      setPlaced({ turn: m.turn, cells: pl.ghost, handIdx: pl.sel.handIdx });
+      net.move({ turn: m.turn, handIdx: pl.sel.handIdx, rot: ((pl.sel.rot % 4) + 4) % 4, pos: pl.sel.pos, pins: pinsOut });
+    }
     pl.reset();
+    act.reset();
   };
 
   // With nothing picked (the drop key), the first block in hand goes.
@@ -3145,11 +3362,13 @@ function NetGame({ colors, theme, onResult, onAbort }) {
     const idx = pl.sel.handIdx ?? hand.findIndex((id) => id !== undefined);
     if (idx < 0) return;
     setPlaced({ turn: m.turn, cells: [], handIdx: idx });
-    net.discard({ turn: m.turn, handIdx: idx });
+    net.discard({ turn: m.turn, handIdx: idx, pins: pinsOut });
     pl.reset();
+    act.reset();
   };
 
-  useGameKeys(pl, { enabled: canAct, onCommit: commit, onDiscard: discard });
+  const onMode = (md) => { act.setMode(md); if (md === "place" || md === act.mode) setTimeout(() => pl.select(0), 0); };
+  useGameKeys(pl, { enabled: canAct, onCommit: commit, onDiscard: discard, onMode, mode: act.mode });
 
   // Each turn starts with the piece already in hand (see LocalGame).
   useEffect(() => {
@@ -3171,7 +3390,8 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   const rail = {
     ink: colors.you, turn: Math.min(m.turn, m.turns),
     onRotate: () => pl.rotate(1), onCommit: commit, onDiscard: discard,
-    canRotate: canAct && pl.sel.handIdx !== null, canCommit: canAct && pl.ghostLegal, canDiscard: canAct,
+    canRotate: canAct && act.mode === "place" && pl.sel.handIdx !== null, canCommit, canDiscard: canAct,
+    mode: act.mode, onMode, meter, canMode: canAct,
     waiting: !!m.submitted && !m.reveal,
     timer: graceLeft !== null ? (
       <NumBox value={graceLeft} color={GOLD} label={`Reconnect: ${graceLeft}s`} />
@@ -3191,7 +3411,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
               width={groupW} compact={compact} pane={pane}
               bag={m.pass || 1}
               left={{
-                name: "YOU", ink: colors.you, dir: you === "B" ? -1 : 1, queue: m.queue || [],
+                name: "YOU", ink: colors.you, dir: you === "B" ? -1 : 1, queue: m.queue || [], meter,
                 card: (
                   <NowCard key="now" pane={pane} id={piece} ink={colors.you} dir={you === "B" ? -1 : 1}
                     selected={pl.sel.handIdx === 0} dragging={pl.dragging || pl.holding}
@@ -3201,7 +3421,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
               right={{
                 name: err || `${m.opponent.name}${m.oppReady ? " ✓" : ""}`,
                 ink: err ? UI.bad : colors.rival, dir: them === "B" ? -1 : 1,
-                now: m.opp?.piece, queue: m.opp?.queue || [], busy: !!m.oppReady,
+                now: m.opp?.piece, queue: m.opp?.queue || [], busy: !!m.oppReady, meter: m.meters?.opp ?? 0,
               }}
             />
             {compact && <HMeter a={myScore} b={theirScore} inkA={colors.you} inkB={colors.rival} width={boardW} />}
@@ -3214,7 +3434,10 @@ function NetGame({ colors, theme, onResult, onAbort }) {
                     board={board} cell={cell} ink={INK} theme={theme} youSide={you}
                     ghostKeys={pl.ghostKeys} ghostLegal={pl.ghostLegal} ghostInk={colors.you}
                     pendingKeys={pendingKeys} pendingInk={colors.you}
-                    contestedKeys={contestedKeys} boardRef={pl.boardRef} onPointerDown={(e) => pl.onBoardPointerDown(e, commit)}
+                    contestedKeys={contestedKeys} boardRef={pl.boardRef}
+                    onPointerDown={(e) => (act.mode === "place" ? pl.onBoardPointerDown(e, commit) : act.onPointerDown(e))}
+                    pins={pins} traceKeys={new Set(act.trace.map(([r, c]) => key(r, c)))} traceKind={act.mode}
+                    traceOk={act.deleteValid || act.pinValid} stagedKeys={new Set((act.staged || []).map(([r, c]) => key(r, c)))}
                   />
                   {m.reveal && (
                     <VanishLayer contested={m.reveal.contested} cleared={m.reveal.cleared} cell={cell} gap={g} ink={INK} />

@@ -10,11 +10,22 @@
 import {
   BLOCKS, TURNS, initialBoard, isLegal, rotateN, absCells, boundsOf,
   resolveTurn, scoreOf, newDeck, advanceDeck, currentPiece, currentPass, upcoming,
-  hasAnyMove, ROWS, COLS, newSeed,
+  hasAnyMove, ROWS, COLS, newSeed, emptyPins, checkAction, nextMeters,
 } from "../shared/engine.js";
 import { RULES } from "../shared/rules.js";
 import { glickoUpdate, rankIndexFor } from "../shared/glicko.js";
 import { saveProfile } from "./store.js";
+
+/** Squares from a client: a short list of [row, col] integer pairs, or null. */
+function cleanCells(v) {
+  if (!Array.isArray(v) || v.length < 1 || v.length > 4) return null;
+  const out = [];
+  for (const p of v) {
+    if (!Array.isArray(p) || p.length !== 2 || !Number.isInteger(p[0]) || !Number.isInteger(p[1])) return null;
+    out.push([p[0], p[1]]);
+  }
+  return out;
+}
 
 /**
  * No clock runs while both players are still thinking. The moment one of them
@@ -45,6 +56,8 @@ export class Match {
     this.startedAt = Date.now();
     this.turn = 1;
     this.board = initialBoard();
+    this.pins = emptyPins();        // permanent squares
+    this.meters = { A: 0, B: 0 };   // pins each side may spend
     this.pending = { A: undefined, B: undefined };
     this.timer = null;
     this.graceTimers = { A: null, B: null };
@@ -119,6 +132,8 @@ export class Match {
       queue: mine.queue,
       pass: mine.pass,
       opp: this.queueOf(this.other(side)),
+      pins: this.pins,
+      meters: { me: this.meters[side], opp: this.meters[this.other(side)] },
       deadline: this.deadline || null,
     };
   }
@@ -179,7 +194,29 @@ export class Match {
     const cells = absCells(shape, [r, c]);
     if (!isLegal(this.board, cells, side)) return "illegal placement";
 
-    this.pending[side] = { blockId, cells, value: BLOCKS[blockId].cells.length };
+    return this.accept(side, { type: "place", blockId, cells, value: BLOCKS[blockId].cells.length }, msg.pins);
+  }
+
+  /** Delete 1–4 connected squares (anyone's, never pinned), or pin (when pinning is a turn of its own). */
+  submitAction(side, msg, type) {
+    if (this.over) return "match is over";
+    if (msg.turn !== this.turn) return "wrong turn";
+    if (this.pending[side] !== undefined) return "already submitted";
+    const cells = cleanCells(msg.cells);
+    if (!cells) return "bad squares";
+    return this.accept(side, { type, cells }, msg.pins);
+  }
+
+  /** Final check (including any free pins) and lock it in. */
+  accept(side, move, rawPins) {
+    if (rawPins !== undefined && rawPins !== null) {
+      const pins = cleanCells(rawPins);
+      if (!pins) return "bad squares";
+      move = { ...move, pins };
+    }
+    const err = checkAction(this.board, this.pins, this.meters[side], side, move);
+    if (err) return err;
+    this.pending[side] = move;
     this.send(side, { t: "ack", turn: this.turn });
     this.send(this.other(side), { t: "oppReady", turn: this.turn });
     this.startShotClock();
@@ -192,6 +229,8 @@ export class Match {
     if (this.over) return "match is over";
     if (msg.turn !== this.turn) return "wrong turn";
     if (this.pending[side] !== undefined) return "already submitted";
+    // Passing may still carry free pins.
+    if (msg.pins) return this.accept(side, { type: "pass" }, msg.pins);
     this.applyDiscard(side);
     this.send(side, { t: "ack", turn: this.turn });
     this.send(this.other(side), { t: "oppReady", turn: this.turn });
@@ -210,8 +249,10 @@ export class Match {
     clearTimeout(this.timer);
     this.deadline = null;
 
-    const res = resolveTurn(this.board, this.pending.A, this.pending.B);
+    const res = resolveTurn(this.board, this.pending.A, this.pending.B, this.pins);
     this.board = res.board;
+    this.pins = res.pins;
+    this.meters = nextMeters(this.meters, this.pending.A, this.pending.B, res.deleted);
 
     // Played or passed, the current piece is spent and the queue moves on.
     for (const side of ["A", "B"]) {
@@ -219,17 +260,17 @@ export class Match {
       seat.deck = advanceDeck(seat.deck, seat.loadout);
     }
 
-    const moves = {
-      A: this.pending.A ? { blockId: this.pending.A.blockId, cells: this.pending.A.cells } : null,
-      B: this.pending.B ? { blockId: this.pending.B.blockId, cells: this.pending.B.cells } : null,
-    };
+    const pub = (m) => (m ? { type: m.type || "place", blockId: m.blockId, cells: m.cells, pins: m.pins || null } : null);
+    const moves = { A: pub(this.pending.A), B: pub(this.pending.B) };
     const score = scoreOf(this.board);
 
-    this.both(() => ({
+    this.both((side) => ({
       t: "reveal",
       matchId: this.id,
       turn: this.turn,
       board: this.board,
+      pins: this.pins,
+      meters: { me: this.meters[side], opp: this.meters[this.other(side)] },
       moves,
       contested: res.contested,
       lines: res.lines,
@@ -239,8 +280,10 @@ export class Match {
 
     this.pending = { A: undefined, B: undefined };
 
-    // Locked: neither player can place any piece of their deck anywhere.
-    const locked =
+    // Locked: neither player can place any piece of their deck anywhere
+    // (and, with deleting on, there's nothing left to delete either).
+    const deletable = RULES.actions && this.board.some((row, r) => row.some((v, c) => v !== null && !this.pins[r][c]));
+    const locked = !deletable &&
       !hasAnyMove(this.board, this.seats.A.loadout, "A") &&
       !hasAnyMove(this.board, this.seats.B.loadout, "B");
 

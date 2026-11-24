@@ -9,7 +9,9 @@
  */
 
 export const ACTIONS = [
-  { id: "slot1", label: "Pick up piece", def: "1" },
+  { id: "slot1", label: "Place mode / pick up", def: "1" },
+  { id: "erase", label: "Delete mode", def: "2" },
+  { id: "pinmode", label: "Pin mode", def: "3" },
   { id: "up", label: "Move up", def: "w" },
   { id: "left", label: "Move left", def: "a" },
   { id: "down", label: "Move down", def: "s" },
