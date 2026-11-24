@@ -1,16 +1,65 @@
-# React + Vite
+# MINO
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A simultaneous-turn territory game for the browser. Solo against an AI, pass-and-play, or ranked online.
 
-Currently, two official plugins are available:
+- `src/`: the React client
+- `shared/`: game rules, used by both client and server
+- `server/`: accounts, matchmaking and authoritative ranked matches over WebSocket
+- `public/`: static files, including the `privacy` and `terms` pages
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Running locally
 
-## React Compiler
+```bash
+npm install
+npm install --prefix server
+cp server/.env.example server/.env
+```
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+In two terminals:
 
-## Expanding the ESLint configuration
+```bash
+npm run dev --prefix server   # game server on :8787
+```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+```bash
+npm run dev                   # client on :5173
+```
+
+Without `RESEND_API_KEY`, verification and password-reset codes are printed in the server terminal.
+
+To check the server end to end (with `SKIP_EMAIL_VERIFY=1` in `server/.env`):
+
+```bash
+npm run test:match --prefix server
+```
+
+## Deploying to Render
+
+`render.yaml` describes the whole deployment: one web service that builds the client, serves it, and runs the multiplayer server, plus a 1 GB disk for accounts.
+
+1. **Resend:** add and verify your domain in Resend, then create an API key.
+2. **Render:** Dashboard → New → Blueprint → choose this repository. When asked, fill in:
+   - `RESEND_API_KEY`: the key from step 1
+   - `MAIL_FROM`: e.g. `MINO <no-reply@yourdomain.com>` (must be on the verified domain)
+3. Deploy. Render terminates HTTPS, so the game connects over `wss://` automatically.
+4. Optional: add your own domain under the service's Settings → Custom Domains.
+
+Things that matter:
+
+- **The disk needs a paid instance** (the Blueprint uses `starter`). On the free plan the service sleeps when idle and every deploy starts with no accounts.
+- **Accounts live in `/var/data/data.json`**, with hourly backups (last 48) in `/var/data/backups`. If the file is ever damaged, the server sets it aside and restores the newest backup automatically.
+- **Every deploy restarts the server.** Ranked matches in progress at that moment are abandoned without affecting ratings, and players are told so. Deploy at quiet times.
+- **Don't set `SKIP_EMAIL_VERIFY` on the live service** unless it's a closed test: it lets anyone sign up with any email.
+- **Fill in the privacy and terms pages** (`public/privacy.html`, `public/terms.html`): replace every `[BRACKETED]` item before launch.
+
+## Server settings
+
+| Variable | Purpose |
+| --- | --- |
+| `RESEND_API_KEY`, `MAIL_FROM` | Sending codes by email. Required when `NODE_ENV=production`. |
+| `DATA_DIR` | Where `data.json` and `backups/` live. |
+| `TRUST_PROXY` | How many proxies add to `X-Forwarded-For`: `1` on Render, `2` with Cloudflare in front. Used for per-IP limits. |
+| `SKIP_EMAIL_VERIFY` | `1` lets unverified accounts play ranked. Local testing only. |
+| `PORT` | Set by Render. |
+
+Abuse limits (in `server/limits.js`): 3 sign-ups an hour per IP, 5 emails an hour per IP and 8 a day per account, login throttling per IP and per username, 8 connections per IP, 16 KB per message, and about 20 messages a second per connection. Words banned from names go in `server/blocklist.txt`.

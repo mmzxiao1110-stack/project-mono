@@ -285,7 +285,7 @@ export function sanitizeLoadout(input) {
   const seen = new Set();
   const out = [];
   for (const v of input) {
-    const i = Number(v);
+    const i = typeof v === "number" ? v : NaN;
     if (!Number.isInteger(i) || i < 0 || i >= BLOCKS.length || seen.has(i)) continue;
     seen.add(i);
     out.push(i);

@@ -43,6 +43,9 @@ class Net {
     this.authError = null;
     this.authBusy = false;
     this.codeSent = false;
+    this.resetSent = false;
+    this.online = null;   // people connected right now, from the server
+    this.notice = null;   // one-off message for the menu (e.g. a match was interrupted)
     // Bumped on every auth-related change. `auth` alone is not enough: a failed
     // login goes anon -> anon, so the snapshot never changes and React skips
     // the re-render that would show the error.
@@ -146,7 +149,7 @@ class Net {
   send(obj) {
     if (this.ws && this.ws.readyState === 1) return this.raw(obj);
     // Auth requests are time-sensitive: queueing them silently looks like a hang.
-    if (["signup", "login", "google", "verify", "resend"].includes(obj.t)) {
+    if (["signup", "login", "google", "verify", "resend", "resetRequest", "resetConfirm"].includes(obj.t)) {
       this.authBusy = false;
       this.authError = "Can't reach the server. Check your connection and try again.";
       this.bumpAuth();
@@ -206,6 +209,26 @@ class Net {
     this.send({ t: "resend", token: this.token });
   }
 
+  requestReset(email) {
+    this.authBusy = true;
+    this.authError = null;
+    this.resetSent = false;
+    this.bumpAuth();
+    this.send({ t: "resetRequest", email });
+  }
+
+  confirmReset(email, code, password) {
+    this.authBusy = true;
+    this.authError = null;
+    this.bumpAuth();
+    this.send({ t: "resetConfirm", email, code, password });
+  }
+
+  setNotice(msg) {
+    this.notice = msg;
+    this.emit("notice", msg);
+  }
+
   login(username, password) {
     this.authBusy = true;
     this.authError = null;
@@ -253,6 +276,14 @@ class Net {
         break;
 
       case "auth":
+        // We thought we were mid-match, but the server has no record of it:
+        // it restarted (usually a deploy). Say so instead of hanging.
+        if (this.match && !this.match.over && !m.inMatch) {
+          this.match = null;
+          this.found = null;
+          this.emit("match", null);
+          this.setNotice("Your match was interrupted by a server restart and didn't count.");
+        }
         this.token = m.token;
         this.auth = "authed";
         this.authBusy = false;
@@ -276,6 +307,21 @@ class Net {
         this.profile = m.profile;
         this.emit("profile", this.profile);
         this.bumpAuth();
+        break;
+
+      case "resetSent":
+        this.authBusy = false;
+        this.resetSent = true;
+        this.bumpAuth();
+        break;
+
+      case "online":
+        this.online = m.n;
+        this.emit("online", m.n);
+        break;
+
+      case "nameError":
+        this.emit("nameError", m.msg);
         break;
 
       case "codeSent":

@@ -1,0 +1,4 @@
+# Words a username or display name may not contain, one per line, lowercase.
+# Matching ignores case, spaces and punctuation, so "b.a.d" matches "bad".
+# Keep entries specific: short common fragments block innocent names
+# (the "Scunthorpe problem"). Add whatever your community needs.

@@ -30,5 +30,8 @@ dist
 .env.*
 server/.env
 server/data.json
+server/data.json.tmp
+server/backups/
+!.env.example
 *.log
 .DS_Store
