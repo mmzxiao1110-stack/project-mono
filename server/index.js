@@ -2,7 +2,7 @@
  * MINO — game server.
  *
  *   in : hello, signup, login, google, verify, resend, resetRequest, resetConfirm,
- *        logout, setName, queue, unqueue, move, discard
+ *        logout, setName, queue, unqueue, move, discard, forfeit
  *   out: needAuth, auth, authError, verified, codeSent, resetSent, needVerify,
  *        welcome, nameError, online, searching, found, matchStart, turn, ack,
  *        clock, oppReady, reveal, matchOver, oppDropped, oppReturned, kicked, error
@@ -412,6 +412,15 @@ async function handle(ws, msg) {
         ? active.match.submitMove(active.side, msg)
         : active.match.submitDiscard(active.side, msg);
       if (err) fail(ws, err);
+      break;
+    }
+
+    case "forfeit": {
+      // Giving up counts as a loss, exactly like leaving and not coming back.
+      const active = inMatch.get(ws.userId);
+      if (!active) return fail(ws, "Not in a match.");
+      console.log(`[match] ${active.match.id}: ${ws.userId} forfeited`);
+      active.match.end(active.side);
       break;
     }
 

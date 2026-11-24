@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef, useSyncExternalStore, createContext, useContext, useLayoutEffect } from "react";
 import {
-  RotateCw, Check, SkipForward, RefreshCw, ChevronLeft, Settings2, X,
+  RotateCw, Check, SkipForward, RefreshCw, ChevronLeft, Settings2, X, Flag,
   VolumeX, BarChart3, Wifi, WifiOff, Clock, UserRound, LogOut,
   Palette, Lock, MailCheck, ShieldAlert, BookOpen, ChevronRight,
 } from "lucide-react";
@@ -16,7 +16,7 @@ import {
   RANKS, PLACEMENT_GAMES, rankIndexFor, rankMin, rankProgress,
 } from "../shared/glicko.js";
 import { net, SERVER_URL, IS_SECURE, GOOGLE_CLIENT_ID } from "./net.js";
-import { music, TRACKS, sfx } from "./audio.js";
+import { sfx, unlockAudio } from "./audio.js";
 import { FX } from "./tuning.js";
 import { RULES } from "../shared/rules.js";
 import {
@@ -87,13 +87,21 @@ function skFill(color = UI.text, { dense = false } = {}) {
 const RULE_BELOW = { backgroundImage: "var(--tb-rule)", backgroundRepeat: "no-repeat", backgroundPosition: "bottom", backgroundSize: "100% 8px" };
 const RULE_ABOVE = { ...RULE_BELOW, backgroundPosition: "top" };
 
-const LEVELS = ["ROOKIE", "NOVICE", "CASUAL", "STEADY", "SHARP", "TACTICAL", "RUTHLESS", "SURGICAL", "MERCILESS", "ARCHITECT"];
+// AI opponents, weakest first. The names are placeholders: replace each
+// string with the opponent's real name. Adding or removing entries changes
+// how many levels there are; the AI's strength scales to fit.
+const LEVELS = [
+  "1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
+  "11", "12", "13", "14", "15", "16", "17", "18", "19", "20",
+];
+const DEFAULT_LEVEL = 7;
 
 function levelBlurb(n) {
-  if (n <= 2) return "Drops blocks almost anywhere they fit.";
-  if (n <= 4) return "Always grabs the biggest block available.";
-  if (n <= 6) return "Protects the open space it needs to grow.";
-  if (n <= 8) return "Pushes hard toward your half of the board.";
+  const t = (n - 1) / (LEVELS.length - 1);
+  if (t <= 0.15) return "Drops blocks almost anywhere they fit.";
+  if (t <= 0.35) return "Always grabs the biggest block available.";
+  if (t <= 0.55) return "Protects the open space it needs to grow.";
+  if (t <= 0.8) return "Pushes hard toward your half of the board.";
   return "Expands, advances, and cuts off your room to build.";
 }
 
@@ -152,7 +160,7 @@ function frontierSize(board, owner) {
 }
 
 const weightsFor = (level) => {
-  const t = (level - 1) / 9;
+  const t = (level - 1) / (LEVELS.length - 1);
   return { gain: 1, front: 0.35 * t, deny: 1.1 * t * t, adv: 0.3 * t, noise: 9 * (1 - t) + 0.15 };
 };
 
@@ -243,18 +251,37 @@ function useSize() {
   return [setNode, size];
 }
 
-/** Everything about picking a block and dragging it onto the grid.
- *  Shared by the local game and the networked one. */
-function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId = null }) {
+/**
+ * Everything about picking a block and getting it onto the grid. Shared by
+ * the local game and the networked one. Two ways in, by input device:
+ *
+ *   touch  press a card and drag; the piece rides two rows above the finger
+ *          so you can see where it lands, and releasing drops it there.
+ *   mouse  click a card and the piece sticks to the cursor ("holding"). Move,
+ *          rotate with Q/E, swap blocks with 1–4, then click the board to
+ *          place it. Click the card again, right-click or press Esc to put it back.
+ */
+function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId = null, sound = () => {} }) {
   const [sel, setSel] = useState({ handIdx: null, rot: 0, pos: null });
-  // Raw pointer position + row lift while a drag is live. The piece follows
-  // this exactly; only its shadow snaps to the grid.
+  // Pointer position while a piece is in hand. The piece follows this
+  // exactly; only its shadow snaps to the grid. mode: "touch" | "hold".
   const [drag, setDrag] = useState(null);
-  const dragging = !!drag;
+  const dragging = !!drag && drag.mode === "touch";
+  const holding = !!drag && drag.mode === "hold";
   const boardRef = useRef(null);
-  const dragRef = useRef({ cells: null, lift: 0 });
+  const dragRef = useRef({ cells: null, lift: 0, x: 0, y: 0, mode: null });
+  const holdCleanup = useRef(null);
 
-  const reset = useCallback(() => { setSel({ handIdx: null, rot: 0, pos: null }); setDrag(null); }, []);
+  const endHold = useCallback(() => {
+    holdCleanup.current?.();
+    holdCleanup.current = null;
+  }, []);
+
+  const reset = useCallback(() => {
+    endHold();
+    setSel({ handIdx: null, rot: 0, pos: null });
+    setDrag(null);
+  }, [endHold]);
 
   const rotated = useMemo(() => {
     if (sel.handIdx === null) return null;
@@ -274,19 +301,33 @@ function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId
     [ghost, enabled]
   );
 
+  /**
+   * Pointer → piece position and grid shadow. While holding with a mouse the
+   * shadow disappears once the cursor leaves the board; a touch drag clamps
+   * to the edge instead, because a finger often overhangs it.
+   */
   const updateFromPoint = useCallback((clientX, clientY) => {
     const el = boardRef.current;
-    const cells = dragRef.current.cells;
-    if (!el || !cells) return;
-    setDrag({ x: clientX, y: clientY, lift: dragRef.current.lift });
+    const d = dragRef.current;
+    if (!el || !d.cells) return;
+    d.x = clientX; d.y = clientY;
+    setDrag({ x: clientX, y: clientY, lift: d.lift, mode: d.mode });
     const rect = el.getBoundingClientRect();
-    const sc = Math.floor(((clientX - rect.left) / rect.width) * COLS);
-    const sr = Math.floor(((clientY - rect.top) / rect.height) * ROWS);
+    const fx = (clientX - rect.left) / rect.width, fy = (clientY - rect.top) / rect.height;
+    if (d.mode === "hold") {
+      const mx = 0.5 / COLS, my = 0.5 / ROWS;
+      if (fx < -mx || fx > 1 + mx || fy < -my || fy > 1 + my) {
+        setSel((s) => (s.pos ? { ...s, pos: null } : s));
+        return;
+      }
+    }
+    const sc = Math.floor(fx * COLS);
+    const sr = Math.floor(fy * ROWS);
     // Screen coords -> board coords. When flipped, up-the-screen is +row.
-    const lift = dragRef.current.lift;
+    const lift = d.lift;
     const col = flip ? COLS - 1 - sc : sc;
     const row = (flip ? ROWS - 1 - sr : sr) + (flip ? lift : -lift);
-    const { h, w } = boundsOf(cells);
+    const { h, w } = boundsOf(d.cells);
     setSel((s) => ({
       ...s,
       pos: [
@@ -296,8 +337,21 @@ function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId
     }));
   }, [flip]);
 
+  // Rotating or swapping blocks while holding: re-fit the shadow under the cursor.
+  useEffect(() => {
+    if (!holding || !rotated) return;
+    dragRef.current.cells = rotated;
+    updateFromPoint(dragRef.current.x, dragRef.current.y);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rotated, holding]);
+
+  // Nothing to hold once it's no longer your turn to act.
+  useEffect(() => { if (!enabled && holdCleanup.current) reset(); }, [enabled, reset]);
+  useEffect(() => endHold, [endHold]);
+
   const beginDrag = useCallback((e, cells) => {
-    dragRef.current = { cells, lift: e.pointerType === "touch" ? TOUCH_LIFT : 0 };
+    endHold();
+    dragRef.current = { cells, lift: e.pointerType === "touch" ? TOUCH_LIFT : 0, x: e.clientX, y: e.clientY, mode: "touch" };
     const onMove = (ev) => { ev.preventDefault(); updateFromPoint(ev.clientX, ev.clientY); };
     // Pointer events can't stop the browser reading a finger drag as a scroll.
     // If it does, a fast drag leaves a "fling" running after release, and the
@@ -318,24 +372,63 @@ function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId
     window.addEventListener("pointercancel", onUp);
     window.addEventListener("touchmove", noScroll, { passive: false });
     updateFromPoint(e.clientX, e.clientY);
-  }, [updateFromPoint]);
+  }, [updateFromPoint, endHold]);
+
+  /** Mouse: the piece sticks to the cursor until placed or put back. */
+  const beginHold = useCallback((e, cells) => {
+    endHold();
+    dragRef.current = { cells, lift: 0, x: e.clientX, y: e.clientY, mode: "hold" };
+    const onMove = (ev) => updateFromPoint(ev.clientX, ev.clientY);
+    const onMenu = (ev) => { ev.preventDefault(); reset(); }; // right-click puts it back
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("contextmenu", onMenu);
+    holdCleanup.current = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("contextmenu", onMenu);
+      dragRef.current.mode = null;
+      setDrag(null);
+    };
+    updateFromPoint(e.clientX, e.clientY);
+  }, [updateFromPoint, endHold, reset]);
 
   const onCardPointerDown = (e, i) => {
-    if (!enabled) return;
+    if (!enabled || e.button > 0) return;
     e.preventDefault();
+    if (e.pointerType === "mouse") {
+      // Clicking the card you're already holding puts it back.
+      if (holding && sel.handIdx === i) return reset();
+      sound("pick");
+      setSel({ handIdx: i, rot: 0, pos: null });
+      beginHold(e, BLOCKS[hand[i]].cells);
+      return;
+    }
+    sound("pick");
     setSel({ handIdx: i, rot: 0, pos: null });
     beginDrag(e, BLOCKS[hand[i]].cells);
   };
 
-  const onBoardPointerDown = (e) => {
-    if (!enabled || !rotated) return;
+  /**
+   * Board press. While holding, a left click means "place it here" and is
+   * handled by the game (it returns true). Otherwise it picks the selected
+   * piece back up: held for a mouse, dragged for a finger.
+   */
+  const onBoardPointerDown = (e, place) => {
+    if (!enabled) return;
+    if (holding) {
+      e.preventDefault();
+      if (e.button === 0) place?.();
+      return;
+    }
+    if (!rotated || e.button > 0) return;
     e.preventDefault();
-    beginDrag(e, rotated);
+    if (e.pointerType === "mouse") beginHold(e, rotated);
+    else beginDrag(e, rotated);
   };
 
   /** dir 1 = clockwise, -1 = counter-clockwise. */
   const rotate = useCallback((dir = 1) => {
     const step = dir === -1 ? -1 : 1;
+    if (sel.handIdx !== null) sound("rotate");
     setSel((s) => {
       if (s.handIdx === null) return s;
       const id = hand[s.handIdx];
@@ -347,7 +440,7 @@ function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId
         pos: s.pos ? [Math.max(0, Math.min(ROWS - h, s.pos[0])), Math.max(0, Math.min(COLS - w, s.pos[1]))] : null,
       };
     });
-  }, [hand]);
+  }, [hand, sel.handIdx, sound]);
 
   /**
    * Where a block lands when picked by keyboard: the legal spot nearest the
@@ -374,9 +467,15 @@ function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId
   /** Pick hand slot `i` from the keyboard. */
   const select = useCallback((i) => {
     if (!enabled || hand[i] === undefined) return;
+    if (sel.handIdx !== i) sound("pick");
+    if (holding) {
+      // Swap the block under the cursor; the effect above re-fits the shadow.
+      setSel((s) => (s.handIdx === i ? s : { ...s, handIdx: i, rot: 0 }));
+      return;
+    }
     // Re-picking the selected block keeps it where it is, unless it has no position yet.
     setSel((s) => (s.handIdx === i && s.pos ? s : { handIdx: i, rot: 0, pos: spawnPos(hand[i], s.pos) }));
-  }, [enabled, hand, spawnPos]);
+  }, [enabled, hand, spawnPos, holding, sel.handIdx, sound]);
 
   /** ← / →: step to the previous or next block in hand, wrapping. */
   const cycle = useCallback((dir) => {
@@ -404,7 +503,7 @@ function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId
     });
   }, [hand]);
 
-  return { sel, setSel, reset, rotated, ghost, ghostLegal, ghostKeys, goldenSel, dragging, drag, boardRef, onBoardPointerDown, onCardPointerDown, rotate, nudge, select, cycle, flip };
+  return { sel, setSel, reset, rotated, ghost, ghostLegal, ghostKeys, goldenSel, dragging, holding, drag, boardRef, onBoardPointerDown, onCardPointerDown, rotate, nudge, select, cycle, flip };
 }
 
 /**
@@ -422,10 +521,11 @@ function useGameKeys(pl, { enabled, onCommit, onDiscard }) {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const t = e.target;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
-      const action = actionFor(e.key);
-      if (!action) return;
       if (!ref.current) return;
       const { pl, enabled, onCommit, onDiscard } = ref.current;
+      if (e.key === "Escape" && pl.holding) { e.preventDefault(); return pl.reset(); }
+      const action = actionFor(e.key);
+      if (!action) return;
       e.preventDefault();
       if (!enabled || pl.dragging) return;
 
@@ -433,6 +533,8 @@ function useGameKeys(pl, { enabled, onCommit, onDiscard }) {
       if (slot !== undefined) return pl.select(slot);
       if (action === "prev") return pl.cycle(-1);
       if (action === "next") return pl.cycle(1);
+      // Drop is always available: with nothing picked, it drops your first block.
+      if (action === "discard") return onDiscard();
       if (pl.sel.handIdx === null) return;
 
       const f = pl.flip ? -1 : 1;
@@ -445,11 +547,137 @@ function useGameKeys(pl, { enabled, onCommit, onDiscard }) {
       if (action === "cw") return pl.rotate(1);
       if (action === "ccw") return pl.rotate(-1);
       if (action === "commit") return onCommit();
-      if (action === "discard") return onDiscard();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+}
+
+/* ============================================================
+   PAPER TRANSITION
+   ============================================================ */
+/**
+ * withPaper(fn): play the paper transition and run `fn` (the screen change)
+ * at the moment the sheet fully covers the screen. Before the transition is
+ * mounted, or with motion turned off, `fn` just runs.
+ */
+const paper = { run: null };
+const withPaper = (fn) => (paper.run ? paper.run(fn) : fn());
+
+// Timeline, ms. The swap happens at COVER, when the sheet is at rest over everything.
+const P_IN = 300, P_COVER = 320, P_FOLD = [220, 470], P_OUT = [540, 840];
+const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+const easeIn = (t) => t * t * t;
+const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+const clamp01 = (t) => Math.max(0, Math.min(1, t));
+
+// Geometry in a 200×200 box scaled to cover the screen. The sheet overhangs
+// it on every side, so the screen is fully hidden while the sheet is at rest.
+const SHEET = [[-45, -40], [245, -48], [250, 242], [-50, 248]];
+// The fold line, and the corner region beyond it that folds over.
+const FOLD_A = [-48, 150], FOLD_B = [150, -46];
+const FLAP = [FOLD_A, FOLD_B, [-46, -44]];
+
+function foldPoint(p, s) {
+  // Moves p across the fold line: s = 1 lies flat, s = -1 is folded over.
+  const [ax, ay] = FOLD_A, [bx, by] = FOLD_B;
+  const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy);
+  const nx = -dy / len, ny = dx / len;
+  const d = (p[0] - ax) * nx + (p[1] - ay) * ny;
+  return [p[0] - nx * d * (1 - s), p[1] - ny * d * (1 - s)];
+}
+const pts = (list) => list.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+
+function PaperTransition({ theme, volume }) {
+  const [active, setActive] = useState(false);
+  const sheetRef = useRef(null);
+  const flapRef = useRef(null);
+  const flapBackRef = useRef(null);
+  const shadowRef = useRef(null);
+  const busy = useRef(false);
+  const motionRef = useRef(theme.motion);
+  const volRef = useRef(volume);
+  useEffect(() => { motionRef.current = theme.motion; volRef.current = volume; });
+
+  useEffect(() => {
+    const reduced = () => typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    paper.run = (fn) => {
+      // Already mid-transition, or motion off: change immediately.
+      if (busy.current || !motionRef.current || reduced()) { fn(); return; }
+      busy.current = true;
+      blip("transition", volRef.current);
+      setActive(true);
+      const t0 = performance.now();
+      let swapped = false;
+      const frame = (now) => {
+        const t = now - t0;
+        if (!swapped && t >= P_COVER) { swapped = true; fn(); }
+
+        // The sheet: sweeps in from the lower right, settles, leaves to the upper left.
+        let tx, ty, rot;
+        if (t < P_OUT[0]) {
+          const k = easeOut(clamp01(t / P_IN));
+          tx = 250 * (1 - k); ty = 190 * (1 - k); rot = 22 * (1 - k) - 3 * k;
+        } else {
+          const k = easeIn(clamp01((t - P_OUT[0]) / (P_OUT[1] - P_OUT[0])));
+          tx = -270 * k; ty = -210 * k; rot = -3 - 16 * k;
+        }
+        sheetRef.current?.setAttribute("transform", `translate(${tx.toFixed(1)} ${ty.toFixed(1)}) rotate(${rot.toFixed(2)} 100 100)`);
+
+        // The flap folds over, landing a few degrees off true.
+        const f = easeInOut(clamp01((t - P_FOLD[0]) / (P_FOLD[1] - P_FOLD[0])));
+        const s = 1 - 2 * f;
+        const flap = FLAP.map((p) => foldPoint(p, s));
+        const skew = f * 5; // degrees of misalignment once folded
+        const front = s > 0;
+        const flapTransform = `rotate(${skew.toFixed(2)} ${FOLD_A[0]} ${FOLD_A[1]}) translate(${(f * 3).toFixed(1)} ${(f * 4).toFixed(1)})`;
+        for (const el of [flapRef.current, flapBackRef.current]) {
+          if (!el) continue;
+          el.setAttribute("points", pts(flap));
+          el.setAttribute("transform", flapTransform);
+        }
+        if (flapRef.current) flapRef.current.style.opacity = front ? 1 : 0;
+        if (flapBackRef.current) flapBackRef.current.style.opacity = front ? 0 : 1;
+        if (shadowRef.current) {
+          shadowRef.current.setAttribute("points", pts(flap.map(([x, y]) => [x + 4, y + 5])));
+          shadowRef.current.setAttribute("transform", flapTransform);
+          shadowRef.current.style.opacity = (0.35 * f).toFixed(3);
+        }
+
+        if (t < P_OUT[1]) requestAnimationFrame(frame);
+        else { busy.current = false; setActive(false); }
+      };
+      requestAnimationFrame(frame);
+    };
+    return () => { paper.run = null; };
+  }, []);
+
+  if (!active) return null;
+  // Same hatching as the blocks: your ink, on the back of the sheet.
+  return (
+    <svg aria-hidden="true" viewBox="0 0 200 200" preserveAspectRatio="xMidYMid slice"
+      style={{ position: "fixed", inset: 0, width: "100%", height: "100%", zIndex: 80, pointerEvents: "all" }}>
+      <defs>
+        {/* Paper a shade off the background, so the sheet reads as an object. */}
+        <linearGradient id="tb-paper-face" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" style={{ stopColor: "color-mix(in srgb, var(--tb-panel) 80%, var(--tb-text))" }} />
+          <stop offset="1" style={{ stopColor: "color-mix(in srgb, var(--tb-panel) 90%, var(--tb-text))" }} />
+        </linearGradient>
+        <pattern id="tb-paper-hatch" patternUnits="userSpaceOnUse" width="2.4" height="2.4" patternTransform="rotate(-45)">
+          <rect width="2.4" height="2.4" style={{ fill: "color-mix(in srgb, var(--tb-panel) 88%, var(--tb-text))" }} />
+          <line x1="0" y1="0" x2="0" y2="2.4" style={{ stroke: theme.you }} strokeWidth="0.55" opacity="0.75" />
+        </pattern>
+      </defs>
+      <g ref={sheetRef} transform="translate(250 190) rotate(22 100 100)">
+        <polygon points={pts(SHEET)} style={{ fill: "url(#tb-paper-face)", stroke: "var(--tb-text)" }} strokeWidth="0.8" strokeOpacity="0.7" />
+        {/* Where the folded corner used to be: the darker underside of the sheet. */}
+        <polygon points={pts(FLAP)} style={{ fill: "var(--tb-ground)" }} opacity="0.55" />
+        <polygon ref={shadowRef} points={pts(FLAP)} style={{ fill: "#000", opacity: 0 }} />
+        <polygon ref={flapRef} points={pts(FLAP)} style={{ fill: "url(#tb-paper-face)", stroke: "var(--tb-text)" }} strokeWidth="0.8" strokeOpacity="0.7" />
+        <polygon ref={flapBackRef} points={pts(FLAP)} style={{ fill: "url(#tb-paper-hatch)", stroke: "var(--tb-text)", opacity: 0 }} strokeWidth="0.7" />
+      </g>
+    </svg>
+  );
 }
 
 /* ============================================================
@@ -557,7 +785,7 @@ function VanishLayer({ contested = [], cleared = [], cell, gap, ink }) {
 }
 
 /** The piece in hand: follows the pointer exactly, never snaps. */
-function FloatingPiece({ cells, cell, gap, color, x, y, lift, legal, flip = false, golden = false, dir = 1 }) {
+function FloatingPiece({ cells, cell, gap, color, x, y, lift, legal, flip = false, golden = false, dir = 1, faint = false }) {
   const { h, w } = boundsOf(cells);
   const filled = new Set(cells.map(([r, c]) => r * 100 + c));
   return (
@@ -577,7 +805,7 @@ function FloatingPiece({ cells, cell, gap, color, x, y, lift, legal, flip = fals
         gridTemplateRows: `repeat(${h}, ${cell}px)`,
         gap,
         filter: `drop-shadow(${FX.board.floatShadow})`,
-        opacity: legal ? 1 : 0.7,
+        opacity: faint ? 0.55 : legal ? 1 : 0.7,
       }}
     >
       {Array.from({ length: h * w }).map((_, i) => (
@@ -592,6 +820,7 @@ function FloatingPiece({ cells, cell, gap, color, x, y, lift, legal, flip = fals
 function BoardGrid({
   board, cell, ink, ghostKeys, ghostLegal, ghostInk, contestedKeys,
   boardRef, onPointerDown, theme, youSide = "A", ghostGolden = false,
+  pendingKeys = null, pendingInk = null,
 }) {
   const gap = theme.gap;
   const cb = theme.colorblind;
@@ -650,6 +879,11 @@ function BoardGrid({
                 <Ink size={cell} color={ink[v]} {...inkOf(v)} seed={seed}
                   style={isGhost ? { opacity: 0.3 } : undefined} />
               )}
+              {pendingKeys?.has(k) && (
+                // Locked in, not yet revealed: inked, but with a dotted outline.
+                <Ink size={cell} stroke="pending" color={pendingInk} dir={youSide === "B" ? -1 : 1} seed={seed}
+                  style={{ position: "absolute", inset: 0, opacity: 0.9 }} />
+              )}
               {isGhost && (
                 <Ink size={cell} stroke="ghost" seed={seed}
                   color={ghostLegal ? ghostInk : UI.bad}
@@ -665,7 +899,7 @@ function BoardGrid({
   );
 }
 
-function HandRow({ hand, selIdx, dragging, ink, onPress, disabled, goldenBlockId = null, dir = 1 }) {
+function HandRow({ hand, selIdx, dragging, ink, onPress, disabled, goldenBlockId = null, dir = 1, spentIdx = null }) {
   const keys = useKeys();
   return (
     <div className="grid grid-cols-4 gap-1.5 mb-1.5">
@@ -675,6 +909,7 @@ function HandRow({ hand, selIdx, dragging, ink, onPress, disabled, goldenBlockId
           return <div key={i} style={{ height: 66, ...sk(UI.line), opacity: 0.35 }} />;
         }
         const active = selIdx === i;
+        const spent = spentIdx === i;
         const charged = goldenBlockId !== null && blockId === goldenBlockId;
         return (
           <div
@@ -684,11 +919,12 @@ function HandRow({ hand, selIdx, dragging, ink, onPress, disabled, goldenBlockId
             style={{
               height: 66,
               ...sk(charged ? GOLD : active ? ink : UI.line),
-              background: active ? UI.panel : "transparent",
+              ...(spent ? { borderImage: "none", border: `1.5px dashed ${UI.dim}` } : null),
+              background: spent ? "color-mix(in srgb, var(--tb-ground) 70%, black)" : active ? UI.panel : "transparent",
               touchAction: "none",
               transform: active && !dragging ? "rotate(-1.2deg) translateY(-2px)" : "none",
               transition: "transform 140ms ease-out",
-              opacity: disabled ? 0.35 : active && dragging ? 0.25 : 1,
+              opacity: spent ? 0.3 : disabled ? 0.35 : active && dragging ? 0.25 : 1,
             }}
           >
             {HAS_KEYBOARD && (
@@ -853,10 +1089,9 @@ function Popup({ title, onClose, children, pinned, maxW = 430 }) {
 /* ============================================================
    SETTINGS
    ============================================================ */
-function SettingsModal({ volume, setVolume, musicVol, setMusicVol, name, rename, status, theme, setTheme, onClose }) {
+function SettingsModal({ volume, setVolume, name, rename, status, theme, setTheme, onClose }) {
   const steps = 10;
   const cur = Math.round(volume * steps);
-  const mcur = Math.round(musicVol * steps);
   const [draft, setDraft] = useState(name);
   const [nameErr, setNameErr] = useState(null);
   const set = (patch) => setTheme({ ...theme, ...patch });
@@ -895,22 +1130,6 @@ function SettingsModal({ volume, setVolume, musicVol, setMusicVol, name, rename,
           style={{ height: 36, ...sk(UI.line), color: volume === 0 ? UI.text : UI.dim }}>
           <VolumeX size={13} /> MUTE EFFECTS
         </button>
-
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-[13px] tracking-[0.2em]">MUSIC</span>
-          <span className="text-[13px]" style={{ color: UI.dim }}>{mcur * 10}</span>
-        </div>
-        <div className="flex gap-1.5 mb-7">
-          {Array.from({ length: steps }).map((_, i) => {
-            const on = i < mcur;
-            return (
-              <button key={i} aria-label={`Music ${(i + 1) * 10}`}
-                onClick={() => setMusicVol(i === 0 && mcur === 1 ? 0 : (i + 1) / steps)}
-                className="flex-1 rounded"
-                style={{ height: 40, ...(on ? skFill(UI.text, { dense: true }) : sk(UI.line)) }} />
-            );
-          })}
-        </div>
 
         {HAS_KEYBOARD && <ControlsSection />}
 
@@ -2076,8 +2295,10 @@ function Flourish({ width = 160 }) {
     </svg>
   );
 }
-function Menu({ onPick, loadout, setLoadout, volume, setVolume, musicVol, setMusicVol, colors, profile, status, name, rename, onLogout, theme, setTheme }) {
-  const [modal, setModal] = useState(null);
+function Menu({ onPick, loadout, setLoadout, volume, setVolume, colors, profile, status, name, rename, onLogout, theme, setTheme }) {
+  const [modal, setModalNow] = useState(null);
+  // Opening a panel plays the paper transition; closing one is instant.
+  const setModal = (m) => (m ? withPaper(() => setModalNow(m)) : setModalNow(null));
   const authed = useAuth() === "authed";
   const verified = !!profile?.emailVerified;
   const color = theme.you;
@@ -2097,9 +2318,6 @@ function Menu({ onPick, loadout, setLoadout, volume, setVolume, musicVol, setMus
           <div className="tb-display tb-boil text-[68px] leading-none tracking-[0.16em]"
             style={{ marginRight: "-0.16em", animationDuration: ".7s" }}>Mino</div>
           <Flourish width={170} />
-          <div className="text-[12px] italic mt-1" style={{ color: UI.dim }}>
-            {COLS} by {ROWS}, {TURNS} turns, two hands at once
-          </div>
         </div>
 
         <button
@@ -2206,7 +2424,7 @@ function Menu({ onPick, loadout, setLoadout, volume, setVolume, musicVol, setMus
       {modal === "ACCOUNT" && (
         <AccountModal profile={profile} onLogout={() => { setModal(null); onLogout(); }} onClose={() => setModal(null)} />
       )}
-      {modal === "SETTINGS" && <SettingsModal volume={volume} setVolume={setVolume} musicVol={musicVol} setMusicVol={setMusicVol} name={name} rename={rename} status={status} theme={theme} setTheme={setTheme} onClose={() => setModal(null)} />}
+      {modal === "SETTINGS" && <SettingsModal volume={volume} setVolume={setVolume} name={name} rename={rename} status={status} theme={theme} setTheme={setTheme} onClose={() => setModal(null)} />}
       {modal === "STATS" && <StatsModal profile={profile} status={status} onClose={() => setModal(null)} />}
       {modal === "DECK" && <DeckModal loadout={loadout} setLoadout={setLoadout} color={color} volume={volume} onClose={() => setModal(null)} />}
     </div>
@@ -2217,7 +2435,7 @@ function Menu({ onPick, loadout, setLoadout, volume, setVolume, musicVol, setMus
    DIFFICULTY
    ============================================================ */
 function Difficulty({ onStart, onBack, colors, volume }) {
-  const [lv, setLv] = useState(4);
+  const [lv, setLv] = useState(DEFAULT_LEVEL);
   return (
     <div className="tb-screen tb-safe w-full flex items-center justify-center px-5 font-mono" style={{ background: UI.ground, color: UI.text }}>
       <div className="w-full" style={{ maxWidth: 330 }}>
@@ -2235,7 +2453,7 @@ function Difficulty({ onStart, onBack, colors, volume }) {
                   height: 44,
                   color: UI.text,
                   ...(on ? skFill(colors.rival) : sk(UI.line)),
-                  opacity: on ? 1 : 0.45 + (n / 10) * 0.5,
+                  opacity: on ? 1 : 0.45 + (n / LEVELS.length) * 0.5,
                 }}>{n}</button>
             );
           })}
@@ -2313,7 +2531,7 @@ function Matchmaking({ profile, loadout, colors, volume, onCancel, onPlayAi }) {
 
             <div className="text-[12px] leading-relaxed text-center mb-8" style={{ color: UI.dim }}>
               {status === "online"
-                ? "Closest rating first. The window widens the longer you wait."
+                ? null
                 : status === "kicked"
                 ? "You signed in somewhere else. Reload to take this session back."
                 : "Lost the server — reconnecting. You'll rejoin the queue automatically."}
@@ -2362,6 +2580,34 @@ function Matchmaking({ profile, loadout, colors, volume, onCancel, onPlayAi }) {
   );
 }
 
+/** A small FORFEIT link that asks before ending the match. */
+function ForfeitButton({ onConfirm, ranked = false, disabled = false }) {
+  const [asking, setAsking] = useState(false);
+  return (
+    <>
+      <button onClick={() => withPaper(() => setAsking(true))} disabled={disabled}
+        className="flex items-center gap-1 text-[12px] tracking-[0.25em] py-2 disabled:opacity-30" style={{ color: UI.dim }}>
+        <Flag size={12} /> FORFEIT
+      </button>
+      {asking && (
+        <Popup title="FORFEIT?" onClose={() => setAsking(false)} maxW={320}>
+          <div className="pt-4 pb-1">
+            <div className="text-[13px] leading-relaxed mb-5" style={{ color: UI.dim }}>
+              {ranked ? "You'll lose this match and the rating that goes with it." : "This match ends now and counts as a loss."}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setAsking(false)} className="flex-1 text-[12px] tracking-[0.25em]"
+                style={{ height: 44, ...sk(UI.line), color: UI.dim }}>KEEP PLAYING</button>
+              <button onClick={() => { setAsking(false); onConfirm(); }} className="flex-1 text-[12px] tracking-[0.25em]"
+                style={{ height: 44, ...skFill(UI.text), color: UI.bad }}>FORFEIT</button>
+            </div>
+          </div>
+        </Popup>
+      )}
+    </>
+  );
+}
+
 /* ============================================================
    LOCAL GAME — hotseat and solo. Client owns everything.
    ============================================================ */
@@ -2377,6 +2623,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
   const [pendingA, setPendingA] = useState(null);
   const [reveal, setReveal] = useState(null);
   const [lockedOut, setLockedOut] = useState(false);
+  const [forfeitBy, setForfeitBy] = useState(null); // "A" | "B" — whoever gave up
   const [stageRef, stage] = useSize();
 
   const player = phase === "PLAY_B" ? "B" : "A";
@@ -2389,9 +2636,10 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
   const myArmed = armedFor(player);
   const inPlay = phase === "PLAY_A" || phase === "PLAY_B";
   const score = useMemo(() => scoreOf(board), [board]);
-  const oppName = solo ? `LV${aiLevel} ${LEVELS[aiLevel - 1]}` : "PLAYER 2";
+  const oppName = solo ? `AI ${LEVELS[aiLevel - 1]}` : "PLAYER 2";
 
-  const pl = usePlacement({ board, owner: player, hand, enabled: inPlay, goldenBlockId: myArmed ? goldenBlockId : null });
+  const sound = useCallback((k) => blip(k, volume), [volume]);
+  const pl = usePlacement({ board, owner: player, hand, enabled: inPlay, goldenBlockId: myArmed ? goldenBlockId : null, sound });
   const contestedKeys = useMemo(() => new Set((reveal ? reveal.contested : []).map(([r, c]) => key(r, c))), [reveal]);
   const stuck = useMemo(() => (inPlay ? !hasAnyMove(board, hand, player, { goldenBlockId: myArmed ? goldenBlockId : null }) : false), [board, hand, player, inPlay, myArmed, goldenBlockId]);
 
@@ -2430,10 +2678,12 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
     pl.reset();
   };
 
+  // With nothing picked (the drop key), the first block in hand goes.
   const discard = () => {
-    if (pl.sel.handIdx === null) return;
+    const idx = pl.sel.handIdx ?? hand.findIndex((id) => id !== undefined);
+    if (idx < 0) return;
     blip("drop", volume);
-    drawInto(player, pl.sel.handIdx);
+    drawInto(player, idx);
     if (player === "A") handOver(null); else finish(pendingA, null);
     pl.reset();
   };
@@ -2488,6 +2738,8 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
             <ChevronLeft size={13} /> MENU
           </button>
           <div className="text-[12px] tracking-[0.2em]" style={{ color: UI.dim }}>{solo ? oppName : "TAKE TURNS"}</div>
+          <ForfeitButton disabled={phase === "DONE"}
+            onConfirm={() => { pl.reset(); setForfeitBy(solo ? "A" : player); setPhase("DONE"); blip("end", volume); }} />
         </div>
 
         <ScoreBar score={score} turn={turn} turns={TURNS} inkA={INK.A} inkB={INK.B} specialHex={INK.S} labelA="P1" labelB={solo ? "AI" : "P2"} />
@@ -2496,9 +2748,11 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
           <div className="relative" style={{ width: cell * COLS + g * (COLS + 1), height: boardH }}>
             <BoardGrid
               board={board} cell={cell} ink={INK} theme={theme} youSide={player}
+              pendingKeys={phase === "AI_THINK" && pendingA ? new Set(pendingA.cells.map(([r, c]) => key(r, c))) : null}
+              pendingInk={pendingA?.golden ? GOLD : INK.A}
               ghostKeys={pl.ghostKeys} ghostLegal={pl.ghostLegal}
               ghostInk={pl.goldenSel ? GOLD : INK[player]} ghostGolden={pl.goldenSel}
-              contestedKeys={contestedKeys} boardRef={pl.boardRef} onPointerDown={pl.onBoardPointerDown}
+              contestedKeys={contestedKeys} boardRef={pl.boardRef} onPointerDown={(e) => pl.onBoardPointerDown(e, commit)}
             />
 
             {reveal && (
@@ -2508,12 +2762,12 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
               />
             )}
 
-            {pl.dragging && pl.drag && pl.rotated && (
+            {pl.drag && pl.rotated && (
               <FloatingPiece
                 cells={pl.rotated} cell={cell} gap={theme.gap}
                 color={pl.goldenSel ? GOLD : INK[player]} legal={pl.ghostLegal} golden={pl.goldenSel}
                 dir={player === "B" ? -1 : 1}
-                x={pl.drag.x} y={pl.drag.y} lift={pl.drag.lift}
+                x={pl.drag.x} y={pl.drag.y} lift={pl.drag.lift} faint={pl.holding && !!pl.sel.pos}
               />
             )}
 
@@ -2529,15 +2783,20 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
 
             {phase === "DONE" && (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-4 rounded" style={{ background: "color-mix(in srgb, var(--tb-ground) 94%, transparent)" }}>
-                <div className="text-[11px] tracking-[0.3em] mb-3" style={{ color: lockedOut ? GOLD : UI.dim }}>
-                  {lockedOut ? "BOARD LOCKED" : "MATCH OVER"}
+                <div className="text-[11px] tracking-[0.3em] mb-3" style={{ color: lockedOut || forfeitBy ? GOLD : UI.dim }}>
+                  {forfeitBy ? (solo ? "YOU FORFEITED" : `PLAYER ${forfeitBy === "A" ? 1 : 2} FORFEITED`) : lockedOut ? "BOARD LOCKED" : "MATCH OVER"}
                 </div>
                 <div className="text-xl mb-1.5 tracking-wider">
-                  {score.a === score.b ? "DRAW" : (
-                    <span style={{ color: score.a > score.b ? INK.A : INK.B }}>
-                      {score.a > score.b ? "YOU WIN" : solo ? "AI WINS" : "PLAYER 2 WINS"}
-                    </span>
-                  )}
+                  {(() => {
+                    // A forfeit decides it regardless of the score.
+                    const winner = forfeitBy ? (forfeitBy === "A" ? "B" : "A") : score.a > score.b ? "A" : score.b > score.a ? "B" : null;
+                    if (!winner) return "DRAW";
+                    return (
+                      <span style={{ color: INK[winner] }}>
+                        {winner === "A" ? (solo ? "YOU WIN" : "PLAYER 1 WINS") : solo ? "AI WINS" : "PLAYER 2 WINS"}
+                      </span>
+                    );
+                  })()}
                 </div>
                 <div className="text-xs mb-6" style={{ color: UI.dim }}>
                   {score.a} — {score.b}{score.s > 0 && <span style={{ color: GOLD }}> · {score.s}◆</span>}
@@ -2556,7 +2815,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
         <div className="shrink-0 flex flex-col justify-end" style={{ height: DOCK_H }}>
           {inPlay && (
             <>
-              <HandRow hand={hand} selIdx={pl.sel.handIdx} dragging={pl.dragging} ink={INK[player]}
+              <HandRow hand={hand} selIdx={pl.sel.handIdx} dragging={pl.dragging || pl.holding} ink={INK[player]}
                 onPress={pl.onCardPointerDown} goldenBlockId={myArmed ? goldenBlockId : null}
                 dir={player === "B" ? -1 : 1} />
               <ActionBar
@@ -2609,6 +2868,8 @@ function NetGame({ colors, volume, theme, onResult, onAbort }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [m]);
   const [err, setErr] = useState(null);
+  // What you locked in this turn, shown until the reveal replaces it.
+  const [placed, setPlaced] = useState(null);
   const [now, setNow] = useState(Date.now());
   const [stageRef, stage] = useSize();
 
@@ -2641,12 +2902,15 @@ function NetGame({ colors, volume, theme, onResult, onAbort }) {
   // always build upward from the bottom of their own screen.
   const flip = you === "B";
 
-  const pl = usePlacement({ board, owner: you, hand, enabled: canAct, flip, goldenBlockId: myArmed ? goldenBlockId : null });
+  const sound = useCallback((k) => blip(k, volume), [volume]);
+  const pl = usePlacement({ board, owner: you, hand, enabled: canAct, flip, goldenBlockId: myArmed ? goldenBlockId : null, sound });
   const contestedKeys = useMemo(
     () => new Set((m?.reveal ? m.reveal.contested : []).map(([r, c]) => key(r, c))),
     [m?.reveal]
   );
   const score = useMemo(() => (board ? scoreOf(board) : { a: 0, b: 0, s: 0 }), [board]);
+  const pending = placed && m && placed.turn === m.turn && m.submitted && !m.reveal ? placed : null;
+  const pendingKeys = useMemo(() => new Set((pending?.cells || []).map(([r, c]) => key(r, c))), [pending]);
   const stuck = useMemo(() => (canAct && board ? !hasAnyMove(board, hand, you) : false), [canAct, board, hand, you]);
 
   const g = theme.gap;
@@ -2662,14 +2926,19 @@ function NetGame({ colors, volume, theme, onResult, onAbort }) {
   const commit = () => {
     if (!pl.ghostLegal || pl.sel.handIdx === null) return;
     blip("place", volume);
+    // Show the block where it went (dotted, not yet real) until the turn resolves.
+    setPlaced({ turn: m.turn, cells: pl.ghost, handIdx: pl.sel.handIdx, golden: pl.goldenSel });
     net.move({ turn: m.turn, handIdx: pl.sel.handIdx, rot: ((pl.sel.rot % 4) + 4) % 4, pos: pl.sel.pos });
     pl.reset();
   };
 
+  // With nothing picked (the drop key), the first block in hand goes.
   const discard = () => {
-    if (pl.sel.handIdx === null) return;
+    const idx = pl.sel.handIdx ?? hand.findIndex((id) => id !== undefined);
+    if (idx < 0) return;
     blip("drop", volume);
-    net.discard({ turn: m.turn, handIdx: pl.sel.handIdx });
+    setPlaced({ turn: m.turn, cells: [], handIdx: idx });
+    net.discard({ turn: m.turn, handIdx: idx });
     pl.reset();
   };
 
@@ -2694,7 +2963,7 @@ function NetGame({ colors, volume, theme, onResult, onAbort }) {
     <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ background: UI.ground, color: UI.text }}>
       <div className="relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
         <div className="flex items-center justify-between h-9 shrink-0">
-          <div className="text-[12px] tracking-[0.25em]" style={{ color: UI.dim }}>RANKED</div>
+          <ForfeitButton ranked disabled={!m || !!m.over} onConfirm={() => net.forfeit()} />
           <div className="flex items-center gap-2">
             {graceLeft !== null && (
               <span className="flex items-center gap-1 text-[12px] tabular-nums" style={{ color: GOLD }}>
@@ -2724,7 +2993,8 @@ function NetGame({ colors, volume, theme, onResult, onAbort }) {
               <BoardGrid
                 board={board} cell={cell} ink={INK} theme={theme} youSide={you}
                 ghostKeys={pl.ghostKeys} ghostLegal={pl.ghostLegal} ghostInk={colors.you}
-                contestedKeys={contestedKeys} boardRef={pl.boardRef} onPointerDown={pl.onBoardPointerDown}
+                pendingKeys={pendingKeys} pendingInk={pending?.golden ? GOLD : colors.you}
+                contestedKeys={contestedKeys} boardRef={pl.boardRef} onPointerDown={(e) => pl.onBoardPointerDown(e, commit)}
               />
               {m.reveal && (
                 <VanishLayer
@@ -2734,12 +3004,12 @@ function NetGame({ colors, volume, theme, onResult, onAbort }) {
               )}
             </div>
 
-            {pl.dragging && pl.drag && pl.rotated && (
+            {pl.drag && pl.rotated && (
               <FloatingPiece
                 cells={pl.rotated} cell={cell} gap={theme.gap}
                 color={pl.goldenSel ? GOLD : colors.you} legal={pl.ghostLegal} flip={flip} golden={pl.goldenSel}
                 dir={you === "B" ? -1 : 1}
-                x={pl.drag.x} y={pl.drag.y} lift={pl.drag.lift}
+                x={pl.drag.x} y={pl.drag.y} lift={pl.drag.lift} faint={pl.holding && !!pl.sel.pos}
               />
             )}
 
@@ -2760,8 +3030,8 @@ function NetGame({ colors, volume, theme, onResult, onAbort }) {
 
         <div className="shrink-0 flex flex-col justify-end" style={{ height: DOCK_H }}>
           <HandRow
-            hand={hand} selIdx={pl.sel.handIdx} dragging={pl.dragging}
-            ink={colors.you} onPress={pl.onCardPointerDown} disabled={!canAct}
+            hand={hand} selIdx={pl.sel.handIdx} dragging={pl.dragging || pl.holding}
+            ink={colors.you} onPress={pl.onCardPointerDown} disabled={!canAct} spentIdx={pending ? pending.handIdx : null}
             goldenBlockId={myArmed ? goldenBlockId : null}
             dir={you === "B" ? -1 : 1}
           />
@@ -2844,6 +3114,8 @@ function Result({ over, colors, onQueue, onMenu }) {
           </div>
           {forfeit ? (
             <div className="text-[12px] mt-1.5" style={{ color: GOLD }}>opponent forfeited</div>
+          ) : reason === "forfeit" ? (
+            <div className="text-[12px] mt-1.5" style={{ color: GOLD }}>you forfeited</div>
           ) : reason === "locked" ? (
             <div className="text-[12px] mt-1.5" style={{ color: GOLD }}>board locked — no legal moves left</div>
           ) : null}
@@ -2892,13 +3164,22 @@ function Result({ over, colors, onQueue, onMenu }) {
    ROOT
    ============================================================ */
 export default function TurfBlocks() {
-  const [screen, setScreen] = useState("MENU");
-  const [aiLevel, setAiLevel] = useState(4);
+  const [screen, setScreenNow] = useState("MENU");
+  const screenRef = useRef("MENU");
+  useEffect(() => { screenRef.current = screen; }, [screen]);
+  // Every screen change goes through the paper transition — but only a real
+  // change: the ranked game re-asserts its screen on every turn.
+  const setScreen = useCallback((next) => {
+    const target = typeof next === "function" ? next(screenRef.current) : next;
+    if (target === screenRef.current) return;
+    screenRef.current = target;
+    withPaper(() => setScreenNow(target));
+  }, []);
+  const [aiLevel, setAiLevel] = useState(DEFAULT_LEVEL);
   const [seed, setSeed] = useState(0);
   const [loadout, setLoadoutState] = useState(loadLoadout);
   const [volume, setVolumeState] = useState(() => Number(store.get("tb:vol") ?? 0.5));
   const [theme, setThemeState] = useState(loadTheme);
-  const [musicVol, setMusicVolState] = useState(() => Number(store.get("tb:music") ?? 0.45));
   const [over, setOver] = useState(null);
 
   const status = useStatus();
@@ -2917,32 +3198,21 @@ export default function TurfBlocks() {
       if (m && m.board && !m.over) setScreen((cur) => (cur === "RESULT" ? cur : "RANKED"));
     });
     return () => { offT(); offM(); };
-  }, []);
+  }, [setScreen]);
 
   useEffect(() => {
     if (!authed && (screen === "MATCHMAKING" || screen === "RANKED")) setScreen("MENU");
-  }, [authed, screen]);
+  }, [authed, screen, setScreen]);
 
   /* Browsers won't start audio until the first gesture, so arm it and wait. */
   useEffect(() => {
-    music.setVolume(musicVol);
-    music.setEnabled(musicVol > 0);
-    const unlock = () => music.unlock();
-    window.addEventListener("pointerdown", unlock, { once: true });
-    window.addEventListener("keydown", unlock, { once: true });
+    window.addEventListener("pointerdown", unlockAudio, { once: true });
+    window.addEventListener("keydown", unlockAudio, { once: true });
     return () => {
-      window.removeEventListener("pointerdown", unlock);
-      window.removeEventListener("keydown", unlock);
+      window.removeEventListener("pointerdown", unlockAudio);
+      window.removeEventListener("keydown", unlockAudio);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  /* One track for the lobby, one for a match. Changing screens crossfades. */
-  useEffect(() => {
-    const inMatch = screen === "RANKED" || screen === "SOLO" || screen === "HOTSEAT";
-    if (inMatch) music.playList(TRACKS.battle, { fade: 1800 });
-    else music.play(TRACKS.menu, { fade: 1800 });
-  }, [screen]);
 
   const setTheme = (t) => { saveTheme(t); setThemeState(t); };
   const setLoadout = (updater) => setLoadoutState((prev) => {
@@ -2951,12 +3221,6 @@ export default function TurfBlocks() {
     return next;
   });
   const setVolume = (v) => { store.set("tb:vol", String(v)); setVolumeState(v); };
-  const setMusicVol = (v) => {
-    store.set("tb:music", String(v));
-    setMusicVolState(v);
-    music.setEnabled(v > 0);
-    music.setVolume(v);
-  };
   const rename = (n) => { const v = n.trim().slice(0, 16); if (v && v !== net.profile?.name) net.setName(v); };
   const logout = () => { store.set("tb:token", ""); net.logout(); setScreen("MENU"); };
 
@@ -2972,13 +3236,13 @@ export default function TurfBlocks() {
       }
       .tb-scroll { -webkit-overflow-scrolling: touch; scrollbar-width: none; }
       .tb-scroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
-      /* Type: Agrave Pro, a handwriting face, everywhere. The class name is historical.
-         It has no italic, so "italic" text is set lighter instead of being slanted
-         by the browser, which mangles handwriting. */
-      .font-mono { font-family: "Agrave Pro", "Segoe Print", "Bradley Hand", cursive; }
-      .font-mono .italic, .font-mono em { font-style: normal; font-weight: 300; }
+      /* Type: Sniglet, a rounded, friendly face, everywhere. The class name is historical.
+         It has no italic, so "italic" text stays upright rather than being
+         slanted by the browser. */
+      .font-mono { font-family: "Sniglet", "Arial Rounded MT Bold", "Nunito", system-ui, sans-serif; }
+      .font-mono .italic, .font-mono em { font-style: normal; opacity: .85; }
       /* The title is the one piece of text big enough to show the paper's tooth. */
-      .tb-display { font-family: "Agrave Pro", cursive; font-weight: 500; filter: url(#tb-pencil-1); }
+      .tb-display { font-family: "Sniglet", system-ui, sans-serif; font-weight: 800; filter: url(#tb-pencil-1); }
       .lucide { stroke-width: 1.6; }
 
       /* Paper: grain and a vignette over everything, drawn once, never animated. */
@@ -3060,7 +3324,6 @@ export default function TurfBlocks() {
         }}
         loadout={loadout} setLoadout={setLoadout}
         volume={volume} setVolume={setVolume}
-        musicVol={musicVol} setMusicVol={setMusicVol}
         colors={colors} profile={profile} status={status}
         name={name} rename={rename} onLogout={logout}
         theme={theme} setTheme={setTheme}
@@ -3094,12 +3357,13 @@ export default function TurfBlocks() {
       <LocalGame key={seed} mode={screen} aiLevel={aiLevel} loadout={loadout}
         colors={colors} volume={volume} theme={theme}
         onExit={() => setScreen("MENU")}
-        onRestart={() => setSeed((s) => s + 1)} />
+        onRestart={() => withPaper(() => setSeed((s) => s + 1))} />
     );
 
   return (
     <InkStyle.Provider value={theme.stroke}>
       <PencilDefs />{shell}{view}
+      <PaperTransition theme={theme} volume={volume} />
       <div className="tb-rotate font-mono" aria-live="polite">
         <RotateCw size={26} style={{ color: UI.dim }} />
         <div className="text-[16px]">Turn your phone upright</div>
