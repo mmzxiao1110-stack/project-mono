@@ -204,15 +204,20 @@ export function isLegalDelete(board, pins, cells) {
   return connected(cells);
 }
 
-/** Up to min(4, your meter) connected squares, yours (or any ink), not already pinned. */
+/** Up to min(RULES.pinMax, your meter) squares (connected, if the rules say), yours (or any ink), not already pinned. */
 export function isLegalPin(board, pins, cells, owner, meter) {
-  if (!RULES.actions || !distinctOnBoard(cells) || cells.length < 1 || cells.length > Math.min(RULES.deleteMax, meter)) return false;
+  if (!RULES.actions || !distinctOnBoard(cells) || cells.length < 1 || cells.length > Math.min(RULES.pinMax, meter)) return false;
   for (const [r, c] of cells) {
     const v = board[r][c];
     if (v === null || isPinned(pins, r, c)) return false;
     if (RULES.pinOwnOnly && v !== owner) return false;
   }
-  return connected(cells);
+  if (Number.isFinite(RULES.pinHoldMax)) {
+    let held = 0;
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (isPinned(pins, r, c) && board[r][c] === owner) held++;
+    if (held + cells.length > RULES.pinHoldMax) return false;
+  }
+  return !RULES.pinConnected || connected(cells);
 }
 
 /**
@@ -304,8 +309,8 @@ export function checkAction(board, pins, meter, side, move) {
 export function nextMeters(meters, moveA, moveB, deleted) {
   const spent = (m) => (m && m.type === "pin" ? m.cells.length : 0) + (m && m.pins ? m.pins.length : 0);
   return {
-    A: Math.min(RULES.pinCap, meters.A - spent(moveA) + deleted.B),
-    B: Math.min(RULES.pinCap, meters.B - spent(moveB) + deleted.A),
+    A: Math.min(RULES.pinCap, meters.A - spent(moveA) + deleted.B * RULES.pinPerDelete),
+    B: Math.min(RULES.pinCap, meters.B - spent(moveB) + deleted.A * RULES.pinPerDelete),
   };
 }
 
