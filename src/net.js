@@ -398,6 +398,7 @@ class Net {
           opp: m.opp,         // { piece, queue, pass } — both queues are public
           pins: m.pins || null,     // permanent squares
           meters: m.meters || { me: 0, opp: 0 },
+          ot: !!m.ot,
           deadline: m.deadline,
           submitted: !!m.alreadyMoved,
           oppReady: false,
@@ -422,6 +423,9 @@ class Net {
           board: m.board,
           pins: m.pins || this.match?.pins || null,
           meters: m.meters || this.match?.meters,
+          ot: m.ot ?? this.match?.ot,
+          otStarted: !!m.otStarted,
+          shrunk: !!m.shrunk,
           reveal: { moves: m.moves, contested: m.contested, cleared: m.cleared || [], lines: m.lines || { rows: [], cols: [] }, score: m.score, turn: m.turn },
           submitted: false,
           oppReady: false,

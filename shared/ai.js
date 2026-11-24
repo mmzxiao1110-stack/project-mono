@@ -13,7 +13,7 @@
  *             is good; leaving a line nearly full and mostly its own is a
  *             risk the opponent can cash in
  */
-import { ROWS, COLS, key, enumerateMoves, isCentre, fullLines, resolveTurn, nextMeters, isLegalDelete, isLegalPin } from "./engine.js";
+import { ROWS, COLS, key, enumerateMoves, isCentre, fullLines, resolveTurn, nextMeters, isLegalDelete, isLegalPin, stampOptions } from "./engine.js";
 import { RULES } from "./rules.js";
 
 function frontierSize(board, owner) {
@@ -117,7 +117,7 @@ function exposure(b, pins, o) {
 function evalState(b, pins, meters, o, w) {
   let me = 0, them = 0, pinMe = 0;
   for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
-    const v = b[r][c]; if (!v) continue;
+    const v = b[r][c]; if (!v || v === "X") continue; // empty or dead (overtime)
     if (v === o) { me += val(r, c); if (pins[r][c]) pinMe++; } else them += val(r, c);
   }
   return (me - them) + w.front * (frontierSize(b, o) - frontierSize(b, other(o)))
@@ -144,7 +144,7 @@ export function shapesWhere(ok, max) {
 }
 
 /** Pins for this turn: the most threatened of your squares (the centre, then those touching the enemy). */
-function pickPins(st, o, move) {
+function pickPins(st, o, move, piece) {
   const { board: b, pins } = st;
   let held = 0;
   if (Number.isFinite(RULES.pinHoldMax)) for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (pins[r][c] && b[r][c] === o) held++;
@@ -153,6 +153,15 @@ function pickPins(st, o, move) {
   const thr = (r, c) => (isCentre(r, c) ? 3 : 0) + N8.filter(([dr, dc]) => { const v = b[r + dr]?.[c + dc]; return v && v !== o; }).length * 0.5 + Math.random() * 0.1;
   const banned = new Set(move && move.type === "delete" ? move.cells.map(([r, c]) => key(r, c)) : []);
   const mine = (r, c) => b[r][c] === o && !pins[r][c] && !banned.has(key(r, c));
+  if (RULES.stamp) {
+    // A pin stamp: the piece's shape over your own squares; returns the footprint.
+    const opts = stampOptions(b, pins, piece, "pin", o)
+      .map((x) => ({ ...x, hits: x.hits.filter(([r, c]) => !banned.has(key(r, c))) }))
+      .filter((x) => x.hits.length && x.hits.length <= n);
+    if (!opts.length) return null;
+    const score = (x) => x.hits.reduce((s, [r, c]) => s + thr(r, c), 0);
+    return opts.reduce((x, y) => (score(y) > score(x) ? y : x)).cells;
+  }
   if (!RULES.pinConnected) {
     const all = [];
     for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (mine(r, c)) all.push([thr(r, c), [r, c]]);
@@ -167,7 +176,9 @@ function pickPins(st, o, move) {
 
 /**
  * Picks this turn's action: { type: "place" | "delete", cells, blockId?, pins? },
- * or null to pass. `st` is { board, pins, meters }.
+ * or null to pass. `st` is { board, pins, meters }. With stamps, a delete's
+ * cells are what it hits and `pins` is a footprint: run it through
+ * normalizeAction before resolving.
  */
 export function aiPickAction(st, piece, owner, level, levels) {
   if (!RULES.actions) {
@@ -179,10 +190,14 @@ export function aiPickAction(st, piece, owner, level, levels) {
   const noise = 8 * (1 - t) + 0.05;
   const { board: b, pins, meters } = st;
   const list = enumerateMoves(b, [piece], owner).map((m) => ({ type: "place", cells: m.cells, blockId: m.blockId }));
-  const dels = shapesWhere((r, c) => b[r][c] !== null && !pins[r][c], RULES.deleteMax);
-  const q = (cells) => cells.reduce((s, [r, c]) => s + (b[r][c] === owner ? -val(r, c) : val(r, c)), 0);
+  // Deletes: drawn shapes, or stamps of the current piece (kept as what they hit).
+  const dels = RULES.stamp
+    ? stampOptions(b, pins, piece, "delete", owner)
+    : shapesWhere((r, c) => b[r][c] !== null && !pins[r][c], RULES.deleteMax).map((cells) => ({ cells, hits: cells }));
+  const q = (x) => x.hits.reduce((s, [r, c]) => s + (b[r][c] === owner ? -val(r, c) : val(r, c)), 0);
   dels.sort((x, y) => q(y) - q(x));
-  for (const d of dels.slice(0, 12)) list.push({ type: "delete", cells: d });
+  // Evaluated on what it hits; handed back as the footprint (see normalizeAction).
+  for (const d of dels.slice(0, 12)) list.push({ type: "delete", cells: d.hits, foot: d.cells });
   if (!list.length) return null;
   let best = null, bs = -Infinity;
   for (const m of list) {
@@ -193,9 +208,10 @@ export function aiPickAction(st, piece, owner, level, levels) {
   }
   // Weaker players forget to pin. (Pins only ride along when pinning is free.)
   if (best && RULES.pinIsFree && Math.random() < 0.3 + 0.7 * t) {
-    const p = pickPins(st, owner, best);
-    if (p && isLegalPin(b, pins, p, owner, meters[owner])) best = { ...best, pins: p };
+    const p = pickPins(st, owner, best, piece);
+    if (p && (RULES.stamp || isLegalPin(b, pins, p, owner, meters[owner]))) best = { ...best, pins: p };
   }
-  if (best && best.type === "delete" && !isLegalDelete(b, pins, best.cells)) return null;
+  if (best && best.type === "delete" && !RULES.stamp && !isLegalDelete(b, pins, best.cells)) return null;
+  if (best && best.foot) { const { foot, ...rest } = best; best = RULES.stamp ? { ...rest, cells: foot } : rest; }
   return best;
 }
