@@ -24,7 +24,7 @@ export const RULES = {
      deals all eight pieces once, freshly shuffled, so nothing floods and
      nothing goes missing.
      ---------------------------------------------------------- */
-  queueShown: 8,   // upcoming pieces shown after the current one (both players see both queues)
+  queueShown: 4,   // upcoming pieces shown after the current one (both players see both queues)
 
   /* ----------------------------------------------------------
      COLLISIONS

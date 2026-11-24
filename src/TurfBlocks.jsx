@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef, useSyncExternalStore, createContext, useContext, useLayoutEffect } from "react";
 import {
-  RotateCw, Check, SkipForward, RefreshCw, ChevronLeft, Settings2, X, Flag,
+  RotateCw, Check, SkipForward, RefreshCw, ChevronLeft, Settings2, X,
   BarChart3, Wifi, WifiOff, Clock, UserRound, LogOut,
   Palette, Lock, MailCheck, ShieldAlert, BookOpen, ChevronRight,
 } from "./pixelIcons.jsx";
@@ -9,7 +9,7 @@ import {
 import {
   COLS, ROWS, TURNS, SLOTS, BLOCKS, DEFAULT_LOADOUT, isCentre,
   sizeOf, key, rotateN, boundsOf, absCells, initialBoard, isLegal,
-  hasAnyMove, resolveTurn, scoreOf, newDeck, advanceDeck, currentPiece, currentPass, upcoming,
+  hasAnyMove, resolveTurn, scoreOf, newDeck, advanceDeck, currentPiece, currentPass, upcoming, QUEUE_SHOWN,
 } from "../shared/engine.js";
 import { aiPickMove } from "../shared/ai.js";
 import {
@@ -262,9 +262,9 @@ function useSize() {
  *
  *   touch  press a card and drag; the piece rides two rows above the finger
  *          so you can see where it lands, and releasing drops it there.
- *   mouse  click a card and the piece sticks to the cursor ("holding"). Move,
- *          rotate with Q/E, swap blocks with 1–4, then click the board to
- *          place it. Click the card again, right-click or press Esc to put it back.
+ *   mouse  the piece sticks to the cursor ("holding") — at the start of each
+ *          turn, or after clicking its card. Move, rotate with Q/E, then click
+ *          the board or LOCK IN. Click the card again, right-click or Esc to put it back.
  */
 function usePlacement({ board, owner, hand, enabled, flip = false }) {
   const [sel, setSel] = useState({ handIdx: null, rot: 0, pos: null });
@@ -323,11 +323,10 @@ function usePlacement({ board, owner, hand, enabled, flip = false }) {
     const rect = el.getBoundingClientRect();
     const fx = (clientX - rect.left) / rect.width, fy = (clientY - rect.top) / rect.height;
     if (d.mode === "hold") {
+      // Off the board the shadow stays where it was, so you can carry the
+      // piece over to the buttons and still lock it in.
       const mx = 0.5 / COLS, my = 0.5 / ROWS;
-      if (fx < -mx || fx > 1 + mx || fy < -my || fy > 1 + my) {
-        setSel((s) => (s.pos ? { ...s, pos: null } : s));
-        return;
-      }
+      if (fx < -mx || fx > 1 + mx || fy < -my || fy > 1 + my) return;
     }
     const sc = Math.floor(fx * COLS);
     const sr = Math.floor(fy * ROWS);
@@ -956,93 +955,156 @@ function BoardGrid({
   );
 }
 
-/** Width of the forecast column beside the board, in pixels. */
-const NEXT_W = 14;
+/* ---------- Bubbles: every in-game button is a round pane of glass ---------- */
 
-/**
- * The forecast: the next pieces in your queue, top to bottom, each in its
- * own pane of glass, standing beside the board.
- */
-function NextColumn({ queue, ink, dir = 1, height, hidden = false }) {
+/** Rows of a pixel capsule `w` wide and `h` tall (art pixels): [y, x0, x1). */
+function capsuleRows(w, h, inset = 0) {
+  const W = w - 2 * inset, H = h - 2 * inset, R = W / 2, rows = [];
+  for (let y = 0; y < H; y++) {
+    const yc = y + 0.5;
+    const dy = yc < R ? R - yc : yc > H - R ? yc - (H - R) : 0;
+    if (dy >= R) continue;
+    const hw = Math.sqrt(R * R - dy * dy);
+    const x0 = Math.round(R - hw), x1 = Math.round(R + hw);
+    if (x1 > x0) rows.push([y + inset, x0 + inset, x1 + inset]);
+  }
+  return rows;
+}
+
+/** The glass shape itself, drawn in whole pixels: rim, tinted body, glint. */
+function BubbleShape({ w, h, tint, fill = 18 }) {
   const P = usePx();
-  const n = Math.max(1, queue.length);
-  const gap = P;
-  const item = Math.max(5 * P, Math.min(NEXT_W * P, Math.floor((height - gap * (n - 1)) / n / P) * P));
+  const outer = capsuleRows(w, h), inner = capsuleRows(w, h, 1);
+  const g = Math.max(1, Math.round(w * 0.2));
   return (
-    <div aria-label="Next pieces" className="shrink-0 flex flex-col" style={{ width: NEXT_W * P, height, gap, visibility: hidden ? "hidden" : "visible" }}>
-      {queue.map((id, i) => (
-        <div key={i} className="flex items-center justify-center"
-          style={{ height: item, ...GLASS, clipPath: CLIP1, opacity: 1 - i * 0.08 }}>
-          <BlockGlyph blockId={id} box={Math.min(item, NEXT_W * P) - 4 * P} color={ink} dir={dir} />
-        </div>
-      ))}
-    </div>
+    <svg aria-hidden="true" width={w * P} height={h * P} viewBox={`0 0 ${w} ${h}`} shapeRendering="crispEdges"
+      style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+      {outer.map(([y, a, b]) => <rect key={`o${y}`} x={a} y={y} width={b - a} height={1} style={{ fill: `color-mix(in srgb, ${tint} 75%, transparent)` }} />)}
+      {inner.map(([y, a, b]) => <rect key={`i${y}`} x={a} y={y} width={b - a} height={1} style={{ fill: `color-mix(in srgb, ${tint} ${fill}%, rgba(10,10,16,.55))` }} />)}
+      <rect x={Math.round(w * 0.26)} y={2} width={g} height={1} fill="rgba(255,255,255,.55)" />
+      <rect x={Math.round(w * 0.2)} y={3} width={1} height={Math.max(1, Math.round(h * 0.12))} fill="rgba(255,255,255,.4)" />
+      <rect x={w - 1 - Math.round(w * 0.3)} y={h - 3} width={Math.max(1, Math.round(w * 0.12))} height={1} fill="rgba(255,255,255,.18)" />
+    </svg>
   );
 }
 
-/** The opponent's piece this turn and what follows — both queues are public. */
-function OppQueue({ piece, queue, ink, dir }) {
-  if (piece === undefined || piece === null) return null;
-  return (
-    <div className="flex items-center gap-2 shrink-0 pb-1.5 tb-t" style={{ color: UI.dim }}>
-      <span>THEM</span>
-      <BlockGlyph blockId={piece} box={18} color={ink} dir={dir} />
-      <span style={{ opacity: 0.6 }}>then</span>
-      <div className="flex items-center gap-1" style={{ opacity: 0.7 }}>
-        {(queue || []).slice(0, 4).map((id, i) => <BlockGlyph key={i} blockId={id} box={13} color={ink} dir={dir} gap={0.5} />)}
-      </div>
-    </div>
-  );
+/** Bubble size in art pixels: never smaller than a fingertip. */
+function useBubble() {
+  const P = usePx();
+  const d = Math.max(15, Math.ceil(40 / P));
+  return d + (d % 2); // even, so the circle is symmetric
 }
 
-/** Every in-game button: same frame, same height. */
-const GAME_BTN_H = "max(48px, calc(var(--p) * 11 + 14px))";
-const gameBtn = (extra) => ({ height: GAME_BTN_H, ...sk(), color: UI.text, ...extra });
+function Bubble({ w, h, tint = UI.text, fill, label, children, className = "", style, ...rest }) {
+  const P = usePx();
+  return (
+    <button aria-label={label} title={label} {...rest}
+      className={`relative flex items-center justify-center shrink-0 disabled:opacity-35 ${className}`}
+      style={{ width: w * P, height: h * P, color: tint, ...style }}>
+      <BubbleShape w={w} h={h} tint={tint} fill={fill} />
+      <span className="relative flex items-center justify-center">{children}</span>
+    </button>
+  );
+}
 
 /**
- * The dock: the piece you play this turn (pick it up: click, key, or drag
- * on a phone) and the turn's three actions, in one row.
+ * The right rail: TURN, LOCK IN (the tall one) and PASS at the top, the
+ * turn number in the middle, FORFEIT at the bottom.
  */
-function PlayDock({
-  piece, selected, dragging, ink, onPress, disabled, dir = 1, spent = false,
-  onRotate, onCommit, onDiscard, canRotate, canCommit, canDiscard, commitLabel = "LOCK IN",
+function ActionRail({
+  height, ink, onRotate, onCommit, onDiscard, canRotate, canCommit, canDiscard,
+  turn, waiting = false, timer = null, forfeit,
 }) {
   const P = usePx();
+  const d = useBubble();
   return (
-    <div className="flex items-stretch gap-1.5">
-      <div
-        onPointerDown={(e) => !disabled && onPress(e, 0)}
-        data-queue-card=""
-        aria-label={`Your piece: ${BLOCKS[piece].name}`}
-        className="relative flex items-center justify-center select-none shrink-0"
-        style={{
-          width: `max(52px, ${P * 18}px)`, height: GAME_BTN_H,
-          ...sk(selected ? ink : UI.line),
-          ...(spent ? { border: `${PX} dashed ${UI.dim}` } : null),
-          background: selected ? UI.panel : "transparent",
-          touchAction: "none",
-          opacity: spent ? 0.3 : disabled ? 0.35 : selected && dragging ? 0.25 : 1,
-          transform: selected && !dragging ? `translateY(calc(var(--p) * -1))` : "none",
-        }}
-      >
-        <BlockGlyph blockId={piece} box={P * 12} color={ink} dir={dir} />
+    <div className="shrink-0 flex flex-col items-center justify-between" style={{ width: d * P, height }}>
+      <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
+        <Bubble w={d} h={d} label="Turn" onClick={onRotate} disabled={!canRotate}><RotateCw /></Bubble>
+        <Bubble w={d} h={Math.round(d * 2.2)} label="LOCK IN" tint={canCommit || waiting ? ink : UI.dim} fill={canCommit ? 55 : 18}
+          onClick={onCommit} disabled={!canCommit} className={waiting ? "tb-pulse" : undefined}
+          style={{ color: canCommit ? UI.text : undefined }}>
+          <Check />
+        </Bubble>
+        <Bubble w={d} h={d} label="Pass" tint={UI.dim} onClick={onDiscard} disabled={!canDiscard}><SkipForward /></Bubble>
       </div>
-      <button onClick={onRotate} disabled={!canRotate} aria-label="Turn"
-        className="flex items-center justify-center gap-1.5 tb-t disabled:opacity-30 flex-1 min-w-0"
-        style={gameBtn()}>
-        <RotateCw size={13} /><span className="hidden sm:inline">TURN</span>
-      </button>
-      <button onClick={onCommit} disabled={!canCommit}
-        className="flex items-center justify-center gap-1.5 tb-t whitespace-nowrap disabled:opacity-40 min-w-0"
-        style={gameBtn({ flex: 2, ...(canCommit ? skFill(ink) : null), color: canCommit ? UI.text : UI.dim })}>
-        <Check size={13} /> {commitLabel}
-      </button>
-      <button onClick={onDiscard} disabled={!canDiscard} aria-label="Pass"
-        className="flex items-center justify-center gap-1.5 tb-t disabled:opacity-30 flex-1 min-w-0"
-        style={gameBtn({ color: UI.dim })}>
-        <SkipForward size={13} /><span className="hidden sm:inline">PASS</span>
-      </button>
+      <div className="flex flex-col items-center">
+        <span className="tb-t tabular-nums" aria-label={`Turn ${turn}`} style={{ color: UI.dim }}>{turn}</span>
+        {timer}
+      </div>
+      <ForfeitButton {...forfeit} />
     </div>
+  );
+}
+
+/** Width in pixels of the current-piece pane and of each upcoming one. */
+const NOW_W = 16, SOON_W = 12;
+/** Smaller panes on very narrow phones, so both forecasts and the bag fit in one row. */
+const paneSizes = () => (typeof window !== "undefined" && window.innerWidth < 360 ? [13, 10] : [NOW_W, SOON_W]);
+
+/** A small glass pane holding one piece. */
+function PiecePane({ id, size, ink, dir, dim = 1, lit = false, ...rest }) {
+  const P = usePx();
+  return (
+    <div {...rest} className="relative flex items-center justify-center shrink-0 select-none"
+      style={{
+        width: size * P, height: size * P, ...GLASS, clipPath: CLIP1, opacity: dim,
+        ...(lit ? { boxShadow: `inset 0 0 0 ${P}px color-mix(in srgb, ${ink} 80%, transparent)` } : null),
+        ...rest.style,
+      }}>
+      {id !== undefined && id !== null && <BlockGlyph blockId={id} box={(size - 4) * P} color={ink} dir={dir} />}
+    </div>
+  );
+}
+
+/**
+ * One player's side of the top row: name and score, then the piece they play
+ * now and the next four. Mirrored for the player on the right.
+ */
+function ForecastSide({ name, score, ink, now, queue, dir = 1, right = false, card = null, busy = false }) {
+  const P = usePx();
+  const [nowW, soonW] = paneSizes();
+  const soon = (queue || []).slice(0, QUEUE_SHOWN);
+  const panes = [
+    card || <PiecePane key="now" id={now} size={nowW} ink={ink} dir={dir} />,
+    ...soon.map((id, i) => <PiecePane key={i} id={id} size={soonW} ink={ink} dir={dir} dim={1 - i * 0.12} />),
+  ];
+  return (
+    <div className={`flex flex-col min-w-0 ${right ? "items-end" : "items-start"}`} style={{ gap: P }}>
+      <div className={`flex items-baseline gap-2 tb-t min-w-0 ${right ? "flex-row-reverse" : ""} ${busy ? "tb-pulse" : ""}`}>
+        <span className="truncate" style={{ color: ink }}>{name}</span>
+        <span className="tabular-nums" style={{ color: UI.text }}>{score}</span>
+      </div>
+      <div className={`flex items-end ${right ? "flex-row-reverse" : ""}`} style={{ gap: P }}>{panes}</div>
+    </div>
+  );
+}
+
+/** The top row: your forecast on the left, theirs on the right, the bag number between. */
+function ForecastRow({ left, right, bag }) {
+  const P = usePx();
+  const d = paneSizes()[0];
+  return (
+    <div className="shrink-0 flex items-end justify-between pt-2 pb-2" style={{ gap: 2 * P }}>
+      <ForecastSide {...left} />
+      <div className="relative flex items-center justify-center shrink-0 tb-t tabular-nums" aria-label={`Bag ${bag}`} title="Bag"
+        style={{ width: d * P, height: d * P, color: UI.dim }}>
+        <BubbleShape w={d} h={d} tint={UI.dim} fill={10} />
+        <span className="relative">{bag}</span>
+      </div>
+      <ForecastSide {...right} right />
+    </div>
+  );
+}
+
+/** Your current piece, as the pane you pick it up from. */
+function NowCard({ id, ink, dir, selected, dragging, onPress, disabled, spent }) {
+  return (
+    <PiecePane id={id} size={paneSizes()[0]} ink={ink} dir={dir} lit={selected}
+      data-queue-card="" aria-label={`Your piece: ${BLOCKS[id].name}`}
+      onPointerDown={(e) => !disabled && onPress(e, 0)}
+      dim={spent ? 0.3 : disabled ? 0.45 : selected && dragging ? 0.4 : 1}
+      style={{ touchAction: "none", cursor: disabled ? "default" : "grab" }} />
   );
 }
 
@@ -1070,26 +1132,6 @@ function VMeter({ a, b, inkA, inkB, height }) {
       style={{ width: METER_W * P, height, padding: 2 * P - P, ...sk(UI.dim), background: "color-mix(in srgb, var(--tb-ground) 50%, black)", boxSizing: "border-box" }}>
       <div className="absolute" style={{ left: P, right: P, top: P, height: hB, ...bar(inkB) }} />
       <div className="absolute" style={{ left: P, right: P, bottom: P, height: hA, ...bar(inkA) }} />
-    </div>
-  );
-}
-
-function ScoreBar({ score, turn, turns, pass, inkA, inkB, labelA, labelB }) {
-  return (
-    <div className="shrink-0 pb-2">
-      <div className="flex items-end justify-between mb-1.5">
-        <span className="flex items-baseline gap-1.5" style={{ color: inkA }}>
-          <span className="tb-num tb-t tabular-nums">{score.a}</span>
-          <span className="tb-t">{labelA}</span>
-        </span>
-        <span className="tb-t pb-0.5" style={{ color: UI.dim }}>
-          TURN {Math.min(turn, turns)}/{turns}{pass ? <span className="hidden sm:inline"> · PASS {pass}</span> : null}
-        </span>
-        <span className="flex items-baseline gap-1.5" style={{ color: inkB }}>
-          <span className="tb-t">{labelB}</span>
-          <span className="tb-num tb-t tabular-nums">{score.b}</span>
-        </span>
-      </div>
     </div>
   );
 }
@@ -2762,16 +2804,15 @@ function Matchmaking({ profile, loadout, colors, onCancel, onPlayAi }) {
   );
 }
 
-/** The FORFEIT button: asks before ending the match. */
+/** The FORFEIT bubble (red): asks before ending the match. */
 function ForfeitButton({ onConfirm, ranked = false, disabled = false }) {
   const [asking, setAsking] = useState(false);
+  const d = useBubble();
   return (
     <>
-      <button onClick={() => setAsking(true)} disabled={disabled}
-        className="flex items-center justify-center gap-1.5 tb-t px-3 disabled:opacity-30"
-        style={{ height: "calc(var(--p) * 11 + 10px)", ...sk(), color: UI.dim }}>
-        <Flag size={12} /> FORFEIT
-      </button>
+      <Bubble w={d} h={d} label="Forfeit" tint="#DB4F6D" fill={30} onClick={() => setAsking(true)} disabled={disabled}>
+        <X />
+      </Bubble>
       {asking && (
         <Popup title="FORFEIT?" onClose={() => setAsking(false)} maxW={320}>
           <div className="pt-4 pb-1">
@@ -2810,7 +2851,6 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   const [stageRef, stage] = useSize();
 
   const player = phase === "PLAY_B" ? "B" : "A";
-  const them = player === "A" ? "B" : "A";
   // One piece per turn: the front of your queue.
   const piece = currentPiece(decks[player]);
   const hand = useMemo(() => [piece], [piece]);
@@ -2825,8 +2865,9 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   const P = usePx();
   const g = (theme.gap ?? 1) * P;
   // Whole pixels: the square size is a whole number of pixels. Leave room for
-  // the score meter on the left and the forecast on the right.
-  const side = 5 * P, sideRoom = (METER_W + NEXT_W) * P + 2 * side;
+  // the score meter on the left and the button rail on the right.
+  const railD = useBubble();
+  const side = 5 * P, sideRoom = (METER_W + railD) * P + 2 * side;
   const cellArt = Math.max(5, Math.floor(Math.min(
     (stage.w - sideRoom - g * (COLS - 1)) / COLS,
     (stage.h - g * (ROWS - 1)) / ROWS
@@ -2864,6 +2905,13 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
 
   useGameKeys(pl, { enabled: inPlay, onCommit: commit, onDiscard: discard });
 
+  // Each turn starts with the piece already in hand: under the cursor with a
+  // mouse, on the nearest legal square on a touch screen.
+  useEffect(() => {
+    if (inPlay && !stuck) pl.select(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inPlay, turn, player]);
+
   useEffect(() => {
     if (phase !== "AI_THINK") return;
     const t = setTimeout(() => {
@@ -2894,17 +2942,24 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ color: UI.text }}>
       <div className="tb-col relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
-        <div className="flex items-center justify-between shrink-0 py-1.5">
-          <div className="tb-t" style={{ color: UI.dim }}>{solo ? oppName : "TAKE TURNS"}</div>
-          <ForfeitButton disabled={phase === "DONE"}
-            onConfirm={() => { pl.reset(); setForfeitBy(solo ? "A" : player); setPhase("DONE"); }} />
-        </div>
-
-        <ScoreBar score={score} turn={turn} turns={TURNS} pass={currentPass(decks[inPlay ? player : "A"])}
-          inkA={INK.A} inkB={INK.B} labelA="P1" labelB={solo ? "AI" : "P2"} />
-        {inPlay && (
-          <OppQueue piece={currentPiece(decks[them])} queue={upcoming(decks[them])} ink={INK[them]} dir={them === "B" ? -1 : 1} />
-        )}
+        <ForecastRow
+          bag={currentPass(decks[inPlay ? player : "A"])}
+          left={{
+            name: "P1", score: score.a, ink: INK.A, now: currentPiece(decks.A), queue: upcoming(decks.A),
+            card: inPlay && player === "A" ? (
+              <NowCard key="now" id={piece} ink={INK.A} selected={pl.sel.handIdx === 0}
+                dragging={pl.dragging || pl.holding} onPress={pl.onCardPointerDown} />
+            ) : null,
+          }}
+          right={{
+            name: oppName, score: score.b, ink: INK.B, dir: -1, now: currentPiece(decks.B), queue: upcoming(decks.B),
+            busy: phase === "AI_THINK",
+            card: inPlay && player === "B" ? (
+              <NowCard key="now" id={piece} ink={INK.B} dir={-1} selected={pl.sel.handIdx === 0}
+                dragging={pl.dragging || pl.holding} onPress={pl.onCardPointerDown} />
+            ) : null,
+          }}
+        />
 
         <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center" style={{ gap: side }}>
           <VMeter a={score.a} b={score.b} inkA={INK.A} inkB={INK.B} height={boardH} />
@@ -2973,35 +3028,15 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
               </div>
             )}
           </div>
-          <NextColumn queue={upcoming(decks[inPlay ? player : "A"])} ink={INK[inPlay ? player : "A"]}
-            dir={inPlay && player === "B" ? -1 : 1} height={boardH} hidden={!inPlay && !solo} />
-        </div>
-
-        <div className="shrink-0 flex flex-col justify-center py-2" style={{ minHeight: `calc(${GAME_BTN_H} + 16px)` }}>
-          {inPlay && (
-            <PlayDock piece={piece}
-              selected={pl.sel.handIdx === 0} dragging={pl.dragging || pl.holding} ink={INK[player]}
-              onPress={pl.onCardPointerDown} dir={player === "B" ? -1 : 1}
-              onRotate={pl.rotate} onCommit={commit} onDiscard={discard}
-              canRotate={pl.sel.handIdx !== null} canCommit={pl.ghostLegal} canDiscard={inPlay}
-              commitLabel={stuck ? "NO ROOM" : "LOCK IN"}
-            />
-          )}
-
-          {phase === "AI_THINK" && (
-            <div className="tb-t tb-pulse text-center" style={{ color: INK.B }}>{oppName} IS THINKING</div>
-          )}
-
-          {phase === "REVEAL" && reveal && (
-            <div className="tb-t flex items-center justify-center gap-3">
-              {[["A", reveal.a, "P1"], ["B", reveal.b, solo ? "AI" : "P2"]].map(([who, mv, label]) => (
-                <span key={who} className="flex items-center gap-1.5">
-                  <span style={{ color: INK[who] }}>{label}</span>
-                  {mv ? <BlockGlyph blockId={mv.blockId} box={20} color={INK[who]} /> : <span style={{ color: UI.dim }}>—</span>}
-                </span>
-              ))}
-            </div>
-          )}
+          <ActionRail
+            height={boardH} ink={INK[player]} turn={Math.min(turn, TURNS)}
+            onRotate={() => pl.rotate(1)} onCommit={commit} onDiscard={discard}
+            canRotate={inPlay && pl.sel.handIdx !== null} canCommit={inPlay && pl.ghostLegal} canDiscard={inPlay}
+            forfeit={{
+              disabled: phase === "DONE",
+              onConfirm: () => { pl.reset(); setForfeitBy(solo ? "A" : player); setPhase("DONE"); },
+            }}
+          />
         </div>
       </div>
     </div>
@@ -3068,8 +3103,9 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   const P = usePx();
   const g = (theme.gap ?? 1) * P;
   // Whole pixels: the square size is a whole number of pixels. Leave room for
-  // the score meter on the left and the forecast on the right.
-  const side = 5 * P, sideRoom = (METER_W + NEXT_W) * P + 2 * side;
+  // the score meter on the left and the button rail on the right.
+  const railD = useBubble();
+  const side = 5 * P, sideRoom = (METER_W + railD) * P + 2 * side;
   const cellArt = Math.max(5, Math.floor(Math.min(
     (stage.w - sideRoom - g * (COLS - 1)) / COLS,
     (stage.h - g * (ROWS - 1)) / ROWS
@@ -3101,6 +3137,12 @@ function NetGame({ colors, theme, onResult, onAbort }) {
 
   useGameKeys(pl, { enabled: canAct, onCommit: commit, onDiscard: discard });
 
+  // Each turn starts with the piece already in hand (see LocalGame).
+  useEffect(() => {
+    if (canAct && !stuck) pl.select(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canAct, m?.turn]);
+
   if (!m || !board) {
     return (
       <div className="tb-screen tb-safe w-full flex items-center justify-center font-mono" style={{ color: UI.dim }}>
@@ -3115,34 +3157,22 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ color: UI.text }}>
       <div className="tb-col relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
-        <div className="flex items-center justify-between shrink-0 py-1.5">
-          <ForfeitButton ranked disabled={!m || !!m.over} onConfirm={() => net.forfeit()} />
-          <div className="flex items-center gap-2 min-w-0">
-            {graceLeft !== null && (
-              <span className="flex items-center gap-1 tb-t tabular-nums" style={{ color: GOLD }}>
-                <Clock size={11} /> {graceLeft}
-              </span>
-            )}
-            {theme.showTimer && secsLeft !== null && graceLeft === null && (
-              <span className="flex items-center gap-1 tb-t tabular-nums" style={{ color: secsLeft <= 5 ? UI.bad : GOLD }}>
-                <Clock size={11} /> {secsLeft}
-              </span>
-            )}
-            {err ? <span className="tb-t truncate" style={{ color: UI.bad }}>{err}</span> : (
-              <span className="tb-t truncate" style={{ color: m.oppReady ? GOLD : UI.dim }}
-                title={m.oppReady ? "They've locked in" : undefined}>
-                {m.opponent.name} · {m.opponent.rating}{m.oppReady ? " ✓" : ""}
-              </span>
-            )}
-          </div>
-        </div>
-
-        <ScoreBar
-          score={{ a: myScore, b: theirScore, s: score.s }}
-          turn={m.turn} turns={m.turns} pass={m.pass || 1}
-          inkA={colors.you} inkB={colors.rival} labelA="YOU" labelB="OPP"
+        <ForecastRow
+          bag={m.pass || 1}
+          left={{
+            name: "YOU", score: myScore, ink: colors.you, dir: you === "B" ? -1 : 1, queue: m.queue || [],
+            card: (
+              <NowCard key="now" id={piece} ink={colors.you} dir={you === "B" ? -1 : 1}
+                selected={pl.sel.handIdx === 0} dragging={pl.dragging || pl.holding}
+                onPress={pl.onCardPointerDown} disabled={!canAct} spent={!!pending} />
+            ),
+          }}
+          right={{
+            name: err || `${m.opponent.name}${m.oppReady ? " ✓" : ""}`, score: theirScore,
+            ink: err ? UI.bad : colors.rival, dir: them === "B" ? -1 : 1,
+            now: m.opp?.piece, queue: m.opp?.queue || [],
+          }}
         />
-        {m.opp && <OppQueue piece={m.opp.piece} queue={m.opp.queue} ink={colors.rival} dir={them === "B" ? -1 : 1} />}
 
         <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center" style={{ gap: side }}>
           <VMeter a={myScore} b={theirScore} inkA={colors.you} inkB={colors.rival} height={boardH} />
@@ -3184,20 +3214,19 @@ function NetGame({ colors, theme, onResult, onAbort }) {
               </div>
             )}
           </div>
-          <NextColumn queue={m.queue || []} ink={colors.you} dir={you === "B" ? -1 : 1} height={boardH} />
-        </div>
-
-        <div className="shrink-0 flex flex-col justify-center py-2" style={{ minHeight: `calc(${GAME_BTN_H} + 16px)` }}>
-          <PlayDock
-            piece={piece}
-            selected={pl.sel.handIdx === 0} dragging={pl.dragging || pl.holding}
-            ink={colors.you} onPress={pl.onCardPointerDown} disabled={!canAct} spent={!!pending}
-            dir={you === "B" ? -1 : 1}
-            onRotate={pl.rotate} onCommit={commit} onDiscard={discard}
+          <ActionRail
+            height={boardH} ink={colors.you} turn={Math.min(m.turn, m.turns)}
+            onRotate={() => pl.rotate(1)} onCommit={commit} onDiscard={discard}
             canRotate={canAct && pl.sel.handIdx !== null}
             canCommit={canAct && pl.ghostLegal}
             canDiscard={canAct}
-            commitLabel={m.submitted ? "WAITING" : stuck ? "NO ROOM" : "LOCK IN"}
+            waiting={!!m.submitted && !m.reveal}
+            timer={graceLeft !== null ? (
+              <span className="flex items-center gap-1 tb-t tabular-nums" style={{ color: GOLD }}><Clock /> {graceLeft}</span>
+            ) : theme.showTimer && secsLeft !== null ? (
+              <span className="tb-t tabular-nums" style={{ color: secsLeft <= 5 ? UI.bad : GOLD }}>{secsLeft}</span>
+            ) : null}
+            forfeit={{ ranked: true, disabled: !m || !!m.over, onConfirm: () => net.forfeit() }}
           />
         </div>
       </div>
