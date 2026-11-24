@@ -12,8 +12,8 @@ export const RULES = {
   /* ----------------------------------------------------------
      BOARD AND MATCH LENGTH
      ---------------------------------------------------------- */
-  size: 20,        // the board is size × size
-  turns: 60,       // rounds per match. Simulated: line clears show up in ~83% of games at 60, every game at 70
+  size: 12,        // the board is size × size
+  turns: 25,       // rounds per match. Simulated on 12×12: ~3.5 line clears a game, 98% of games have one; longer mostly adds forced passes
   // A match also ends early once neither player can place ANY piece from
   // their deck anywhere ("locked").
 

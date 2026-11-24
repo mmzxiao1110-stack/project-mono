@@ -20,9 +20,8 @@ import { FX } from "./tuning.js";
 import { RULES } from "../shared/rules.js";
 import {
   PRESETS, INKS, STROKES, GRID_GAPS,
-  loadTheme, saveTheme, applyPreset, editTheme, themeVars, frameUrl, frameImage,
+  loadTheme, saveTheme, applyPreset, editTheme, themeVars,
 } from "./theme.js";
-import { inkPaths, gridPath, shadeUrl, pencilFilter, GRAINS } from "./sketch.js";
 import { ACTIONS, getKeys, subscribeKeys, setKey, resetKeys, actionFor, keyLabel, canBind } from "./keys.js";
 
 /* ============================================================
@@ -56,34 +55,41 @@ const UI = {
 };
 
 /* ------------------------------------------------------------
-   Sketched frames. Every bordered surface goes through sk(): it swaps
-   the straight CSS border for a pencil-drawn border-image. Theme colours
-   use frames prebuilt in themeVars(); any other hex is drawn on demand.
+   Pixel glass. Every bordered surface goes through sk(): a translucent
+   pane with stepped pixel corners, a 2px edge in `color`, and a one-pixel
+   bevel (light along the top-left, shade along the bottom-right) so it
+   reads as a raised piece of glass. skFill() is the same pane tinted with
+   its colour — the pressed or primary state.
    ------------------------------------------------------------ */
-const SK_VAR = {
-  [UI.line]: "line", [UI.dim]: "dim", [UI.text]: "text",
-  [GOLD]: "special", [GOLD_SOFT]: "special-soft", [UI.badSoft]: "bad",
-};
-const SHADE_VAR = { [UI.text]: "text", [UI.dim]: "dim" };
+/** Stepped corners: a polygon that cuts each corner in `step`-px stairs. */
+function pixelClip(step = 2) {
+  const a = step, b = step * 2;
+  return `polygon(0 ${b}px, ${a}px ${b}px, ${a}px ${a}px, ${b}px ${a}px, ${b}px 0, calc(100% - ${b}px) 0, calc(100% - ${b}px) ${a}px, calc(100% - ${a}px) ${a}px, calc(100% - ${a}px) ${b}px, 100% ${b}px, 100% calc(100% - ${b}px), calc(100% - ${a}px) calc(100% - ${b}px), calc(100% - ${a}px) calc(100% - ${a}px), calc(100% - ${b}px) calc(100% - ${a}px), calc(100% - ${b}px) 100%, ${b}px 100%, ${b}px calc(100% - ${a}px), ${a}px calc(100% - ${a}px), ${a}px calc(100% - ${b}px), 0 calc(100% - ${b}px))`;
+}
+const CLIP = pixelClip(2);
+const CLIP_BIG = pixelClip(4);
+const BEVEL = "inset 2px 2px 0 var(--tb-edge), inset -2px -2px 0 var(--tb-shade)";
 
 function sk(color = UI.line) {
-  const name = SK_VAR[color];
-  const src = name ? `var(--tb-sk-${name})` : frameUrl(color);
-  return { borderWidth: 1, borderStyle: "solid", borderColor: "transparent", borderImage: frameImage(src), borderRadius: 0 };
+  return {
+    borderWidth: 2, borderStyle: "solid", borderRadius: 0, borderImage: "none",
+    borderColor: `color-mix(in srgb, ${color} 75%, transparent)`,
+    clipPath: CLIP,
+    boxShadow: BEVEL,
+  };
 }
-/**
- * A pencil-shaded surface: the "pressed" or primary state. Light enough to
- * write over, so text on it stays in the normal text colour. `dense` goes
- * over it twice, for swatches and small solid marks.
- */
 function skFill(color = UI.text, { dense = false } = {}) {
-  const name = SHADE_VAR[color];
-  const shade = name ? `var(--tb-shade-${name}${dense ? "-dense" : ""})` : shadeUrl(color, { dense });
-  // Shading runs a touch past the drawn frame, the way it does on paper.
-  return { ...sk(color), background: `${shade} 0 0 / 36px 36px`, backgroundClip: "padding-box" };
+  return {
+    ...sk(color),
+    background: `linear-gradient(180deg, color-mix(in srgb, ${color} ${dense ? 85 : 38}%, transparent), color-mix(in srgb, ${color} ${dense ? 65 : 20}%, transparent))`,
+    boxShadow: `${BEVEL}, inset 0 0 12px color-mix(in srgb, ${color} 30%, transparent)`,
+  };
 }
-/** A drawn rule under (or over) a block, in place of a 1px border. */
-const RULE_BELOW = { backgroundImage: "var(--tb-rule)", backgroundRepeat: "no-repeat", backgroundPosition: "bottom", backgroundSize: "100% 8px" };
+/** A dotted pixel rule under (or over) a block, in place of a 1px border. */
+const RULE_BELOW = {
+  backgroundImage: "linear-gradient(90deg, var(--tb-edge-strong) 50%, transparent 50%)",
+  backgroundRepeat: "repeat-x", backgroundPosition: "bottom", backgroundSize: "6px 2px",
+};
 const RULE_ABOVE = { ...RULE_BELOW, backgroundPosition: "top" };
 
 // AI opponents, weakest first. The names are placeholders: replace each
@@ -509,6 +515,99 @@ function useGameKeys(pl, { enabled, onCommit, onDiscard }) {
 }
 
 /* ============================================================
+   PIXEL SKY — the animated background behind every screen
+   ============================================================ */
+/**
+ * `paused` counts open popups (their frosted glass would otherwise re-blur
+ * a moving picture every frame); `slow` is set during matches, when the
+ * sky should stay out of the way.
+ */
+const sky = { paused: 0, slow: false };
+
+/**
+ * A tiny canvas (64 px wide) blown up to fill the screen with
+ * image-rendering: pixelated, so soft glowing blobs become chunky pixel
+ * light. Drawing 64×~120 pixels is nearly free, and it runs at ~12 fps,
+ * half that during a match, and not at all while hidden or paused.
+ */
+function PixelSky({ theme }) {
+  const ref = useRef(null);
+  const { ground, you, rival, special, panel, motion } = theme;
+
+  useEffect(() => {
+    const cv = ref.current;
+    if (!cv) return;
+    const ctx = cv.getContext("2d", { alpha: false });
+    // About 8 screen pixels per sky pixel, whatever the screen.
+    let W = 64, H = 112;
+    const size = () => {
+      W = Math.max(48, Math.min(200, Math.round(window.innerWidth / 8)));
+      H = Math.max(40, Math.min(160, Math.round(window.innerHeight / 8)));
+      cv.width = W; cv.height = H;
+    };
+    size();
+    window.addEventListener("resize", size);
+
+    const rnd = (a, b) => a + Math.random() * (b - a);
+    const blobs = [you, rival, special, panel, you].map((color, i) => ({
+      color, x: rnd(0, 1), y: rnd(0, 1), r: rnd(0.35, 0.6) * (i === 4 ? 0.6 : 1),
+      vx: rnd(-1, 1) * 0.012, vy: rnd(-1, 1) * 0.01, a: i === 3 ? 0.55 : i === 2 ? 0.22 : 0.38,
+    }));
+    const stars = Array.from({ length: 24 }, () => ({ x: Math.random(), y: Math.random(), p: Math.random() * 6.28, s: rnd(0.6, 1.6) }));
+
+    const hexA = (hex, a) => {
+      const h = hex.replace("#", "");
+      return `rgba(${parseInt(h.slice(0, 2), 16)},${parseInt(h.slice(2, 4), 16)},${parseInt(h.slice(4, 6), 16)},${a})`;
+    };
+
+    const draw = (t) => {
+      ctx.fillStyle = ground;
+      ctx.fillRect(0, 0, W, H);
+      ctx.globalCompositeOperation = "lighter";
+      for (const b of blobs) {
+        const cx = b.x * W, cy = b.y * H, rr = b.r * Math.max(W, H);
+        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, rr);
+        g.addColorStop(0, hexA(b.color, b.a));
+        g.addColorStop(1, hexA(b.color, 0));
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, W, H);
+      }
+      ctx.globalCompositeOperation = "source-over";
+      for (const st of stars) {
+        const tw = 0.5 + 0.5 * Math.sin(st.p + t * 0.0016 * st.s);
+        ctx.fillStyle = `rgba(255,255,255,${(0.06 + 0.3 * tw * tw).toFixed(3)})`;
+        ctx.fillRect(Math.floor(st.x * W), Math.floor(st.y * H), 1, 1);
+      }
+    };
+
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (!motion || reduced) { draw(0); return () => window.removeEventListener("resize", size); }
+
+    let raf, last = 0;
+    const loop = (t) => {
+      raf = requestAnimationFrame(loop);
+      const every = sky.slow ? 160 : 80;
+      if (t - last < every || sky.paused > 0 || document.hidden) return;
+      const dt = Math.min(0.25, (t - last) / 1000);
+      last = t;
+      for (const b of blobs) {
+        b.x += b.vx * dt * 4; b.y += b.vy * dt * 4;
+        if (b.x < -0.2 || b.x > 1.2) b.vx *= -1;
+        if (b.y < -0.2 || b.y > 1.2) b.vy *= -1;
+      }
+      draw(t);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => { cancelAnimationFrame(raf); window.removeEventListener("resize", size); };
+  }, [ground, you, rival, special, panel, motion]);
+
+  return (
+    <canvas ref={ref} aria-hidden="true"
+      style={{ position: "fixed", inset: 0, width: "100%", height: "100%", imageRendering: "pixelated", zIndex: 0, pointerEvents: "none" }} />
+  );
+}
+
+/* ============================================================
    SHARED VIEWS
    ============================================================ */
 /** The stroke style the player picked in Theme. Read by every Ink. */
@@ -518,55 +617,69 @@ const InkStyle = createContext("hatch");
 const inkOf = (owner) => (owner === "S" ? { stroke: "cross", dir: 1 } : { stroke: undefined, dir: owner === "B" ? -1 : 1 });
 
 /**
- * The pencil grain filters, mounted once per page. Ink picks one by seed so
- * neighbouring squares don't share a grain pattern.
+ * One square of a piece: a pixel-glass tile. Pure CSS (no SVG), so a full
+ * board stays cheap on phones.
+ *   stroke: glass | solid | outline   — a claimed square (theme picks the default)
+ *           ghost                     — dashed landing guide
+ *           slot                      — faint empty square
+ *           pending                   — placed this turn, not yet revealed
+ * `fluid` fills its box instead of taking `size`.
  */
-function PencilDefs() {
-  const markup = useMemo(
-    () => Array.from({ length: GRAINS }, (_, i) => pencilFilter(`tb-pencil-${i}`, i * 17 + 3)).join(""),
-    []
-  );
-  return (
-    <svg aria-hidden="true" width="0" height="0" style={{ position: "absolute" }}>
-      <defs dangerouslySetInnerHTML={{ __html: markup }} />
-    </svg>
-  );
-}
-
-/**
- * One pencil-drawn square. Paths come from sketch.js, seeded, so the same
- * square always gets the same strokes. `fluid` stretches it to its box.
- */
-function Ink({ size, color, stroke, dir = 1, seed = 0, fluid = false, className, style }) {
+function Ink({ size, color, stroke, fluid = false, className, style }) {
   const picked = useContext(InkStyle);
-  const p = inkPaths(size, stroke || picked, dir, seed);
-  return (
-    <svg
-      aria-hidden="true" className={className}
-      width={fluid ? "100%" : size} height={fluid ? "100%" : size}
-      viewBox={`0 0 ${size} ${size}`} preserveAspectRatio={fluid ? "none" : undefined}
-      style={{ display: "block", overflow: "visible", pointerEvents: "none", ...style }}
-    >
-      <g filter={`url(#tb-pencil-${p.grain})`}>
-        {p.layers.map((l, i) => l.fill
-          ? <path key={i} d={l.d} style={{ fill: color }} opacity={l.o} />
-          : <path key={i} d={l.d} fill="none" style={{ stroke: color }} strokeWidth={l.w} opacity={l.o}
-              strokeLinecap="round" strokeLinejoin="round" strokeDasharray={l.dash} />
-        )}
-      </g>
-    </svg>
-  );
+  const kind = stroke || picked;
+  const px = Math.max(1, Math.round(size / 14));          // one "pixel" at this tile size
+  const inset = Math.max(1, Math.round(size * 0.07));
+  const box = fluid ? "100%" : size;
+  // Square corners on purpose: clip-path would also cut off the glow, and at
+  // this size a square already reads as one big pixel.
+  const base = { width: box, height: box, boxSizing: "border-box", pointerEvents: "none" };
+  let look;
+  if (kind === "ghost") {
+    look = { border: `${Math.max(1, px)}px dashed ${color}`, background: `color-mix(in srgb, ${color} 14%, transparent)` };
+  } else if (kind === "slot") {
+    look = { border: `1px solid color-mix(in srgb, ${color} 55%, transparent)`, background: `color-mix(in srgb, ${color} 8%, transparent)` };
+  } else if (kind === "pending") {
+    look = {
+      border: `${Math.max(1, px)}px dashed var(--tb-text)`,
+      background: `color-mix(in srgb, ${color} 38%, transparent)`,
+    };
+  } else if (kind === "outline") {
+    look = {
+      border: `${Math.max(2, px * 2)}px solid ${color}`,
+      background: `color-mix(in srgb, ${color} 10%, transparent)`,
+      boxShadow: `0 0 ${Math.round(size * 0.35)}px color-mix(in srgb, ${color} calc(var(--tb-glow-a) * 50%), transparent)`,
+    };
+  } else if (kind === "solid") {
+    look = {
+      background: color,
+      boxShadow: `inset ${px}px ${px}px 0 rgba(255,255,255,.45), inset -${px}px -${px}px 0 rgba(0,0,0,.35)`,
+    };
+  } else {
+    // Glass: a see-through tint, a bright pixel highlight on the top-left,
+    // a deeper edge on the bottom-right, a sparkle pixel and a soft glow.
+    const spark = Math.max(1, px * 2);
+    look = {
+      background:
+        `linear-gradient(rgba(255,255,255,.85), rgba(255,255,255,.85)) ${inset + px}px ${inset + px}px / ${spark}px ${spark}px no-repeat, ` +
+        `linear-gradient(135deg, color-mix(in srgb, ${color} 78%, white) 0%, color-mix(in srgb, ${color} 62%, transparent) 55%, color-mix(in srgb, ${color} 42%, transparent) 100%)`,
+      boxShadow:
+        `inset ${px}px ${px}px 0 rgba(255,255,255,.55), inset -${px}px -${px}px 0 color-mix(in srgb, ${color} 55%, black), ` +
+        `0 0 ${Math.round(size * 0.45)}px color-mix(in srgb, ${color} calc(var(--tb-glow-a) * 60%), transparent)`,
+    };
+  }
+  return <div aria-hidden="true" className={className} style={{ ...base, ...look, ...style }} />;
 }
 
 /** A block's silhouette, drawn in ink. Used on cards, in the deck and the tutorial. */
-function BlockGlyph({ blockId, box = 40, color, gap = 1, glow = false, dir = 1 }) {
+function BlockGlyph({ blockId, box = 40, color, gap = 1, glow = false }) {
   const cells = BLOCKS[blockId].cells;
   const { h, w } = boundsOf(cells);
   const span = Math.max(h, w);
   const size = Math.max(4, Math.floor((box - gap * (span - 1)) / span));
   const filled = new Set(cells.map(([r, c]) => r * 100 + c));
   return (
-    <div className={glow ? "tb-boil" : undefined} style={{
+    <div className={glow ? "tb-shine" : undefined} style={{
       display: "grid",
       gridTemplateColumns: `repeat(${w}, ${size}px)`,
       gridTemplateRows: `repeat(${h}, ${size}px)`,
@@ -574,7 +687,7 @@ function BlockGlyph({ blockId, box = 40, color, gap = 1, glow = false, dir = 1 }
     }}>
       {Array.from({ length: h * w }).map((_, i) => (
         filled.has(Math.floor(i / w) * 100 + (i % w))
-          ? <Ink key={i} size={size} color={color} dir={dir} seed={blockId * 11 + i} stroke={glow ? "cross" : undefined} />
+          ? <Ink key={i} size={size} color={color} />
           : <div key={i} />
       ))}
     </div>
@@ -618,7 +731,7 @@ function FloatingPiece({ cells, cell, gap, color, x, y, lift, legal, flip = fals
   const filled = new Set(cells.map(([r, c]) => r * 100 + c));
   return (
     <div
-      className={golden ? "tb-boil" : undefined}
+      
       style={{
         position: "fixed",
         left: x,
@@ -638,7 +751,7 @@ function FloatingPiece({ cells, cell, gap, color, x, y, lift, legal, flip = fals
     >
       {Array.from({ length: h * w }).map((_, i) => (
         filled.has(Math.floor(i / w) * 100 + (i % w))
-          ? <Ink key={i} size={cell} color={color} dir={dir} seed={i * 5 + 1} stroke={golden ? "cross" : undefined} />
+          ? <Ink key={i} size={cell} color={color} />
           : <div key={i} />
       ))}
     </div>
@@ -653,7 +766,6 @@ function BoardGrid({
   const gap = theme.gap;
   const cb = theme.colorblind;
   const markSize = Math.max(7, Math.round(cell * 0.5));
-  const grid = useMemo(() => gridPath(COLS, ROWS, cell, gap), [cell, gap]);
 
   return (
     <div
@@ -665,15 +777,14 @@ function BoardGrid({
         gridTemplateColumns: `repeat(${COLS}, ${cell}px)`,
         gridTemplateRows: `repeat(${ROWS}, ${cell}px)`,
         gap, touchAction: "none",
+        // A pane of frosted glass. The frame is drawn with shadows rather than
+        // padding so cell positions (dragging, clear animations) stay exact.
+        background: "color-mix(in srgb, var(--tb-panel-solid) 30%, transparent)",
+        backdropFilter: "blur(10px) saturate(1.3)",
+        WebkitBackdropFilter: "blur(10px) saturate(1.3)",
+        boxShadow: "0 0 0 4px color-mix(in srgb, var(--tb-panel-solid) 30%, transparent), 0 0 0 6px var(--tb-edge), 0 18px 40px rgba(0,0,0,.35)",
       }}
     >
-      <svg aria-hidden="true" width={grid.W} height={grid.H}
-        style={{ position: "absolute", left: 0, top: 0, overflow: "visible", pointerEvents: "none" }}>
-        <g filter="url(#tb-pencil-0)" fill="none" strokeLinecap="round">
-          <path d={grid.inner} style={{ stroke: UI.line }} strokeWidth={0.9} opacity={FX.sketch.gridOpacity} />
-          <path d={grid.edge} style={{ stroke: UI.dim }} strokeWidth={1.1} opacity={0.8} />
-        </g>
-      </svg>
       {board.map((row, r) =>
         row.map((v, c) => {
           const k = key(r, c);
@@ -701,7 +812,11 @@ function BoardGrid({
             <div
               key={k}
               className={contestedKeys.has(k) ? "tb-contest" : v ? "tb-drop" : undefined}
-              style={{ position: "relative" }}
+              style={{
+                position: "relative",
+                background: v ? undefined : "color-mix(in srgb, var(--tb-line) 22%, transparent)",
+                boxShadow: v ? undefined : "inset 1px 1px 0 var(--tb-edge), inset -1px -1px 0 var(--tb-shade)",
+              }}
             >
               {v && (
                 <Ink size={cell} color={ink[v]} {...inkOf(v)} seed={seed}
@@ -726,7 +841,7 @@ function BoardGrid({
               {isGhost && (
                 <Ink size={cell} stroke="ghost" seed={seed}
                   color={ghostLegal ? ghostInk : UI.bad}
-                  className={ghostGolden && ghostLegal ? "tb-boil" : undefined}
+                  
                   style={{ position: "absolute", inset: 0 }} />
               )}
               {mark}
@@ -826,32 +941,36 @@ function ActionBar({ onRotate, onCommit, onDiscard, canRotate, canCommit, canDis
 }
 
 /** Territory as three pencil-shaded strips over a drawn baseline. */
-const shadeBg = (color, dir = 1, dense = false) => `${shadeUrl(color, { dir, dense })} 0 0 / 36px 36px`;
+/** A segmented pixel fill: 4px blocks with 1px gaps, glowing in its colour. */
+const pixelFill = (color) => ({
+  background: `repeating-linear-gradient(90deg, ${color} 0 4px, color-mix(in srgb, ${color} 35%, transparent) 4px 5px)`,
+  boxShadow: `0 0 8px color-mix(in srgb, ${color} 60%, transparent)`,
+});
 
-function ScoreBar({ score, turn, turns, inkA, inkB, specialHex, labelA, labelB }) {
-  const pct = (n) => (n / (ROWS * COLS)) * 100;
+function ScoreBar({ score, turn, turns, inkA, inkB, labelA, labelB }) {
+  // Scores can exceed the square count (centre squares are worth more), so
+  // the bar is each side's share of what's been scored so far.
+  const total = Math.max(1, score.a + score.b);
   return (
     <div className="shrink-0 pb-2">
-      <div className="flex items-end justify-between mb-1">
+      <div className="flex items-end justify-between mb-1.5">
         <span className="flex items-baseline gap-1.5" style={{ color: inkA }}>
-          <span className="text-[24px] leading-none tabular-nums">{score.a}</span>
+          <span className="tb-num text-[26px] leading-none tabular-nums">{score.a}</span>
           <span className="text-[11px] tracking-[0.25em]">{labelA}</span>
         </span>
-        <span className="text-[13px] italic pb-0.5" style={{ color: UI.dim }}>
-          turn {Math.min(turn, turns)} of {turns}
-          {score.s > 0 && <span style={{ color: GOLD }}> · {score.s}◆</span>}
+        <span className="text-[12px] tracking-[0.15em] pb-0.5" style={{ color: UI.dim }}>
+          TURN {Math.min(turn, turns)}/{turns}
         </span>
         <span className="flex items-baseline gap-1.5" style={{ color: inkB }}>
           <span className="text-[11px] tracking-[0.25em]">{labelB}</span>
-          <span className="text-[24px] leading-none tabular-nums">{score.b}</span>
+          <span className="tb-num text-[26px] leading-none tabular-nums">{score.b}</span>
         </span>
       </div>
-      <div className="flex w-full" style={{ height: 7 }}>
-        <div style={{ width: `${pct(score.a)}%`, background: shadeBg(inkA, 1, true), transition: "width 300ms ease-out" }} />
-        <div style={{ width: `${pct(score.s)}%`, background: shadeBg(specialHex, 1, true) }} />
-        <div style={{ marginLeft: "auto", width: `${pct(score.b)}%`, background: shadeBg(inkB, -1, true), transition: "width 300ms ease-out" }} />
+      <div className="flex w-full p-[2px]" style={{ height: 12, background: "color-mix(in srgb, var(--tb-panel-solid) 35%, transparent)", clipPath: CLIP, boxShadow: BEVEL }}>
+        <div style={{ width: `${(score.a / total) * 100}%`, ...pixelFill(inkA), transition: "width 400ms steps(8)" }} />
+        <div style={{ flex: 1 }} />
+        <div style={{ width: `${(score.b / total) * 100}%`, ...pixelFill(inkB), transition: "width 400ms steps(8)" }} />
       </div>
-      <div style={{ height: 8, ...RULE_BELOW, backgroundPosition: "top" }} />
     </div>
   );
 }
@@ -955,7 +1074,7 @@ function AmbientField({ colors, theme, paused }) {
         position: "absolute", left: "50%", top: "50%",
         width: dims.cols * FIELD_CELL, height: dims.rows * FIELD_CELL,
         transform: "translate(-50%, -50%) rotate(-14deg)",
-        opacity: field.fading ? 0 : 0.34,
+        opacity: field.fading ? 0 : 0.2,
         transition: "opacity 1400ms ease",
       }}>
         {[...field.cells].map(([k, v]) => {
@@ -974,13 +1093,15 @@ function AmbientField({ colors, theme, paused }) {
 }
 
 function Popup({ title, onClose, children, pinned, maxW = 430 }) {
+  useEffect(() => { sky.paused++; return () => { sky.paused--; }; }, []);
   return (
     <div
       className="fixed inset-0 z-40 flex items-center justify-center tb-fade"
       style={{
-        // Opaque on purpose: a translucent backdrop re-samples whatever moves
-        // behind it every frame, which reads as flicker.
-        background: "var(--tb-ground)",
+        // A dimmed, see-through backdrop. The sky behind is paused while a
+        // popup is open (see PixelSky), so the frosted panel isn't re-blurring
+        // a moving picture every frame.
+        background: "color-mix(in srgb, var(--tb-ground) 62%, transparent)",
         padding: "clamp(14px, 5vw, 56px) clamp(14px, 5vw, 56px)",
         paddingTop: "max(clamp(14px,5vw,56px), env(safe-area-inset-top,0px))",
         paddingBottom: "max(clamp(14px,5vw,56px), env(safe-area-inset-bottom,0px))",
@@ -988,13 +1109,16 @@ function Popup({ title, onClose, children, pinned, maxW = 430 }) {
       onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
-        className="tb-pop w-full flex flex-col overflow-hidden"
+        className="tb-pop tb-scale-pop w-full flex flex-col overflow-hidden"
         style={{
           maxWidth: maxW,
           maxHeight: "100%",
-          background: UI.panel,
+          background: "color-mix(in srgb, var(--tb-panel-solid) 55%, transparent)",
+          backdropFilter: "blur(18px) saturate(1.4)",
+          WebkitBackdropFilter: "blur(18px) saturate(1.4)",
           ...sk(UI.dim),
-          boxShadow: "0 18px 40px rgba(0,0,0,.35)",
+          clipPath: CLIP_BIG,
+          boxShadow: `${BEVEL}, inset 0 1px 30px rgba(255,255,255,.04)`,
         }}
       >
         <div className="flex items-center justify-between px-4 h-12 shrink-0 mx-2" style={RULE_BELOW}>
@@ -1509,8 +1633,10 @@ function ThemeModal({ theme, setTheme, onClose }) {
 
   const previewBoard = useMemo(() => {
     const b = initialBoard();
-    const moves = [["A", [[13, 2], [13, 3], [14, 2]]], ["B", [[1, 4], [1, 5], [2, 5]]],
-["A", [[10, 4], [11, 4]]], ["B", [[4, 2], [4, 3]]]];
+    // A few squares each, within the smallest board the game uses.
+    const last = ROWS - 1;
+    const moves = [["A", [[last - 1, 4], [last - 1, 5], [last - 2, 4]]], ["B", [[1, 5], [1, 6], [2, 6]]],
+      ["A", [[last - 3, 3], [last - 4, 3]]], ["B", [[3, 7], [3, 8]]]];
     for (const [who, cells] of moves) for (const [r, c] of cells) b[r][c] = who;
     return b;
   }, []);
@@ -2161,13 +2287,23 @@ function HowToModal({ colors, loadout, onClose }) {
    MENU
    ============================================================ */
 /** A pen underline that tapers at both ends: two loose strokes, never quite parallel. */
-function Flourish({ width = 160 }) {
+/** Under the title: a row of pixels with a light running along it. */
+function PixelRule({ count = 18 }) {
   return (
-    <svg aria-hidden="true" width={width} height="16" viewBox="0 0 160 16" style={{ display: "block", margin: "6px auto 0", overflow: "visible" }}>
-      <path d="M6 9 C 40 4, 70 12, 96 8 S 140 5, 154 8" fill="none" style={{ stroke: UI.text }} strokeWidth="1.6" strokeLinecap="round" />
-      <path d="M22 11.5 C 55 8, 92 13.5, 136 9.5" fill="none" style={{ stroke: UI.dim }} strokeWidth="1" strokeLinecap="round" />
-      <path d="M150 4.5 l7 3.4 -7 3.2" fill="none" style={{ stroke: UI.text }} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <div aria-hidden="true" className="relative flex justify-center gap-[3px] mt-3 mx-auto" style={{ width: count * 9 }}>
+      {Array.from({ length: count }).map((_, i) => {
+        const t = i / (count - 1);
+        return (
+          <span key={i} style={{
+            width: 6, height: 6, display: "block",
+            background: `color-mix(in srgb, var(--tb-you) ${Math.round((1 - t) * 100)}%, var(--tb-rival))`,
+            opacity: 0.35 + 0.65 * Math.sin(Math.PI * t),
+            boxShadow: "0 0 6px color-mix(in srgb, var(--tb-you) 50%, transparent)",
+          }} />
+        );
+      })}
+      <span className="tb-runner" />
+    </div>
   );
 }
 function Menu({ onPick, loadout, setLoadout, colors, profile, status, name, rename, onLogout, theme, setTheme }) {
@@ -2182,15 +2318,15 @@ function Menu({ onPick, loadout, setLoadout, colors, profile, status, name, rena
   const notice = useNotice();
 
   return (
-    <div className="tb-screen tb-safe relative w-full flex items-center justify-center px-5 font-mono overflow-hidden" style={{ background: UI.ground, color: UI.text }}>
+    <div className="tb-screen tb-safe relative w-full flex items-center justify-center px-5 font-mono overflow-hidden" style={{ color: UI.text }}>
       <AmbientField colors={colors} theme={theme} paused={!!modal} />
       <div className="absolute inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse at 50% 46%, color-mix(in srgb, var(--tb-ground) 45%, transparent) 0%, color-mix(in srgb, var(--tb-ground) 20%, transparent) 50%, transparent 80%)" }} />
 
-      <div className="relative w-full" style={{ maxWidth: 330 }}>
+      <div className="relative w-full tb-scale" style={{ maxWidth: 330 }}>
         <div className="text-center mb-9">
-          <div className="tb-display text-[68px] leading-none tracking-[0.16em]"
-            style={{ marginRight: "-0.16em", color: UI.text }}>MINO</div>
-          <Flourish width={170} />
+          <div className="tb-display tb-title text-[76px] leading-none tracking-[0.12em]"
+            style={{ marginRight: "-0.12em" }}>MINO</div>
+          <PixelRule />
         </div>
 
         <button
@@ -2310,8 +2446,8 @@ function Menu({ onPick, loadout, setLoadout, colors, profile, status, name, rena
 function Difficulty({ onStart, onBack, colors }) {
   const [lv, setLv] = useState(DEFAULT_LEVEL);
   return (
-    <div className="tb-screen tb-safe w-full flex items-center justify-center px-5 font-mono" style={{ background: UI.ground, color: UI.text }}>
-      <div className="w-full" style={{ maxWidth: 330 }}>
+    <div className="tb-screen tb-safe w-full flex items-center justify-center px-5 font-mono" style={{ color: UI.text }}>
+      <div className="w-full tb-scale" style={{ maxWidth: 330 }}>
         <button onClick={onBack} className="flex items-center gap-1 text-[12px] tracking-[0.25em] mb-6 py-2" style={{ color: UI.dim }}>
           <ChevronLeft size={13} /> MENU
         </button>
@@ -2368,8 +2504,8 @@ function Matchmaking({ profile, loadout, colors, onCancel, onPlayAi }) {
   const elapsed = search?.elapsed ?? 0;
 
   return (
-    <div className="tb-screen tb-safe w-full flex flex-col items-center justify-center px-6 font-mono" style={{ background: UI.ground, color: UI.text }}>
-      <div className="w-full" style={{ maxWidth: 330 }}>
+    <div className="tb-screen tb-safe w-full flex flex-col items-center justify-center px-6 font-mono" style={{ color: UI.text }}>
+      <div className="w-full tb-scale" style={{ maxWidth: 330 }}>
         {!found ? (
           <>
             <div className="text-center mb-8">
@@ -2483,6 +2619,7 @@ function ForfeitButton({ onConfirm, ranked = false, disabled = false }) {
    LOCAL GAME — hotseat and solo. Client owns everything.
    ============================================================ */
 function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart }) {
+  useEffect(() => { sky.slow = true; return () => { sky.slow = false; }; }, []);
   const solo = mode === "SOLO";
   const INK = useMemo(() => ({ A: colors.you, B: colors.rival, S: colors.special }), [colors]);
 
@@ -2573,8 +2710,8 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   }, [phase, board, turn, loadout]);
 
   return (
-    <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ background: UI.ground, color: UI.text }}>
-      <div className="relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
+    <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ color: UI.text }}>
+      <div className="tb-col relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
         <div className="flex items-center justify-between h-9 shrink-0">
           <button onClick={onExit} className="flex items-center gap-1 text-[12px] tracking-[0.25em] py-2 -ml-1" style={{ color: UI.dim }}>
             <ChevronLeft size={13} /> MENU
@@ -2704,6 +2841,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
    NET GAME — ranked. The server owns the board; we render it.
    ============================================================ */
 function NetGame({ colors, theme, onResult, onAbort }) {
+  useEffect(() => { sky.slow = true; return () => { sky.slow = false; }; }, []);
   const m = useMatch();
 
   // The match vanished without finishing (server restart): back to the menu,
@@ -2787,7 +2925,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
 
   if (!m || !board) {
     return (
-      <div className="tb-screen tb-safe w-full flex items-center justify-center font-mono" style={{ background: UI.ground, color: UI.dim }}>
+      <div className="tb-screen tb-safe w-full flex items-center justify-center font-mono" style={{ color: UI.dim }}>
         <div className="text-[13px] tracking-[0.3em] tb-pulse">DEALING…</div>
       </div>
     );
@@ -2797,8 +2935,8 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   const theirScore = you === "A" ? score.b : score.a;
 
   return (
-    <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ background: UI.ground, color: UI.text }}>
-      <div className="relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
+    <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ color: UI.text }}>
+      <div className="tb-col relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
         <div className="flex items-center justify-between h-9 shrink-0">
           <ForfeitButton ranked disabled={!m || !!m.over} onConfirm={() => net.forfeit()} />
           <div className="flex items-center gap-2">
@@ -2931,7 +3069,7 @@ function Result({ over, colors, onQueue, onMenu }) {
   }, [trFrom, trTo]);
 
   return (
-    <div className="tb-screen tb-safe w-full flex flex-col items-center justify-center px-6 font-mono" style={{ background: UI.ground, color: UI.text }}>
+    <div className="tb-screen tb-safe w-full flex flex-col items-center justify-center px-6 font-mono" style={{ color: UI.text }}>
       <div
         aria-hidden="true"
         className="absolute inset-0 pointer-events-none"
@@ -2939,7 +3077,7 @@ function Result({ over, colors, onQueue, onMenu }) {
           background: `radial-gradient(ellipse at 50% 34%, color-mix(in srgb, ${verdictInk} 26%, transparent) 0%, transparent 62%)`,
         }}
       />
-      <div className="relative w-full" style={{ maxWidth: 330 }}>
+      <div className="relative w-full tb-scale" style={{ maxWidth: 330 }}>
         <div className="text-center mb-7">
           <div className="text-[32px] leading-none tracking-[0.15em]" style={{ color: verdictInk }}>
             {drew ? "DRAW" : won ? "VICTORY" : "DEFEAT"}
@@ -3050,7 +3188,8 @@ export default function TurfBlocks() {
   const shell = (
     <style>{`
       :root { ${themeVars(theme)} }
-      .tb-screen { height: 100vh; height: 100dvh; overscroll-behavior: none; position: relative; }
+      html, body, #root { background: var(--tb-ground); }
+      .tb-screen { height: 100vh; height: 100dvh; overscroll-behavior: none; position: relative; z-index: 1; }
       .tb-safe {
         padding-top: env(safe-area-inset-top, 0px);
         padding-bottom: env(safe-area-inset-bottom, 0px);
@@ -3059,66 +3198,93 @@ export default function TurfBlocks() {
       }
       .tb-scroll { -webkit-overflow-scrolling: touch; scrollbar-width: none; }
       .tb-scroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
-      /* Type: Indie Flower, a handwritten face, everywhere. The class name is
-         historical. It has one weight and no italic, so the browser is told not
-         to fake bold or slanted versions, which smear handwriting. */
-      .font-mono { font-family: "Indie Flower", "Comic Neue", "Chalkboard SE", cursive; font-synthesis: none; }
-      .font-mono .italic, .font-mono em { font-style: normal; opacity: .85; }
-      .tb-display { font-family: "Indie Flower", cursive; font-weight: 400; }
-      .lucide { stroke-width: 1.6; }
 
-      /* Paper: grain and a vignette over everything, drawn once, never animated. */
+      /* Type: Bitcount Single, a pixel face, everywhere. The class name is historical. */
+      .font-mono { font-family: "Bitcount Single", ui-monospace, monospace; font-weight: 420; font-synthesis: none; }
+      .font-mono .italic, .font-mono em { font-style: normal; opacity: .85; }
+      .tb-display { font-family: "Bitcount Single", ui-monospace, monospace; font-weight: 800; }
+      .tb-num { font-weight: 700; }
+      .lucide { stroke-width: 2; shape-rendering: crispEdges; }
+
+      /* The title: a slow shimmer through your colours, with a hard pixel shadow. */
+      .tb-title {
+        background: linear-gradient(90deg, var(--tb-you), var(--tb-special), var(--tb-rival), var(--tb-you));
+        background-size: 300% 100%;
+        -webkit-background-clip: text; background-clip: text; color: transparent;
+        filter: drop-shadow(4px 4px 0 rgba(0,0,0,.45)) drop-shadow(0 0 18px color-mix(in srgb, var(--tb-you) 40%, transparent));
+        animation: tbShimmer 7s linear infinite;
+      }
+      @keyframes tbShimmer { from { background-position: 0% 0 } to { background-position: 300% 0 } }
+      /* A point of light running along the pixel rule under the title. */
+      .tb-runner {
+        position: absolute; top: 0; left: 0; width: 6px; height: 6px; background: #fff;
+        box-shadow: 0 0 8px #fff, 0 0 16px var(--tb-you);
+        animation: tbRun 2.6s steps(18) infinite;
+      }
+      @keyframes tbRun { from { left: 0 } to { left: calc(100% - 6px) } }
+
+      /* A pixel screen: faint scanlines and a vignette over everything. Static. */
       body::after {
         content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 60;
-        background: radial-gradient(ellipse at 50% 45%, transparent 52%, rgba(0,0,0, calc(var(--tb-vignette) * .55)) 100%);
-      }
-      body::before {
-        content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 60;
-        background: var(--tb-grain); background-size: 330px 330px;
-        opacity: var(--tb-grain-o);
+        background:
+          repeating-linear-gradient(0deg, rgba(0,0,0,.07) 0 1px, transparent 1px 3px),
+          radial-gradient(ellipse at 50% 45%, transparent 55%, rgba(0,0,0,.45) 100%);
       }
 
-      /* Ink going down: the strokes are wiped on left to right, like a pen pass. */
-      @keyframes tbDrop { from { clip-path: inset(0 100% 0 0) } to { clip-path: inset(0 0 0 0) } }
-      .tb-drop { animation: tbDrop .24s cubic-bezier(.3,.7,.4,1) both; }
-      @keyframes tbFadeIn { from { opacity: 0; transform: scale(.94) } to { opacity: 1; transform: none } }
-      .tb-fadein { animation: tbFadeIn 1.8s ease-out both; }
-      @keyframes tbBoot { from { clip-path: inset(0 100% 0 0); opacity: 0 } to { clip-path: inset(0 0 0 0); opacity: 1 } }
-      .tb-boot { animation: tbBoot 900ms ease-out both; }
-      /* A collision: the square shudders. */
+      /* Animations step rather than glide: motion in whole pixels. */
+      @keyframes tbDrop {
+        0%   { transform: scale(.25); filter: brightness(2.4) }
+        60%  { transform: scale(1.15); filter: brightness(1.4) }
+        100% { transform: none; filter: none }
+      }
+      .tb-drop { animation: tbDrop .3s steps(5) both; }
+      @keyframes tbFadeIn { from { opacity: 0; transform: scale(.6) } to { opacity: 1; transform: none } }
+      .tb-fadein { animation: tbFadeIn 1.6s steps(8) both; }
+      /* A collision: the square glitches side to side. */
       @keyframes tbContest {
-        0%,100% { transform: none } 20% { transform: translate(-1.5px, 1px) rotate(-4deg) }
-        40% { transform: translate(1.5px, -1px) rotate(3deg) } 60% { transform: translate(-1px, -1px) rotate(-2deg) }
-        80% { transform: translate(1px, 1px) rotate(1deg) }
+        0%,100% { transform: none } 20% { transform: translate(-2px, 0) } 40% { transform: translate(2px, -1px) }
+        60% { transform: translate(-1px, 1px) } 80% { transform: translate(1px, 0) }
       }
-      .tb-contest { animation: tbContest .42s steps(5) 2; z-index: 2; }
-      /* Erased: the ink lifts, twists and fades like a rubbed-out mark. */
+      .tb-contest { animation: tbContest .4s steps(5) 2; z-index: 2; }
+      /* Cleared: a white flash, then the square breaks down to nothing. */
       @keyframes tbVanish {
-        0%   { transform: none; opacity: 1 }
-        35%  { transform: rotate(-6deg) scale(1.08); opacity: .9 }
-        100% { transform: rotate(14deg) scale(.55); opacity: 0 }
+        0%   { transform: none; opacity: 1; filter: none }
+        25%  { transform: scale(1.12); filter: brightness(3) saturate(0) }
+        100% { transform: scale(0); opacity: 0; filter: brightness(2) }
       }
-      .tb-vanish { animation: tbVanish 560ms cubic-bezier(.32,0,.2,1) both; }
-      /* Line boil: a held drawing redrawn a few times a second. Marks charged things. */
-      @keyframes tbBoil {
-        0%   { transform: translate(0, 0) rotate(0) }
-        33%  { transform: translate(.6px, -.4px) rotate(.5deg) }
-        66%  { transform: translate(-.5px, .5px) rotate(-.4deg) }
+      .tb-vanish { animation: tbVanish 600ms steps(6) both; }
+      /* A full line about to clear: a bar of light sweeps along it. */
+      @keyframes tbLine {
+        0%   { transform: scaleX(0); opacity: 0 }
+        30%  { transform: scaleX(1); opacity: 1 }
+        100% { transform: scaleX(1); opacity: 0 }
       }
-      .tb-boil { animation: tbBoil .42s steps(1) infinite; }
+      .tb-line { animation: tbLine 700ms steps(7) both; transform-origin: left center; }
+      @keyframes tbShine { 0%,100% { filter: none } 50% { filter: brightness(1.5) } }
+      .tb-shine { animation: tbShine 1.2s steps(4) infinite; }
       @keyframes tbPulse { 0%,100% { opacity:.45 } 50% { opacity:1 } }
-      .tb-pulse { animation: tbPulse 1.4s ease-in-out infinite; }
+      .tb-pulse { animation: tbPulse 1.2s steps(4) infinite; }
       @keyframes tbFade { from { opacity: 0 } to { opacity: 1 } }
-      .tb-fade { animation: tbFade .16s ease-out both; }
-      /* Cards land like a sheet of paper dropped on a desk. */
-      @keyframes tbPop { from { opacity: 0; transform: rotate(-1.4deg) translateY(10px) } to { opacity: 1; transform: none } }
-      .tb-pop { animation: tbPop .22s cubic-bezier(.2,.9,.3,1) both; }
-      ${theme.motion ? "" : ".tb-contest,.tb-drop,.tb-boot,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-boil { animation: none !important }"}
+      .tb-fade { animation: tbFade .18s steps(3) both; }
+      /* Popups open like a window on an old screen: a quick stepped scale-in. */
+      @keyframes tbPop { from { opacity: 0; transform: scale(.9) } to { opacity: 1; transform: none } }
+      .tb-pop { animation: tbPop .2s steps(4) both; }
+      ${theme.motion ? "" : ".tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-title,.tb-runner,.tb-line,.tb-vanish { animation: none !important }"}
       @media (prefers-reduced-motion: reduce) {
-        .tb-contest,.tb-drop,.tb-boot,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-boil { animation: none }
+        .tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-title,.tb-runner,.tb-line { animation: none }
       }
+      /* Big screens: menus scale up, and the game column gets room for a bigger board. */
+      @media (min-width: 1000px) and (min-height: 760px) {
+        .tb-scale { zoom: 1.3; }
+        .tb-scale-pop { zoom: 1.15; }
+        .tb-col { max-width: 600px !important; }
+      }
+      /* Buttons light up under the pointer and press down one pixel. */
+      button:not(:disabled) { transition: filter 120ms steps(2), transform 60ms steps(1); }
+      button:not(:disabled):hover { filter: brightness(1.18); }
+      button:not(:disabled):active { transform: translateY(1px); }
       button { cursor: pointer; }
-      /* A phone held sideways leaves the 8×16 board too short to aim at. */
+      /* A phone held sideways leaves the board too short to aim at. */
       .tb-rotate { display: none; }
       @media (orientation: landscape) and (max-height: 500px) and (pointer: coarse) {
         .tb-rotate {
@@ -3185,7 +3351,7 @@ export default function TurfBlocks() {
 
   return (
     <InkStyle.Provider value={theme.stroke}>
-      <PencilDefs />{shell}{view}
+      <PixelSky theme={theme} />{shell}{view}
       <div className="tb-rotate font-mono" aria-live="polite">
         <RotateCw size={26} style={{ color: UI.dim }} />
         <div className="text-[16px]">Turn your phone upright</div>
