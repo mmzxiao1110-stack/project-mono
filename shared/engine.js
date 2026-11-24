@@ -351,10 +351,12 @@ export function checkAction(board, pins, meter, side, move) {
 
 /** Pin meters after a turn: what each side deleted goes to the other; pins spent come off. */
 export function nextMeters(meters, moveA, moveB, deleted) {
+  // Per square deleted, or a flat amount for any delete at all.
+  const gained = (n) => (RULES.pinsPerDeleteTurn ? (n > 0 ? RULES.pinsPerDeleteTurn : 0) : n * RULES.pinPerDelete);
   const spent = (m) => (m && m.type === "pin" ? m.cells.length : 0) + (m && m.pins ? m.pins.length : 0);
   return {
-    A: Math.min(RULES.pinCap, meters.A - spent(moveA) + deleted.B * RULES.pinPerDelete),
-    B: Math.min(RULES.pinCap, meters.B - spent(moveB) + deleted.A * RULES.pinPerDelete),
+    A: Math.min(RULES.pinCap, meters.A - spent(moveA) + gained(deleted.B)),
+    B: Math.min(RULES.pinCap, meters.B - spent(moveB) + gained(deleted.A)),
   };
 }
 

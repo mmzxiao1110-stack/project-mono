@@ -60,6 +60,7 @@ export const RULES = {
   pinOwnOnly: true,       // pin only your own squares (else any square with ink)
   pinCap: 8,              // most pins you can bank
   pinPerDelete: 1,        // pins your opponent gets for each square you delete
+  pinsPerDeleteTurn: 0,   // if set: a flat number of pins for any delete, however many squares
   pinMax: 4,              // most squares one pin covers
   pinConnected: true,     // must pinned squares touch each other?
   pinHoldMax: Infinity,   // most pinned squares one player may hold at once
