@@ -117,7 +117,7 @@ function exposure(b, pins, o) {
 function evalState(b, pins, meters, o, w) {
   let me = 0, them = 0, pinMe = 0;
   for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
-    const v = b[r][c]; if (!v) continue;
+    const v = b[r][c]; if (!v || v === "X") continue; // empty or dead (overtime)
     if (v === o) { me += val(r, c); if (pins[r][c]) pinMe++; } else them += val(r, c);
   }
   return (me - them) + w.front * (frontierSize(b, o) - frontierSize(b, other(o)))

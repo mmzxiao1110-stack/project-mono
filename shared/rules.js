@@ -73,6 +73,18 @@ export const RULES = {
   monoPiece: false,       // add the single square to the bag (8 pieces)
 
   /* ----------------------------------------------------------
+     OVERTIME
+     Tied after the last turn? Overtime: the board's outer ring dies
+     (greyed out; its squares are gone and nobody can play there) and the
+     game goes on. Every RULES.overtimeEvery turns it's checked again;
+     still tied, the next ring dies: 10×10 → 8×8 → 6×6 → 4×4 → 2×2.
+     When only the centre 2×2 is left, those four squares decide it — or
+     it's a draw.
+     ---------------------------------------------------------- */
+  overtime: true,
+  overtimeEvery: 20,
+
+  /* ----------------------------------------------------------
      THE CENTRE
      The middle 2×2 squares are worth extra at the end.
      ---------------------------------------------------------- */

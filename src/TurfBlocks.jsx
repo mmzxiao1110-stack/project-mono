@@ -11,6 +11,7 @@ import {
   key, rotateN, boundsOf, absCells, initialBoard, isLegal,
   hasAnyMove, resolveTurn, scoreOf, newDeck, advanceDeck, currentPiece, currentPass, upcoming, QUEUE_SHOWN, newSeed,
   emptyPins, nextMeters, isLegalDelete, isLegalPin, normalizeAction, stampHits,
+  isCheckTurn, shrinkBoard,
 } from "../shared/engine.js";
 import { aiPickAction } from "../shared/ai.js";
 import {
@@ -1049,6 +1050,7 @@ function BoardGrid({
   boardRef, onPointerDown, theme, youSide = "A", ghostGolden = false,
   pendingKeys = null, pendingInk = null,
   pins = null, traceKeys = null, traceKind = null, traceOk = false, stagedKeys = null,
+  otFlash = null,
 }) {
   const P = usePx();
   const gap = (theme.gap ?? 1) * P;
@@ -1077,6 +1079,14 @@ function BoardGrid({
       {board.map((row, r) =>
         row.map((v, c) => {
           const k = key(r, c);
+          if (v === "X") {
+            // Dead (overtime squeezed the board past it): dark, with a pixel X.
+            return (
+              <div key={k} style={{ position: "relative", clipPath: clip, background: "rgba(8,8,12,.55)", boxShadow: `inset 0 0 0 ${P}px rgba(255,255,255,.05)` }}>
+                <CbMark shape="cross" art={art} color="rgba(255,255,255,.16)" />
+              </div>
+            );
+          }
           const isGhost = ghostKeys.has(k);
           const owner = isGhost ? youSide : v;
           const seed = r * COLS + c;
@@ -1144,6 +1154,14 @@ function BoardGrid({
             </div>
           );
         })
+      )}
+      {otFlash && (
+        <div aria-live="polite" className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ zIndex: 3 }}>
+          <div className="tb-t tb-b tb-rise" style={{
+            padding: `${3 * P}px ${8 * P}px`, color: "var(--tb-text)", letterSpacing: 2 * P,
+            background: "color-mix(in srgb, var(--tb-special) 45%, #05040d)", boxShadow: `inset 0 ${P}px 0 rgba(255,255,255,.3), 0 0 0 ${P}px var(--tb-special)`, clipPath: CLIP,
+          }}>{otFlash}</div>
+        </div>
       )}
     </div>
   );
@@ -1240,7 +1258,7 @@ function ModeButtons({ d, mode, onMode, meter, enabled }) {
  */
 function ActionRail({
   height, ink, onRotate, onCommit, onDiscard, canRotate, canCommit, canDiscard,
-  turn, waiting = false, timer = null, forfeit, mode = "place", onMode, meter = 0, canMode = false,
+  turn, waiting = false, timer = null, forfeit, mode = "place", onMode, meter = 0, canMode = false, ot = false,
 }) {
   const P = usePx();
   const d = useBubble();
@@ -1257,7 +1275,8 @@ function ActionRail({
         <Bubble w={d} h={d} label="Pass" tint={UI.dim} onClick={onDiscard} disabled={!canDiscard}><SkipForward /></Bubble>
       </div>
       <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
-        <NumBox value={turn} color={LAVENDER} label={`Turn ${turn}`} />
+        {ot && <span className="tb-t tb-b" style={{ color: GOLD }}>OT</span>}
+        <NumBox value={turn} color={ot ? GOLD : LAVENDER} label={ot ? `Overtime, turn ${turn}` : `Turn ${turn}`} />
         {timer}
       </div>
       <ForfeitButton {...forfeit} />
@@ -1439,7 +1458,7 @@ function HMeter({ a, b, inkA, inkB, width }) {
 /** Phone: the buttons in one row under the board — turn, lock in (wide), pass · turn number · forfeit. */
 function ActionRow({
   width, ink, onRotate, onCommit, onDiscard, canRotate, canCommit, canDiscard, turn, waiting = false, timer = null, forfeit,
-  mode = "place", onMode, meter = 0, canMode = false,
+  mode = "place", onMode, meter = 0, canMode = false, ot = false,
 }) {
   const P = usePx();
   const d = useBubble(true);
@@ -1457,7 +1476,7 @@ function ActionRow({
       </div>
       <div className="flex items-center" style={{ gap: 2 * P }}>
         {timer}
-        <NumBox value={turn} color={LAVENDER} label={`Turn ${turn}`} />
+        <NumBox value={turn} color={ot ? GOLD : LAVENDER} label={ot ? `Overtime, turn ${turn}` : `Turn ${turn}`} />
         <ForfeitButton {...forfeit} compact />
       </div>
     </div>
@@ -3069,6 +3088,9 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   const [board, setBoard] = useState(initialBoard);
   const [pins, setPins] = useState(emptyPins);          // permanent squares
   const [meters, setMeters] = useState({ A: 0, B: 0 }); // pins each side may spend
+  const [ot, setOt] = useState(false);          // in overtime?
+  const [otFlash, setOtFlash] = useState(null); // banner for this reveal: "OVERTIME" / "SHRINK"
+  const [decided, setDecided] = useState(false); // this turn's check settled the match
   const [turn, setTurn] = useState(1);
   const [phase, setPhase] = useState("PLAY_A");
   const [decks, setDecks] = useState(() => {
@@ -3116,6 +3138,22 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
 
   const finish = (mA, mB) => {
     const res = resolveTurn(board, mA, mB, pins);
+    // Scoring check: a tie starts (or continues) overtime — the outer live
+    // ring dies. Down to the centre 2×2, those four squares decide it.
+    let settled = false, flash = null;
+    if (isCheckTurn(turn)) {
+      const sc = scoreOf(res.board);
+      if (sc.a !== sc.b || !RULES.overtime) settled = true;
+      else {
+        flash = ot ? "SHRINK" : "OVERTIME";
+        const { cleared, live } = shrinkBoard(res.board, res.pins);
+        res.cleared.push(...cleared);
+        setOt(true);
+        if (live <= 2) settled = true;
+      }
+    }
+    setDecided(settled);
+    setOtFlash(flash);
     setBoard(res.board);
     setPins(res.pins);
     setMeters((m) => nextMeters(m, mA, mB, res.deleted));
@@ -3188,16 +3226,17 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
       setPendingA(null);
       // Locked: neither player can place any piece of their deck anywhere
       // (and, with deleting on, there's nothing left to delete).
-      const deletable = RULES.actions && board.some((row, r) => row.some((v, c) => v !== null && !pins[r][c]));
+      const deletable = RULES.actions && board.some((row, r) => row.some((v, c) => v !== null && v !== "X" && !pins[r][c]));
       const locked = !deletable && !hasAnyMove(board, loadout, "A") && !hasAnyMove(board, loadout, "B");
-      if (locked || turn >= TURNS) {
+      setOtFlash(null);
+      if (locked || decided) {
         setLockedOut(locked);
         setPhase("DONE");
       }
       else { setTurn((t2) => t2 + 1); setPhase("PLAY_A"); }
     }, REVEAL_MS);
     return () => clearTimeout(t);
-  }, [phase, board, pins, turn, loadout]);
+  }, [phase, board, pins, turn, loadout, decided]);
 
   if (showEnd) {
     // A forfeit decides it regardless of the score.
@@ -3206,7 +3245,8 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
       : winner === "A" ? (solo ? "VICTORY" : "PLAYER 1 WINS")
       : solo ? "DEFEAT" : "PLAYER 2 WINS";
     const note = forfeitBy ? (solo ? "you forfeited" : `player ${forfeitBy === "A" ? 1 : 2} forfeited`)
-      : lockedOut ? "board locked — no legal moves left" : null;
+      : lockedOut ? "board locked — no legal moves left"
+      : ot ? (winner ? `decided in overtime, turn ${turn}` : "still tied at the centre") : null;
     return (
       <EndScreen
         verdict={verdict} ink={winner ? INK[winner] : UI.text} note={note}
@@ -3224,7 +3264,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   const traceKeys = new Set((stamp.on ? stamp.foot || [] : act.trace).map(([r, c]) => key(r, c)));
   const stagedKeys = new Set(stamp.stagedHits.map(([r, c]) => key(r, c)));
   const rail = {
-    ink: INK[player], turn: Math.min(turn, TURNS),
+    ink: INK[player], turn, ot,
     onRotate: () => pl.rotate(1), onCommit: commit, onDiscard: discard,
     canRotate: inPlay && act.mode === "place" && pl.sel.handIdx !== null, canCommit, canDiscard: inPlay,
     mode: act.mode, onMode, meter: meters[player], canMode: inPlay,
@@ -3272,6 +3312,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
                   ghostInk={INK[player]}
                   contestedKeys={contestedKeys} boardRef={pl.boardRef}
                   onPointerDown={(e) => (act.mode === "place" || RULES.stamp ? pl.onBoardPointerDown(e, commit) : act.onPointerDown(e))}
+                  otFlash={phase === "REVEAL" ? otFlash : null}
                   pins={pins} traceKeys={traceKeys} traceKind={act.mode} traceOk={stamp.on ? stamp.ok : act.deleteValid || act.pinValid} stagedKeys={stagedKeys}
                 />
 
@@ -3441,7 +3482,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   const theirScore = you === "A" ? score.b : score.a;
 
   const rail = {
-    ink: colors.you, turn: Math.min(m.turn, m.turns),
+    ink: colors.you, turn: m.turn, ot: !!m.ot,
     onRotate: () => pl.rotate(1), onCommit: commit, onDiscard: discard,
     canRotate: canAct && act.mode === "place" && pl.sel.handIdx !== null, canCommit, canDiscard: canAct,
     mode: act.mode, onMode, meter, canMode: canAct,
@@ -3489,6 +3530,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
                     pendingKeys={pendingKeys} pendingInk={colors.you}
                     contestedKeys={contestedKeys} boardRef={pl.boardRef}
                     onPointerDown={(e) => (act.mode === "place" || RULES.stamp ? pl.onBoardPointerDown(e, commit) : act.onPointerDown(e))}
+                    otFlash={m.reveal && m.shrunk ? (m.otStarted ? "OVERTIME" : "SHRINK") : null}
                     pins={pins} traceKeys={new Set((stamp.on ? stamp.foot || [] : act.trace).map(([r, c]) => key(r, c)))} traceKind={act.mode}
                     traceOk={stamp.on ? stamp.ok : act.deleteValid || act.pinValid} stagedKeys={new Set(stamp.stagedHits.map(([r, c]) => key(r, c)))}
                   />
@@ -3716,7 +3758,8 @@ function Result({ over, colors, onQueue, onMenu }) {
   }, [trFrom, trTo]);
 
   const note = forfeit ? "opponent forfeited" : reason === "forfeit" ? "you forfeited"
-    : reason === "locked" ? "board locked — no legal moves left" : null;
+    : reason === "locked" ? "board locked — no legal moves left"
+    : reason === "overtime" ? (drew ? "still tied at the centre" : "decided in overtime") : null;
   const progress = rankProgress(shown);
   const BAR = 40; // pixels
 

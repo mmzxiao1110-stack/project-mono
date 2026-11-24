@@ -138,18 +138,21 @@ export function hasAnyMove(board, pieces, owner) {
   return false;
 }
 
-const homeCells = (owner) => {
+// Home pairs sit on the edge of the live board (the real edge until overtime shrinks it).
+const homeCells = (owner, board) => {
   const m = Math.floor(COLS / 2) - 1;
-  const r = owner === "A" ? ROWS - 1 : 0;
+  const k = board ? deadRingsOf(board) : 0;
+  const r = owner === "A" ? ROWS - 1 - k : k;
   return [[r, m], [r, m + 1]];
 };
+function deadRingsOf(board) { let k = 0; while (k < ROWS / 2 && board[k][k] === "X") k++; return k; }
 
 /** Nobody should be left with no ink to build from. */
 function restoreHomes(nb) {
   for (const owner of ["A", "B"]) {
     let has = false;
     for (const row of nb) { if (row.includes(owner)) { has = true; break; } }
-    if (!has) for (const [r, c] of homeCells(owner)) nb[r][c] = owner;
+    if (!has) for (const [r, c] of homeCells(owner, nb)) nb[r][c] = owner;
   }
 }
 
@@ -200,7 +203,7 @@ const distinctOnBoard = (cells) => {
 /** 1–4 connected squares with ink, none of them pinned. */
 export function isLegalDelete(board, pins, cells) {
   if (!RULES.actions || !distinctOnBoard(cells) || cells.length < 1 || cells.length > RULES.deleteMax) return false;
-  for (const [r, c] of cells) if (board[r][c] === null || isPinned(pins, r, c)) return false;
+  for (const [r, c] of cells) if (board[r][c] === null || board[r][c] === "X" || isPinned(pins, r, c)) return false;
   return connected(cells);
 }
 
@@ -209,7 +212,7 @@ export function isLegalPin(board, pins, cells, owner, meter) {
   if (!RULES.actions || !distinctOnBoard(cells) || cells.length < 1 || cells.length > Math.min(RULES.pinMax, meter)) return false;
   for (const [r, c] of cells) {
     const v = board[r][c];
-    if (v === null || isPinned(pins, r, c)) return false;
+    if (v === null || v === "X" || isPinned(pins, r, c)) return false;
     if (RULES.pinOwnOnly && v !== owner) return false;
   }
   if (Number.isFinite(RULES.pinHoldMax)) {
@@ -250,7 +253,7 @@ export function resolveTurn(board, moveA, moveB, pins = null) {
   [["A", moveA], ["B", moveB]].forEach(([side, m]) => {
     if (kind(m) !== "delete") return;
     for (const [r, c] of m.cells) {
-      if (np[r][c] || nb[r][c] === null) continue; // pinned (even this very turn) holds; nothing to delete
+      if (np[r][c] || nb[r][c] === null || nb[r][c] === "X") continue; // pinned (even this very turn) holds; nothing to delete
       deleted[side]++;
       gone.push([r, c, nb[r][c]]); nb[r][c] = null;
     }
@@ -270,7 +273,7 @@ export function resolveTurn(board, moveA, moveB, pins = null) {
 
   const lines = fullLines(nb);
   // Pinned squares survive line clears unless the rules say clears beat pins.
-  const wipe = (r, c) => { if (!np[r][c] || !RULES.pinsSurviveClears) { nb[r][c] = null; np[r][c] = false; } };
+  const wipe = (r, c) => { if (nb[r][c] !== "X" && (!np[r][c] || !RULES.pinsSurviveClears)) { nb[r][c] = null; np[r][c] = false; } };
   for (const r of lines.rows) for (let c = 0; c < COLS; c++) wipe(r, c);
   for (const c of lines.cols) for (let r = 0; r < ROWS; r++) wipe(r, c);
 
@@ -302,7 +305,7 @@ export function isPieceFootprint(cells, blockId) {
 export function stampHits(board, pins, cells, kind, owner) {
   return cells.filter(([r, c]) => {
     const v = board[r][c];
-    if (v === null || isPinned(pins, r, c)) return false;
+    if (v === null || v === "X" || isPinned(pins, r, c)) return false;
     return kind === "delete" ? true : !RULES.pinOwnOnly || v === owner;
   });
 }
@@ -398,7 +401,45 @@ export function nextMeters(meters, moveA, moveB, deleted) {
   };
 }
 
-/** Points: one per square you own, RULES.centreValue for each centre square. */
+/* ---------- overtime ---------- */
+
+/** A dead square: overtime has shrunk the board past it. Nobody can play or delete there. */
+export const DEAD = "X";
+
+/** How many rings of the board are dead (0 before overtime). */
+export function deadRings(board) {
+  let k = 0;
+  while (k < ROWS / 2 && board[k][k] === DEAD) k++;
+  return k;
+}
+
+/** Is the end of this turn a scoring check? The last turn, then every RULES.overtimeEvery turns. */
+export function isCheckTurn(t) {
+  if (t < TURNS) return false;
+  if (t === TURNS || !RULES.overtime) return true;
+  return (t - TURNS) % RULES.overtimeEvery === 0;
+}
+
+/**
+ * Overtime's squeeze: the outermost live ring dies. Its ink and pins are
+ * gone; a player left with nothing gets a home pair at the new edge.
+ * Mutates board and pins. Returns { cleared, live } — `live` is the side of
+ * the board still in play.
+ */
+export function shrinkBoard(board, pins) {
+  const k = deadRings(board);
+  const cleared = [];
+  for (let r = k; r < ROWS - k; r++) for (let c = k; c < COLS - k; c++) {
+    if (r !== k && r !== ROWS - 1 - k && c !== k && c !== COLS - 1 - k) continue;
+    if (board[r][c] === "A" || board[r][c] === "B") cleared.push([r, c, board[r][c]]);
+    board[r][c] = DEAD;
+    if (pins) pins[r][c] = false;
+  }
+  restoreHomes(board);
+  return { cleared, live: ROWS - 2 * (k + 1) };
+}
+
+/** Points: one per square you own, RULES.centreValue for each centre square. Dead squares score nothing. */
 export function scoreOf(board) {
   let a = 0, b = 0;
   for (let r = 0; r < ROWS; r++)

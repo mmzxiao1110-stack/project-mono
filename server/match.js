@@ -10,7 +10,7 @@
 import {
   BLOCKS, TURNS, initialBoard, isLegal, rotateN, absCells, boundsOf,
   resolveTurn, scoreOf, newDeck, advanceDeck, currentPiece, currentPass, upcoming,
-  hasAnyMove, ROWS, COLS, newSeed, emptyPins, normalizeAction, nextMeters,
+  hasAnyMove, ROWS, COLS, newSeed, emptyPins, normalizeAction, nextMeters, isCheckTurn, shrinkBoard,
 } from "../shared/engine.js";
 import { RULES } from "../shared/rules.js";
 import { glickoUpdate, rankIndexFor } from "../shared/glicko.js";
@@ -58,6 +58,7 @@ export class Match {
     this.board = initialBoard();
     this.pins = emptyPins();        // permanent squares
     this.meters = { A: 0, B: 0 };   // pins each side may spend
+    this.ot = false;                // in overtime?
     this.pending = { A: undefined, B: undefined };
     this.timer = null;
     this.graceTimers = { A: null, B: null };
@@ -134,6 +135,7 @@ export class Match {
       opp: this.queueOf(this.other(side)),
       pins: this.pins,
       meters: { me: this.meters[side], opp: this.meters[this.other(side)] },
+      ot: this.ot,
       deadline: this.deadline || null,
     };
   }
@@ -264,6 +266,23 @@ export class Match {
 
     const pub = (m) => (m ? { type: m.type || "place", blockId: m.blockId, cells: m.cells, pins: m.pins || null } : null);
     const moves = { A: pub(this.pending.A), B: pub(this.pending.B) };
+
+    // Scoring checks: the last turn, then (in overtime) every few turns.
+    // A tie starts or continues overtime: the outer live ring dies. Down to
+    // the centre 2×2, those four squares decide it — or it's a draw.
+    let decided = false, otStarted = false, shrunk = false;
+    if (isCheckTurn(this.turn)) {
+      const s = scoreOf(this.board);
+      if (s.a !== s.b || !RULES.overtime) decided = true;
+      else {
+        otStarted = !this.ot;
+        this.ot = true;
+        const { cleared, live } = shrinkBoard(this.board, this.pins);
+        res.cleared.push(...cleared);
+        shrunk = true;
+        if (live <= 2) decided = true;
+      }
+    }
     const score = scoreOf(this.board);
 
     this.both((side) => ({
@@ -278,13 +297,16 @@ export class Match {
       lines: res.lines,
       cleared: res.cleared,
       score,
+      ot: this.ot,
+      otStarted,
+      shrunk,
     }));
 
     this.pending = { A: undefined, B: undefined };
 
     // Locked: neither player can place any piece of their deck anywhere
     // (and, with deleting on, there's nothing left to delete either).
-    const deletable = RULES.actions && this.board.some((row, r) => row.some((v, c) => v !== null && !this.pins[r][c]));
+    const deletable = RULES.actions && this.board.some((row, r) => row.some((v, c) => v !== null && v !== "X" && !this.pins[r][c]));
     const locked = !deletable &&
       !hasAnyMove(this.board, this.seats.A.loadout, "A") &&
       !hasAnyMove(this.board, this.seats.B.loadout, "B");
@@ -292,8 +314,8 @@ export class Match {
     if (locked) {
       this.endReason = "locked";
       setTimeout(() => this.end(), REVEAL_MS);
-    } else if (this.turn >= TURNS) {
-      this.endReason = "turns";
+    } else if (decided) {
+      this.endReason = this.ot ? "overtime" : "turns";
       setTimeout(() => this.end(), REVEAL_MS);
     } else {
       this.turn++;
