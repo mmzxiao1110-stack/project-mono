@@ -181,6 +181,27 @@ export function inkPaths(size, style, dir = 1, seed = 0) {
 }
 
 /**
+ * Any polygon drawn the way roughRect draws a box: each edge its own loose
+ * stroke, overshooting the corners. `seed` keeps the wobble identical from
+ * frame to frame, so an animated shape doesn't shimmer.
+ */
+export function roughPoly(points, { jit = 1, over = 2, seed = 1, passes = 1 } = {}) {
+  let d = "";
+  for (let p = 0; p < passes; p++) {
+    const r = rng(seed * 31 + p * 7);
+    for (let i = 0; i < points.length; i++) {
+      const [ax, ay] = points[i], [bx, by] = points[(i + 1) % points.length];
+      const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy) || 1;
+      const ux = dx / len, uy = dy / len;
+      const j = () => (r() - 0.5) * 2 * jit * (1 + p * 0.6);
+      const a = over * (0.3 + r() * 0.9), b = over * (0.3 + r() * 0.9);
+      d += stroke(ax - ux * a + j(), ay - uy * a + j(), bx + ux * b + j(), by + uy * b + j(), jit * 1.2, r);
+    }
+  }
+  return d;
+}
+
+/**
  * The board's pencil grid: every row and column line drawn as its own stroke,
  * running a little past the edge of the board.
  */
