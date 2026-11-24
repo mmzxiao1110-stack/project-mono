@@ -1,47 +1,53 @@
 /**
- * Outbound mail.
+ * Outbound mail, via Resend's HTTP API (https://resend.com/docs/api-reference/emails/send-email).
  *
- * With SMTP configured, codes are emailed. Without it, they're printed to the
- * server console — which is what you want in development, and is why signup
- * works before you've set any of this up.
+ *   RESEND_API_KEY  required to actually send
+ *   MAIL_FROM       e.g. "MINO <no-reply@yourdomain.com>" — the domain must be
+ *                   verified in Resend, or Resend rejects the send
+ *
+ * Without a key, codes are printed to the server console: right for local
+ * development, and the server refuses to run that way in production (see index.js).
  */
-import nodemailer from "nodemailer";
+const { RESEND_API_KEY, MAIL_FROM } = process.env;
 
-const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, MAIL_FROM } = process.env;
+export const mailConfigured = () => !!RESEND_API_KEY;
 
-let transport = null;
-if (SMTP_HOST) {
-  transport = nodemailer.createTransport({
-    host: SMTP_HOST,
-    port: Number(SMTP_PORT) || 587,
-    secure: Number(SMTP_PORT) === 465,
-    auth: SMTP_USER ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
-  });
-  console.log(`[mail] SMTP via ${SMTP_HOST}`);
-} else {
-  console.log("[mail] no SMTP configured — verification codes will print here");
-}
+if (RESEND_API_KEY) console.log(`[mail] sending through Resend as ${MAIL_FROM || "(MAIL_FROM not set!)"}`);
+else console.log("[mail] RESEND_API_KEY not set — codes will print here instead of being emailed");
 
-export async function sendCode(to, code, username) {
-  if (!transport) {
-    console.log(`\n[mail] ──────────────────────────────`);
-    console.log(`[mail] to:   ${to}`);
-    console.log(`[mail] code: ${code}`);
-    console.log(`[mail] ──────────────────────────────\n`);
+const PURPOSE = {
+  verify: { subject: (c) => `${c} is your MINO code`, line: "Here's the code to verify your email" },
+  reset: { subject: (c) => `${c} is your MINO password reset code`, line: "Here's the code to reset your password" },
+};
+
+// Usernames are already restricted to [A-Za-z0-9_], but escape anyway:
+// this string goes into HTML.
+const esc = (s) => String(s).replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+
+/** Sends a 5-digit code. Throws if Resend refuses it, so the caller can log it. */
+export async function sendCode(to, code, username, purpose = "verify") {
+  const p = PURPOSE[purpose] || PURPOSE.verify;
+  if (!RESEND_API_KEY) {
+    console.log(`\n[mail] ── ${purpose} code for ${to}: ${code} ──\n`);
     return { delivered: false };
   }
-  await transport.sendMail({
-    from: MAIL_FROM || `Turf Blocks <no-reply@${SMTP_HOST}>`,
-    to,
-    subject: `${code} is your Turf Blocks code`,
-    text:
-      `Hi ${username},\n\n` +
-      `Your verification code is ${code}\n\n` +
-      `It expires in 15 minutes. If you didn't sign up, ignore this email.\n`,
-    html:
-      `<p>Hi ${username},</p>` +
-      `<p style="font-size:28px;letter-spacing:6px;font-family:monospace"><b>${code}</b></p>` +
-      `<p>It expires in 15 minutes. If you didn't sign up, ignore this email.</p>`,
+  const text =
+    `Hi ${username},\n\n${p.line}: ${code}\n\n` +
+    `It expires in 15 minutes. If this wasn't you, you can ignore this email.\n`;
+  const html =
+    `<p>Hi ${esc(username)},</p><p>${p.line}:</p>` +
+    `<p style="font-size:28px;letter-spacing:6px;font-family:monospace"><b>${code}</b></p>` +
+    `<p>It expires in 15 minutes. If this wasn't you, you can ignore this email.</p>`;
+
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ from: MAIL_FROM, to: [to], subject: p.subject(code), text, html }),
+    signal: AbortSignal.timeout(10_000),
   });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Resend ${res.status}: ${body.slice(0, 200)}`);
+  }
   return { delivered: true };
 }

@@ -1,0 +1,33 @@
+# Render Blueprint: one web service that serves the game and runs the
+# multiplayer server, plus a disk for accounts. Deploy with
+# Dashboard -> New -> Blueprint -> pick this repository.
+services:
+  - type: web
+    name: mino
+    runtime: node
+    # A disk needs a paid instance. On the free plan the service sleeps when
+    # idle and every deploy starts with an empty account database.
+    plan: starter
+    buildCommand: npm ci --include=dev && npm run build && npm ci --prefix server --omit=dev
+    startCommand: node server/index.js
+    healthCheckPath: /healthz
+    disk:
+      name: mino-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATA_DIR
+        value: /var/data
+      # Render's proxy adds the visitor's IP to X-Forwarded-For; trust one hop.
+      # Use 2 if you later put Cloudflare in front of Render.
+      - key: TRUST_PROXY
+        value: "1"
+      # Filled in on the dashboard when you create the Blueprint:
+      - key: RESEND_API_KEY
+        sync: false
+      - key: MAIL_FROM
+        sync: false

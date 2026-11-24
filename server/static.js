@@ -12,6 +12,15 @@ import { fileURLToPath } from "node:url";
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.resolve(DIR, "..", "dist");
 
+// Sent with every response. No CSP: React's inline styles would need
+// 'unsafe-inline' anyway, and these cover the cheap, real risks.
+const SECURITY = {
+  "x-content-type-options": "nosniff",
+  "referrer-policy": "strict-origin-when-cross-origin",
+  "x-frame-options": "DENY",
+  "permissions-policy": "camera=(), microphone=(), geolocation=()",
+};
+
 const TYPES = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -39,29 +48,48 @@ function sendIndex(res, code = 200) {
         "or open the Vite dev server on :5173 instead."
       );
     }
-    res.writeHead(code, { "content-type": TYPES[".html"], "cache-control": "no-cache" });
+    res.writeHead(code, { ...SECURITY, "content-type": TYPES[".html"], "cache-control": "no-cache" });
     res.end(html);
   });
 }
 
 export function staticHandler(req, res) {
   let urlPath = (req.url || "/").split("?")[0];
-  try { urlPath = decodeURIComponent(urlPath); } catch (e) { /* keep raw */ }
+  // Render's health check. Answers without touching the disk.
+  if (urlPath === "/healthz") {
+    res.writeHead(200, { "content-type": "text/plain", "cache-control": "no-store" });
+    return res.end("ok");
+  }
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    res.writeHead(405, { allow: "GET, HEAD" });
+    return res.end();
+  }
+  try { urlPath = decodeURIComponent(urlPath); } catch { /* keep raw */ }
   if (urlPath.endsWith("/")) urlPath += "index.html";
 
   const target = path.normalize(path.join(DIST, urlPath));
-  // Never serve anything outside dist, whatever the URL claims.
-  if (!target.startsWith(DIST)) {
+  // Never serve anything outside dist, whatever the URL claims. The separator
+  // matters: without it, "/x/dist-old/secret" passes a check for "/x/dist".
+  if (target !== DIST && !target.startsWith(DIST + path.sep)) {
     res.writeHead(403, { "content-type": "text/plain" });
     return res.end("forbidden");
   }
 
   fs.readFile(target, (err, buf) => {
+    // "/privacy" serves privacy.html, so the links can be clean.
+    if (err && !path.extname(target)) {
+      return fs.readFile(target + ".html", (err2, page) => {
+        if (err2) return sendIndex(res);
+        res.writeHead(200, { ...SECURITY, "content-type": TYPES[".html"], "cache-control": "no-cache" });
+        res.end(page);
+      });
+    }
     if (err) return sendIndex(res); // SPA fallback: unknown routes get the app
     const ext = path.extname(target).toLowerCase();
     // Vite fingerprints filenames under /assets, so those can cache forever.
     const immutable = urlPath.startsWith("/assets/");
     res.writeHead(200, {
+      ...SECURITY,
       "content-type": TYPES[ext] || "application/octet-stream",
       "cache-control": immutable ? "public, max-age=31536000, immutable" : "no-cache",
     });

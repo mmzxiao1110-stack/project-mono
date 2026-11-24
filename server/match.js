@@ -26,6 +26,10 @@ const IDLE_MS = 180_000;
 
 let nextId = 1;
 
+// Client numbers arrive as JSON: accept real numbers only. Number() on an
+// object can throw, and a string like "1e400" is not a hand slot.
+const num = (v) => (typeof v === "number" ? v : NaN);
+
 export class Match {
   /**
    * @param seats [{ profile, loadout, socket }, ...] — index 0 is seat A.
@@ -165,19 +169,19 @@ export class Match {
     if (this.pending[side] !== undefined) return "already submitted";
 
     const seat = this.seats[side];
-    const handIdx = Number(msg.handIdx);
+    const handIdx = num(msg.handIdx);
     if (!Number.isInteger(handIdx) || handIdx < 0 || handIdx >= seat.deck.hand.length) {
       return "no such card";
     }
 
     const blockId = seat.deck.hand[handIdx];
-    const rot = Number(msg.rot) || 0;
+    const rot = Number.isInteger(msg.rot) ? msg.rot : 0;
     const pos = msg.pos;
     if (!Array.isArray(pos) || pos.length !== 2) return "bad position";
 
     const shape = rotateN(BLOCKS[blockId].cells, rot);
     const { h, w } = boundsOf(shape);
-    const [r, c] = [Number(pos[0]), Number(pos[1])];
+    const [r, c] = [num(pos[0]), num(pos[1])];
     if (!Number.isInteger(r) || !Number.isInteger(c)) return "bad position";
     if (r < 0 || c < 0 || r + h > ROWS || c + w > COLS) return "off the board";
 
@@ -199,7 +203,7 @@ export class Match {
     if (this.over) return "match is over";
     if (msg.turn !== this.turn) return "wrong turn";
     if (this.pending[side] !== undefined) return "already submitted";
-    const err = this.applyDiscard(side, Number(msg.handIdx));
+    const err = this.applyDiscard(side, num(msg.handIdx));
     if (err) return err;
     this.send(side, { t: "ack", turn: this.turn });
     this.send(this.other(side), { t: "oppReady", turn: this.turn });

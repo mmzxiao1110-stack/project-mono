@@ -1,96 +1,85 @@
 /**
- * Test harness: spins up two bots, queues both, plays a full match.
+ * Test harness: signs up two bots, queues both, plays a full ranked match.
  *
- * This is how you verify the server without touching the UI. If this prints
- * a final score and two rating deltas, matchmaking, hidden moves, resolution,
+ * Verifies the server without touching the UI. If this prints a final score
+ * and two rating changes, signup, matchmaking, hidden moves, resolution,
  * scoring and Glicko all work.
  *
- *   node testclient.js
+ * Start the server with SKIP_EMAIL_VERIFY=1 (the bots can't read email), then:
+ *   npm run test:match
+ *   URL=wss://your-app.onrender.com npm run test:match   # against a deployment
+ *
+ * Against a real deployment this creates two accounts. Only do that on a
+ * staging copy, or with SKIP_EMAIL_VERIFY on for a closed test.
  */
 import { WebSocket } from "ws";
 import { enumerateMoves, DEFAULT_LOADOUT } from "../shared/engine.js";
 
 const URL = process.env.URL || "ws://localhost:8787";
+const tag = Date.now().toString(36).slice(-5);
 
-function bot(playerId, name) {
-  const ws = new WebSocket(URL);
-  let side = null;
-  let done = false;
+function bot(name) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(URL);
+    const send = (o) => ws.send(JSON.stringify(o));
+    let side = null;
+    const fail = (why) => { ws.close(); reject(new Error(`[${name}] ${why}`)); };
+    const timer = setTimeout(() => fail("timed out"), 5 * 60_000);
 
-  const send = (o) => ws.send(JSON.stringify(o));
+    ws.on("open", () => send({ t: "signup", username: name, email: `${name}@example.test`, password: "test-password-1" }));
+    ws.on("error", (e) => fail(e.message));
 
-  ws.on("open", () => {
-    send({ t: "hello", playerId, name });
-    send({ t: "queue", loadout: DEFAULT_LOADOUT });
-  });
-
-  ws.on("message", (raw) => {
-    const m = JSON.parse(raw);
-
-    switch (m.t) {
-      case "welcome":
-        console.log(`[${name}] rating ${Math.round(m.profile.rating.r)} ±${Math.round(m.profile.rating.rd)}, ${m.profile.stats.games} games`);
-        break;
-
-      case "searching":
-        if (Math.round(m.elapsed * 10) % 10 === 0) {
-          console.log(`[${name}] searching ±${m.band}`);
+    ws.on("message", (raw) => {
+      const m = JSON.parse(raw);
+      switch (m.t) {
+        case "auth":
+          if (!m.profile.emailVerified) return fail("email not verified — start the server with SKIP_EMAIL_VERIFY=1");
+          console.log(`[${name}] signed in, rating ${Math.round(m.profile.rating.r)}`);
+          send({ t: "queue", loadout: DEFAULT_LOADOUT });
+          break;
+        case "authError":
+          return fail(`auth error: ${m.msg}`);
+        case "found":
+          console.log(`[${name}] matched with ${m.opponent.name} (${m.gap} TR apart)`);
+          break;
+        case "matchStart":
+          side = m.you;
+          break;
+        case "turn": {
+          const golden = m.golden?.armed ? m.golden.blockId : null;
+          const moves = enumerateMoves(m.board, m.hand, side, { goldenBlockId: golden });
+          if (moves.length) {
+            // Biggest block first, like a mid-level AI.
+            moves.sort((a, b) => b.value - a.value);
+            const mv = moves[Math.floor(Math.random() * Math.min(5, moves.length))];
+            send({ t: "move", turn: m.turn, handIdx: mv.handIdx, rot: mv.rot, pos: mv.pos });
+          } else {
+            send({ t: "discard", turn: m.turn, handIdx: 0 });
+          }
+          break;
         }
-        break;
-
-      case "found":
-        console.log(`[${name}] matched vs ${m.opponent.name} (${m.opponent.rating}) — ${m.gap} TR apart`);
-        break;
-
-      case "matchStart":
-        side = m.you;
-        console.log(`[${name}] seat ${side}`);
-        break;
-
-      case "turn": {
-        const moves = enumerateMoves(m.board, m.hand, side);
-        if (!moves.length) {
-          send({ t: "discard", turn: m.turn, handIdx: 0 });
-        } else {
-          // Greedy: biggest block that fits. Enough to exercise the server.
-          moves.sort((a, b) => b.value - a.value);
-          const pick = moves[Math.floor(Math.random() * Math.min(3, moves.length))];
-          send({ t: "move", turn: m.turn, handIdx: pick.handIdx, rot: pick.rot, pos: pick.pos });
-        }
-        break;
+        case "error":
+          console.log(`[${name}] server error: ${m.msg}`);
+          break;
+        case "matchOver":
+          clearTimeout(timer);
+          console.log(
+            `[${name}] ${m.drew ? "DREW" : m.won ? "WON" : "LOST"} ${m.myScore}–${m.oppScore} ` +
+            `(${m.reason}), rating ${Math.round(m.rating.before.r)} → ${Math.round(m.rating.after.r)}`
+          );
+          ws.close();
+          resolve(m);
+          break;
       }
-
-      case "reveal":
-        if (side === "A") {
-          console.log(`  turn ${String(m.turn).padStart(2)}  A:${m.score.a}  B:${m.score.b}  special:${m.score.s}`);
-        }
-        break;
-
-      case "matchOver": {
-        done = true;
-        const d = Math.round(m.rating.after.r) - Math.round(m.rating.before.r);
-        console.log(
-          `[${name}] ${m.drew ? "DRAW" : m.won ? "WIN " : "LOSS"}  ${m.myScore}-${m.oppScore}  ` +
-          `${Math.round(m.rating.before.r)} → ${Math.round(m.rating.after.r)} (${d >= 0 ? "+" : ""}${d})  ` +
-          `±${Math.round(m.rating.before.rd)} → ±${Math.round(m.rating.after.rd)}`
-        );
-        ws.close();
-        break;
-      }
-
-      case "error":
-        console.error(`[${name}] ERROR: ${m.msg}`);
-        break;
-    }
+    });
   });
-
-  ws.on("close", () => {
-    if (!done) console.log(`[${name}] disconnected before the match ended`);
-  });
-
-  ws.on("error", (e) => console.error(`[${name}] socket error:`, e.message));
 }
 
-const stamp = Date.now();
-bot(`test-alpha-${stamp}`, "alpha");
-bot(`test-beta-${stamp}`, "beta");
+try {
+  await Promise.all([bot(`bot_a_${tag}`), bot(`bot_b_${tag}`)]);
+  console.log("\nOK — a full ranked match completed.");
+  process.exit(0);
+} catch (e) {
+  console.error("\nFAILED:", e.message);
+  process.exit(1);
+}

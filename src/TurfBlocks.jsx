@@ -199,7 +199,11 @@ const subs = {
   search: (cb) => net.on("search", cb),
   found: (cb) => net.on("found", cb),
   auth: (cb) => net.on("auth", cb),
+  online: (cb) => net.on("online", cb),
+  notice: (cb) => net.on("notice", cb),
 };
+const useOnline = () => useSyncExternalStore(subs.online, () => net.online);
+const useNotice = () => useSyncExternalStore(subs.notice, () => net.notice);
 const useMatch = () => useSyncExternalStore(subs.match, () => net.match);
 const useStatus = () => useSyncExternalStore(subs.status, () => net.status);
 const useProfile = () => useSyncExternalStore(subs.profile, () => net.profile);
@@ -745,16 +749,22 @@ function SettingsModal({ volume, setVolume, musicVol, setMusicVol, name, rename,
   const cur = Math.round(volume * steps);
   const mcur = Math.round(musicVol * steps);
   const [draft, setDraft] = useState(name);
+  const [nameErr, setNameErr] = useState(null);
   const set = (patch) => setTheme({ ...theme, ...patch });
+
+  // The server has the final say on names (taken, reserved, bad characters).
+  useEffect(() => net.on("nameError", (msg) => { setNameErr(msg); setDraft(net.profile?.name ?? name); }), [name]);
 
   return (
     <Popup title="SETTINGS" onClose={onClose}>
       <div className="pt-4">
         <div className="text-[13px] tracking-[0.2em] mb-3">HANDLE</div>
         <input value={draft} maxLength={16}
-          onChange={(e) => setDraft(e.target.value)} onBlur={() => rename(draft)}
-          className="w-full rounded px-3 mb-7 text-sm font-mono"
-          style={{ height: 44, background: UI.ground, ...sk(UI.line), color: UI.text, outline: "none" }} />
+          onChange={(e) => { setDraft(e.target.value); setNameErr(null); }} onBlur={() => rename(draft)}
+          onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+          className={`w-full rounded px-3 ${nameErr ? "mb-2" : "mb-7"} text-sm font-mono`}
+          style={{ height: 44, background: UI.ground, ...sk(nameErr ? UI.badSoft : UI.line), color: UI.text, outline: "none" }} />
+        {nameErr && <div className="text-[12px] mb-6" style={{ color: UI.bad }}>{nameErr}</div>}
 
         <div className="flex items-center justify-between mb-3">
           <span className="text-[13px] tracking-[0.2em]">VOLUME</span>
@@ -824,6 +834,7 @@ function SettingsModal({ volume, setVolume, musicVol, setMusicVol, name, rename,
           {SERVER_URL}
           {!IS_SECURE && " — fine on your own machine, unsafe over a real network."}
         </div>
+        <div className="pt-3 pb-2"><LegalLinks /></div>
       </div>
     </Popup>
   );
@@ -1480,12 +1491,126 @@ function AuthModal({ mode, onClose, onSwitch }) {
           className="w-full text-[12px] tracking-[0.2em] mt-4 py-2" style={{ color: UI.dim }}>
           {signup ? "I ALREADY HAVE AN ACCOUNT" : "CREATE AN ACCOUNT"}
         </button>
+        {!signup && (
+          <button onClick={() => { net.authError = null; net.resetSent = false; onSwitch("reset"); }}
+            className="w-full text-[12px] tracking-[0.2em] py-2" style={{ color: UI.dim }}>
+            FORGOT PASSWORD?
+          </button>
+        )}
+        {signup && <div className="text-center mt-2"><LegalLinks prefix="By creating an account you agree to the " /></div>}
 
         <div className="flex items-center gap-2 text-[11px] mt-4 pt-4"
           style={{ color: IS_SECURE ? UI.dim : GOLD, ...RULE_ABOVE }}>
           {IS_SECURE ? <Lock size={11} /> : <ShieldAlert size={11} />}
           {IS_SECURE ? "Encrypted connection." : "Unencrypted connection — local testing only."}
         </div>
+      </div>
+    </Popup>
+  );
+}
+
+/** Links to the policy pages served next to the app (public/privacy.html, public/terms.html). */
+function LegalLinks({ prefix = null }) {
+  const a = { color: UI.dim, textDecoration: "underline", textUnderlineOffset: 2 };
+  return (
+    <div className="text-[11px] leading-relaxed" style={{ color: UI.dim }}>
+      {prefix}
+      <a href="/terms" target="_blank" rel="noopener" style={a}>Terms</a>
+      {prefix ? " and " : " · "}
+      <a href="/privacy" target="_blank" rel="noopener" style={a}>{prefix ? "Privacy Policy" : "Privacy"}</a>
+      {prefix ? "." : null}
+    </div>
+  );
+}
+
+/* ============================================================
+   RESET — forgot password: email → code → new password
+   ============================================================ */
+function ResetModal({ onClose, onBack }) {
+  const authState = useAuth();
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [local, setLocal] = useState(null);
+
+  // A successful reset signs you straight in.
+  useEffect(() => {
+    if (authState === "authed") onClose();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authState]);
+
+  const sent = net.resetSent;
+  const err = local || net.authError;
+
+  const request = () => {
+    setLocal(null);
+    if (!email.trim()) return setLocal("Enter the email you signed up with.");
+    net.requestReset(email.trim());
+  };
+  const confirmReset = () => {
+    setLocal(null);
+    if (code.length !== 5) return setLocal("Enter the 5-digit code from the email.");
+    if (password.length < 8) return setLocal("Password must be at least 8 characters.");
+    if (password !== confirm) return setLocal("Passwords don't match.");
+    net.confirmReset(email.trim(), code, password);
+  };
+  const label = (t) => <div className="text-[11px] tracking-[0.24em] mb-2" style={{ color: UI.dim }}>{t}</div>;
+
+  return (
+    <Popup title="RESET PASSWORD" onClose={onClose} maxW={360}>
+      <div className="pt-4 pb-1">
+        {!sent ? (
+          <>
+            <div className="text-[12px] leading-relaxed mb-4" style={{ color: UI.dim }}>
+              Enter the email on your account and we'll send a 5-digit code.
+            </div>
+            {label("EMAIL")}
+            <input value={email} type="email" autoCapitalize="none" autoCorrect="off" autoFocus
+              onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && request()}
+              className="w-full px-3 mb-4 text-sm font-mono" style={fieldStyle} />
+          </>
+        ) : (
+          <>
+            <div className="text-[12px] leading-relaxed mb-4" style={{ color: UI.dim }}>
+              If <span style={{ color: UI.text }}>{email.trim()}</span> has an account, a code is on its way.
+              It expires in 15 minutes.
+            </div>
+            {label("CODE")}
+            <input value={code} inputMode="numeric" maxLength={5} autoFocus
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 5))}
+              className="w-full px-3 mb-4 font-mono" style={{ ...fieldStyle, fontSize: 20, letterSpacing: "0.4em" }} />
+            {label("NEW PASSWORD")}
+            <input type="password" value={password} autoCapitalize="none"
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full px-3 mb-4 text-sm font-mono" style={fieldStyle} />
+            {label("CONFIRM PASSWORD")}
+            <input type="password" value={confirm} autoCapitalize="none"
+              onChange={(e) => setConfirm(e.target.value)} onKeyDown={(e) => e.key === "Enter" && confirmReset()}
+              className="w-full px-3 mb-4 text-sm font-mono" style={fieldStyle} />
+          </>
+        )}
+
+        {err && (
+          <div className="text-[12px] leading-relaxed mb-4 px-3 py-2"
+            style={{ color: UI.bad, ...sk(UI.badSoft), background: UI.badFaint }}>{err}</div>
+        )}
+
+        <button onClick={sent ? confirmReset : request} disabled={net.authBusy}
+          className="w-full text-[12px] tracking-[0.3em] disabled:opacity-40"
+          style={{ height: 48, ...skFill(UI.text), color: UI.text }}>
+          {net.authBusy ? "…" : sent ? "SET NEW PASSWORD" : "SEND CODE"}
+        </button>
+
+        {sent && (
+          <button onClick={() => { net.resetSent = false; setCode(""); net.bumpAuth(); }}
+            className="w-full text-[12px] tracking-[0.2em] mt-3 py-2" style={{ color: UI.dim }}>
+            DIDN'T GET IT? SEND AGAIN
+          </button>
+        )}
+        <button onClick={onBack} className="w-full text-[12px] tracking-[0.2em] mt-2 py-2" style={{ color: UI.dim }}>
+          BACK TO LOG IN
+        </button>
       </div>
     </Popup>
   );
@@ -1796,6 +1921,8 @@ function Menu({ onPick, loadout, setLoadout, volume, setVolume, musicVol, setMus
   const tr = profile ? Math.round(profile.rating.r) : null;
   const placed = profile && profile.stats.games >= PLACEMENT_GAMES;
   const rank = tr !== null ? RANKS[rankIndexFor(tr)] : null;
+  const online = useOnline();
+  const notice = useNotice();
 
   return (
     <div className="tb-screen tb-safe relative w-full flex items-center justify-center px-5 font-mono overflow-hidden" style={{ background: UI.ground, color: UI.text }}>
@@ -1821,7 +1948,7 @@ function Menu({ onPick, loadout, setLoadout, volume, setVolume, musicVol, setMus
           }}
           disabled={status !== "online"}
           className="w-full rounded flex flex-col items-center justify-center gap-1 mb-2.5 disabled:opacity-40"
-          style={{ height: 88, background: UI.panel, ...sk(authed && verified && placed ? rank.color : UI.line) }}
+          style={{ height: 98, background: UI.panel, ...sk(authed && verified && placed ? rank.color : UI.line) }}
         >
           <span className="text-[11px] tracking-[0.28em]" style={{ color: UI.dim }}>
             {status !== "online" ? (status === "connecting" ? "CONNECTING…" : "SERVER OFFLINE")
@@ -1832,7 +1959,19 @@ function Menu({ onPick, loadout, setLoadout, volume, setVolume, musicVol, setMus
           <span className="text-base tracking-[0.28em]" style={{ textDecoration: authed && verified ? "none" : "line-through", textDecorationThickness: 1 }}>
             MULTIPLAYER
           </span>
+          {status === "online" && online !== null && (
+            <span className="text-[11px] italic" style={{ color: UI.dim }}>
+              {online === 1 ? "just you online right now" : `${online} people online`}
+            </span>
+          )}
         </button>
+
+        {notice && (
+          <button onClick={() => net.setNotice(null)} className="w-full text-left text-[12px] leading-relaxed px-3 py-2 mb-2.5"
+            style={{ ...sk(GOLD_SOFT), color: GOLD }}>
+            {notice} <span style={{ color: UI.dim }}>(tap to dismiss)</span>
+          </button>
+        )}
 
         {!authed && (
           <div className="flex gap-2.5 mb-2.5">
@@ -1897,6 +2036,7 @@ function Menu({ onPick, loadout, setLoadout, volume, setVolume, musicVol, setMus
       {(modal === "login" || modal === "signup") && (
         <AuthModal mode={modal} onClose={() => setModal(null)} onSwitch={setModal} />
       )}
+      {modal === "reset" && <ResetModal onClose={() => setModal(null)} onBack={() => setModal("login")} />}
       {modal === "VERIFY" && profile && <VerifyModal profile={profile} onClose={() => setModal(null)} />}
       {modal === "THEME" && <ThemeModal theme={theme} setTheme={setTheme} onClose={() => setModal(null)} />}
       {modal === "HOWTO" && <HowToModal colors={colors} loadout={loadout} onClose={() => setModal(null)} />}
@@ -1954,7 +2094,10 @@ function Difficulty({ onStart, onBack, colors, volume }) {
    ============================================================ */
 const BAND_CAP = 600;
 
-function Matchmaking({ profile, loadout, colors, volume, onCancel }) {
+// After this long with no opponent, offer the AI instead of a longer wait.
+const LONELY_AFTER_S = 30;
+
+function Matchmaking({ profile, loadout, colors, volume, onCancel, onPlayAi }) {
   const search = useSearch();
   const found = useFound();
   const status = useStatus();
@@ -2013,6 +2156,17 @@ function Matchmaking({ profile, loadout, colors, volume, onCancel }) {
                 : "Lost the server — reconnecting. You'll rejoin the queue automatically."}
             </div>
 
+            {elapsed >= LONELY_AFTER_S && (
+              <div className="mb-3 tb-fade">
+                <div className="text-[12px] italic text-center mb-2" style={{ color: UI.dim }}>
+                  Quiet right now. Play the AI instead? Ranked can wait.
+                </div>
+                <button onClick={() => { net.unqueue(); onPlayAi(); }} className="w-full text-[12px] tracking-[0.3em]"
+                  style={{ height: 46, ...skFill(UI.text), color: UI.text }}>
+                  PLAY THE AI
+                </button>
+              </div>
+            )}
             <button onClick={() => { net.unqueue(); onCancel(); }} className="w-full rounded text-[12px] tracking-[0.3em]" style={{ height: 46, ...sk(UI.line), color: UI.dim }}>
               CANCEL
             </button>
@@ -2280,8 +2434,15 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
 /* ============================================================
    NET GAME — ranked. The server owns the board; we render it.
    ============================================================ */
-function NetGame({ colors, volume, theme, onResult }) {
+function NetGame({ colors, volume, theme, onResult, onAbort }) {
   const m = useMatch();
+
+  // The match vanished without finishing (server restart): back to the menu,
+  // where net.notice explains what happened.
+  useEffect(() => {
+    if (!m) onAbort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [m]);
   const [err, setErr] = useState(null);
   const [now, setNow] = useState(Date.now());
   const [stageRef, stage] = useSize();
@@ -2629,7 +2790,7 @@ export default function TurfBlocks() {
     music.setEnabled(v > 0);
     music.setVolume(v);
   };
-  const rename = (n) => { const v = n.trim().slice(0, 16); if (v) net.setName(v); };
+  const rename = (n) => { const v = n.trim().slice(0, 16); if (v && v !== net.profile?.name) net.setName(v); };
   const logout = () => { store.set("tb:token", ""); net.logout(); setScreen("MENU"); };
 
   const shell = (
@@ -2738,10 +2899,14 @@ export default function TurfBlocks() {
   else if (screen === "MATCHMAKING")
     view = (
       <Matchmaking profile={profile} loadout={loadout} colors={colors} volume={volume}
-        onCancel={() => setScreen("MENU")} />
+        onCancel={() => setScreen("MENU")} onPlayAi={() => setScreen("DIFFICULTY")} />
     );
   else if (screen === "RANKED")
-    view = <NetGame colors={colors} volume={volume} theme={theme} onResult={(o) => { setOver(o); setScreen("RESULT"); }} />;
+    view = (
+      <NetGame colors={colors} volume={volume} theme={theme}
+        onResult={(o) => { setOver(o); setScreen("RESULT"); }}
+        onAbort={() => setScreen("MENU")} />
+    );
   else if (screen === "RESULT")
     view = (
       <Result over={over} colors={colors}
