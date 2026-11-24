@@ -264,6 +264,14 @@ function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId
   const boardRef = useRef(null);
   const dragRef = useRef({ cells: null, lift: 0, x: 0, y: 0, mode: null });
   const holdCleanup = useRef(null);
+  // Where the mouse last was, so a number key can drop a block straight
+  // under it. Touch never sets this, so phones keep their own behaviour.
+  const lastMouse = useRef(null);
+  useEffect(() => {
+    const onMove = (e) => { if (e.pointerType === "mouse") lastMouse.current = { x: e.clientX, y: e.clientY }; };
+    window.addEventListener("pointermove", onMove);
+    return () => window.removeEventListener("pointermove", onMove);
+  }, []);
 
   const endHold = useCallback(() => {
     holdCleanup.current?.();
@@ -462,9 +470,24 @@ function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId
       setSel((s) => (s.handIdx === i ? s : { ...s, handIdx: i, rot: 0 }));
       return;
     }
+    if (lastMouse.current) {
+      // Mouse players: the block appears under the cursor at once, held,
+      // ready to move, rotate, swap or place — no extra click.
+      setSel({ handIdx: i, rot: 0, pos: null });
+      beginHold({ clientX: lastMouse.current.x, clientY: lastMouse.current.y }, BLOCKS[hand[i]].cells);
+      return;
+    }
     // Re-picking the selected block keeps it where it is, unless it has no position yet.
     setSel((s) => (s.handIdx === i && s.pos ? s : { handIdx: i, rot: 0, pos: spawnPos(hand[i], s.pos) }));
-  }, [enabled, hand, spawnPos, holding]);
+  }, [enabled, hand, spawnPos, holding, beginHold]);
+
+  /**
+   * Put the selected block on the nearest legal square without touching the
+   * selection — for WASD when the held block is off the board.
+   */
+  const spawnHere = useCallback(() => {
+    setSel((s) => (s.handIdx === null || hand[s.handIdx] === undefined ? s : { ...s, pos: spawnPos(hand[s.handIdx], s.pos) }));
+  }, [hand, spawnPos]);
 
   /** ← / →: step to the previous or next block in hand, wrapping. */
   const cycle = useCallback((dir) => {
@@ -492,7 +515,7 @@ function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId
     });
   }, [hand]);
 
-  return { sel, setSel, reset, rotated, ghost, ghostLegal, ghostKeys, goldenSel, dragging, holding, drag, boardRef, onBoardPointerDown, onCardPointerDown, rotate, nudge, select, cycle, flip };
+  return { sel, setSel, reset, rotated, ghost, ghostLegal, ghostKeys, goldenSel, dragging, holding, drag, boardRef, onBoardPointerDown, onCardPointerDown, rotate, nudge, select, cycle, flip, spawnHere };
 }
 
 /**
@@ -529,8 +552,9 @@ function useGameKeys(pl, { enabled, onCommit, onDiscard }) {
       const f = pl.flip ? -1 : 1;
       const move = { up: [-f, 0], down: [f, 0], left: [0, -f], right: [0, f] }[action];
       if (move) {
-        // A block picked by tapping its card has no position yet; start it on a legal square.
-        if (!pl.sel.pos) return pl.select(pl.sel.handIdx);
+        // No square yet (picked by tapping its card, or held off the board):
+        // start it on the nearest legal one.
+        if (!pl.sel.pos) return pl.spawnHere();
         return pl.nudge(move[0], move[1]);
       }
       if (action === "cw") return pl.rotate(1);
@@ -858,56 +882,114 @@ function ScoreBar({ score, turn, turns, inkA, inkB, specialHex, labelA, labelB }
   );
 }
 
-function AmbientField({ loadout, colors, theme, paused }) {
-  const [field, setField] = useState(() => ({ board: initialBoard(), fresh: new Set(), gen: 0 }));
+/**
+ * The menu backdrop: blocks spreading outward from the centre of an open
+ * field. The field is larger than the screen (and slightly turned), so it
+ * has no visible edge. Each new block touches what's already there and
+ * prefers spots near the middle, so the shape grows like a game of MINO
+ * with no board. Once enough is covered it fades out and starts over.
+ */
+const FIELD_CELL = 36;       // px per square
+const FIELD_TICK_MS = 380;   // two new blocks per tick
+const FIELD_FILL = 0.6;      // fraction of the visible screen covered before it fades and restarts
+// The field is wider than the 8-column game board, so it keys its own squares.
+const fk = (r, c) => r * 100 + c;
+
+function seedField(cols, rows) {
+  const cells = new Map();
+  const mid = [Math.floor(rows / 2), Math.floor(cols / 2)];
+  // One block of each colour, side by side at the centre.
+  cells.set(fk(mid[0], mid[1] - 1), { owner: "A", born: 0 });
+  cells.set(fk(mid[0], mid[1]), { owner: "B", born: 0 });
+  return { cells, gen: 0, fading: 0, misses: 0 };
+}
+
+/** Places one random block touching the cluster, nearest the centre wins (with noise). */
+function growField(field, cols, rows) {
+  const { cells } = field;
+  const cr = rows / 2, cc = cols / 2;
+  // The empty squares touching the cluster: every new block starts on one.
+  const edge = [];
+  for (const k of cells.keys()) {
+    const r = Math.floor(k / 100), c = k % 100;
+    for (const [dr, dc] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+      const nr = r + dr, nc = c + dc;
+      if (nr >= 0 && nc >= 0 && nr < rows && nc < cols && !cells.has(fk(nr, nc))) edge.push([nr, nc]);
+    }
+  }
+  if (!edge.length) return false;
+  let best = null, bestScore = Infinity;
+  for (let tries = 0; tries < 60; tries++) {
+    const [ar, ac] = edge[Math.floor(Math.random() * edge.length)];
+    const id = Math.floor(Math.random() * BLOCKS.length);
+    const shape = rotateN(BLOCKS[id].cells, Math.floor(Math.random() * 4));
+    const [sr, sc] = shape[Math.floor(Math.random() * shape.length)];
+    const placed = shape.map(([r, c]) => [ar + r - sr, ac + c - sc]);
+    if (placed.some(([r, c]) => r < 0 || c < 0 || r >= rows || c >= cols || cells.has(fk(r, c)))) continue;
+    const score = placed.reduce((sum, [r, c]) => sum + Math.hypot(r - cr, (c - cc) * 1.15), 0) / placed.length + Math.random() * 3;
+    if (score < bestScore) { bestScore = score; best = placed; }
+  }
+  if (!best) return false;
+  const owner = Math.random() < 0.5 ? "A" : "B";
+  for (const [r, c] of best) cells.set(fk(r, c), { owner, born: field.gen + 1 });
+  return true;
+}
+
+function AmbientField({ colors, theme, paused }) {
   const reduced =
     typeof window !== "undefined" && window.matchMedia &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const animate = theme.motion && !reduced && !paused;
 
+  // Big enough to cover the screen even turned at an angle.
+  const [dims] = useState(() => {
+    const w = typeof window === "undefined" ? 1200 : window.innerWidth;
+    const h = typeof window === "undefined" ? 800 : window.innerHeight;
+    const n = Math.min(99, Math.ceil((Math.max(w, h) * 1.45) / FIELD_CELL));
+    // Restart once roughly FIELD_FILL of what's on screen is covered.
+    const limit = Math.min(900, Math.round(((w * h) / (FIELD_CELL * FIELD_CELL)) * FIELD_FILL));
+    return { cols: n, rows: n, limit };
+  });
+  const [field, setField] = useState(() => seedField(dims.cols, dims.rows));
+
   useEffect(() => {
     if (!animate) return;
     const id = setInterval(() => {
       setField((prev) => {
-        let nb = prev.board;
-        const fresh = new Set();
-        for (const owner of ["A", "B"]) {
-          const moves = enumerateMoves(nb, loadout, owner);
-          if (!moves.length) continue;
-          const m = moves[Math.floor(Math.random() * moves.length)];
-          nb = nb.map((row) => [...row]);
-          for (const [r, c] of m.cells) { nb[r][c] = owner; fresh.add(key(r, c)); }
-        }
-        if (!fresh.size) return { board: initialBoard(), fresh: new Set(), gen: prev.gen + 1 };
-        return { board: nb, fresh, gen: prev.gen + 1 };
+        // Fading out: wait for the fade to finish, then start again from the centre.
+        if (prev.fading) return prev.fading >= 3 ? seedField(dims.cols, dims.rows) : { ...prev, fading: prev.fading + 1 };
+        const next = { cells: new Map(prev.cells), gen: prev.gen + 1, fading: 0, misses: prev.misses };
+        const grew = growField(next, dims.cols, dims.rows) + growField(next, dims.cols, dims.rows);
+        // A crowded spot can refuse a block; only give up after a run of refusals.
+        next.misses = grew ? 0 : prev.misses + 1;
+        if (next.misses >= 6 || next.cells.size >= dims.limit) return { ...prev, fading: 1 };
+        return next;
       });
-    }, 520);
+    }, FIELD_TICK_MS);
     return () => clearInterval(id);
-  }, [animate, loadout]);
+  }, [animate, dims]);
 
   const ink = { A: colors.you, B: colors.rival, S: colors.special };
+  const size = FIELD_CELL - 6;
 
-  // A game drawing itself in the margins: faint, slow, no light effects.
   return (
     <div aria-hidden="true" className="absolute inset-0 overflow-hidden pointer-events-none">
-      {/* The board lies tilted in perspective, like a sheet left on a desk. */}
       <div style={{
         position: "absolute", left: "50%", top: "50%",
-        width: "min(118vw, 60vh)", aspectRatio: "1 / 2", opacity: 0.3,
-        transform: "translate(-50%, -50%) perspective(1100px) rotateX(38deg) rotateZ(-24deg) scale(1.25)",
+        width: dims.cols * FIELD_CELL, height: dims.rows * FIELD_CELL,
+        transform: "translate(-50%, -50%) rotate(-14deg)",
+        opacity: field.fading ? 0 : 0.34,
+        transition: "opacity 900ms ease",
       }}>
-        <div style={{ display: "grid", gridTemplateColumns: `repeat(${COLS}, 1fr)`, gridTemplateRows: `repeat(${ROWS}, 1fr)`, gap: 6, width: "100%", height: "100%" }}>
-          {field.board.map((row, r) =>
-            row.map((v, c) => {
-              const k = key(r, c);
-              return (
-                <div key={k} className={field.fresh.has(k) && animate ? "tb-boot" : undefined}>
-                  {v && <Ink size={40} fluid color={ink[v]} {...inkOf(v)} seed={r * COLS + c} />}
-                </div>
-              );
-            })
-          )}
-        </div>
+        {[...field.cells].map(([k, v]) => {
+          const r = Math.floor(k / 100), c = k % 100;
+          return (
+            <div key={k} className={v.born === field.gen && animate ? "tb-boot" : undefined}
+              style={{ position: "absolute", left: c * FIELD_CELL + 3, top: r * FIELD_CELL + 3, width: size, height: size }}>
+              <Ink size={size} color={ink[v.owner]} {...inkOf(v.owner)} seed={r * 7 + c} />
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -2146,13 +2228,13 @@ function Menu({ onPick, loadout, setLoadout, colors, profile, status, name, rena
 
   return (
     <div className="tb-screen tb-safe relative w-full flex items-center justify-center px-5 font-mono overflow-hidden" style={{ background: UI.ground, color: UI.text }}>
-      <AmbientField loadout={loadout} colors={colors} theme={theme} paused={!!modal} />
-      <div className="absolute inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse at 50% 46%, color-mix(in srgb, var(--tb-ground) 78%, transparent) 0%, color-mix(in srgb, var(--tb-ground) 60%, transparent) 45%, transparent 80%)" }} />
+      <AmbientField colors={colors} theme={theme} paused={!!modal} />
+      <div className="absolute inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse at 50% 46%, color-mix(in srgb, var(--tb-ground) 45%, transparent) 0%, color-mix(in srgb, var(--tb-ground) 20%, transparent) 50%, transparent 80%)" }} />
 
       <div className="relative w-full" style={{ maxWidth: 330 }}>
         <div className="text-center mb-9">
           <div className="tb-display text-[68px] leading-none tracking-[0.16em]"
-            style={{ marginRight: "-0.16em", color: UI.text }}>Mino</div>
+            style={{ marginRight: "-0.16em", color: UI.text }}>MINO</div>
           <Flourish width={170} />
         </div>
 

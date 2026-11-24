@@ -11,7 +11,7 @@ import { frameUrl, frameImage, ruleUrl, shadeUrl, withAlpha, GRAIN_URL } from ".
 import { FX } from "./tuning.js";
 
 export const PRESETS = {
-  // Default: soft graphite and coloured pencil on black paper.
+  // Soft graphite and coloured pencil on black paper.
   graphite: {
     label: "GRAPHITE",
     ground: "#161514", panel: "#1C1B19", line: "#4B4843", cell: "#1F1E1B",
@@ -105,8 +105,8 @@ export const STROKES = {
 export const GRID_GAPS = [0, 1, 2, 3, 5];
 
 export const defaultTheme = () => ({
-  preset: "graphite",
-  ...stripLabel(PRESETS.graphite),
+  preset: "slate",
+  ...stripLabel(PRESETS.slate),
   stroke: "hatch",
   gap: 2,
   colorblind: false,
@@ -127,8 +127,9 @@ export function applyPreset(theme, key) {
 /** Any manual colour edit drops the preset label — it isn't that preset any more. */
 export const editTheme = (theme, patch) => ({ ...theme, ...patch, preset: "custom" });
 
-// v3: pencil. Older saves were for looks that no longer exist.
-const KEY = "tb:theme:v3";
+// v4: Slate became the default. Bumping the key moves everyone onto it once;
+// after that their choices are kept as usual.
+const KEY = "tb:theme:v4";
 
 export function loadTheme() {
   try {
