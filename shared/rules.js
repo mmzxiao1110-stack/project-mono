@@ -13,7 +13,7 @@ export const RULES = {
      BOARD AND MATCH LENGTH
      ---------------------------------------------------------- */
   size: 10,        // the board is size × size
-  turns: 15,       // rounds per match. Simulated on 10×10: ~1.5 line clears and ~2.6 forced passes a game; 15 and 18 rank skill equally well
+  turns: 25,       // rounds per match. With delete and pin the board never clogs; 25 ranks skill well (simulated) and keeps draws near 12%
   // A match also ends early once neither player can place ANY piece from
   // their deck anywhere ("locked").
 
@@ -40,6 +40,27 @@ export const RULES = {
   clearRows: true,
   clearColumns: true,
   restoreHome: true, // a player wiped to nothing gets their starting domino back
+
+  /* ----------------------------------------------------------
+     THREE ACTIONS
+     Each turn you place OR delete, and it uses up your current piece:
+       place   your piece, as always
+       delete  1–4 connected squares — anyone's, but never pinned ones.
+               Every square you delete gives your OPPONENT one pin.
+     and you may also
+       pin     up to 4 connected squares of yours, paid from your pin
+               meter. Pinned squares are permanent: line clears and
+               deletes skip them. (With pinIsFree off, pinning is a turn
+               of its own instead.)
+     Order within a turn: pins, then deletes, then placements, then lines.
+     ---------------------------------------------------------- */
+  actions: true,          // false = place-only (the old game)
+  deleteMax: 4,
+  connectDiagonal: false, // may a delete/pin shape join at corners?
+  pinOwnOnly: true,       // pin only your own squares (else any square with ink)
+  pinCap: 8,              // most pins you can bank
+  pinIsFree: true,        // pins ride along with your action instead of taking the turn (simulated: as a turn of its own, pinning was never worth it)
+  monoPiece: false,       // add the single square to the bag (8 pieces)
 
   /* ----------------------------------------------------------
      THE CENTRE

@@ -249,16 +249,21 @@ class Net {
     this.bumpAuth();
   }
 
-  move({ turn, handIdx, rot, pos }) {
-    this.send({ t: "move", turn, handIdx, rot, pos });
+  move({ turn, handIdx, rot, pos, pins }) {
+    this.send({ t: "move", turn, handIdx, rot, pos, ...(pins ? { pins } : null) });
+  }
+
+  /** Delete 1–4 connected squares; may carry free pins. */
+  erase({ turn, cells, pins }) {
+    this.send({ t: "delete", turn, cells, ...(pins ? { pins } : null) });
   }
 
   forfeit() {
     this.send({ t: "forfeit" });
   }
 
-  discard({ turn, handIdx }) {
-    this.send({ t: "discard", turn, handIdx });
+  discard({ turn, handIdx, pins }) {
+    this.send({ t: "discard", turn, handIdx, ...(pins ? { pins } : null) });
   }
 
   /* ---------- inbound ---------- */
@@ -391,6 +396,8 @@ class Net {
           queue: m.queue,     // your next pieces, in order
           pass: m.pass,       // which pass through your deck
           opp: m.opp,         // { piece, queue, pass } — both queues are public
+          pins: m.pins || null,     // permanent squares
+          meters: m.meters || { me: 0, opp: 0 },
           deadline: m.deadline,
           submitted: !!m.alreadyMoved,
           oppReady: false,
@@ -413,6 +420,8 @@ class Net {
       case "reveal":
         this.patch({
           board: m.board,
+          pins: m.pins || this.match?.pins || null,
+          meters: m.meters || this.match?.meters,
           reveal: { moves: m.moves, contested: m.contested, cleared: m.cleared || [], lines: m.lines || { rows: [], cols: [] }, score: m.score, turn: m.turn },
           submitted: false,
           oppReady: false,

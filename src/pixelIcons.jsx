@@ -6,6 +6,28 @@
  * `size` is accepted and ignored on purpose: icons are always 9 pixels.
  */
 const ART = {
+  eraser: [
+    ".........",
+    ".....##..",
+    "....####.",
+    "...######",
+    "..#.####.",
+    ".#...##..",
+    "#...##...",
+    ".#.##....",
+    "..##.####",
+  ],
+  pin: [
+    "..#####..",
+    "...###...",
+    "...###...",
+    "..#####..",
+    ".#######.",
+    "....#....",
+    "....#....",
+    "....#....",
+    "....#....",
+  ],
   rotate: [
     "...####..",
     "..#....#.",
@@ -298,3 +320,5 @@ export const Lock = make("lock");
 export const MailCheck = make("mail");
 export const ShieldAlert = make("alert");
 export const BookOpen = make("book");
+export const Eraser = make("eraser");
+export const Pin = make("pin");

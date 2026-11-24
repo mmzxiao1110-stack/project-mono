@@ -13,7 +13,7 @@
  *             is good; leaving a line nearly full and mostly its own is a
  *             risk the opponent can cash in
  */
-import { ROWS, COLS, key, enumerateMoves, isCentre, fullLines } from "./engine.js";
+import { ROWS, COLS, key, enumerateMoves, isCentre, fullLines, resolveTurn, nextMeters, isLegalDelete, isLegalPin } from "./engine.js";
 import { RULES } from "./rules.js";
 
 function frontierSize(board, owner) {
@@ -85,5 +85,108 @@ export function aiPickMove(board, piece, owner, level, levels) {
       Math.random() * w.noise;
     if (s > bestScore) { bestScore = s; best = m; }
   }
+  return best;
+}
+
+/* ------------------------------------------------------------------
+   Three actions: place, delete, and (free) pins.
+   Weights found by self-play tuning (see the simulation notes in
+   rules.js). The level scales the weights and the noise like above.
+   ------------------------------------------------------------------ */
+
+const TUNED = { front: 0.2, risk: 0.19, meter: 0.25, pin: 0.42 };
+const N8 = [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]];
+const N4 = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+const val = (r, c) => (isCentre(r, c) ? RULES.centreValue : 1);
+const other = (o) => (o === "A" ? "B" : "A");
+
+/** Own squares exposed to a line clear (in rows/columns with 1–2 gaps), unpinned. */
+function exposure(b, pins, o) {
+  let e = 0;
+  const scan = (cells) => {
+    let empty = 0;
+    for (const [r, c] of cells) if (b[r][c] === null) empty++;
+    if (empty < 1 || empty > 2) return;
+    for (const [r, c] of cells) if (b[r][c] === o && !pins[r][c]) e += empty === 1 ? 1 : 0.4;
+  };
+  for (let r = 0; r < ROWS; r++) scan(Array.from({ length: COLS }, (_, c) => [r, c]));
+  for (let c = 0; c < COLS; c++) scan(Array.from({ length: ROWS }, (_, r) => [r, c]));
+  return e;
+}
+
+function evalState(b, pins, meters, o, w) {
+  let me = 0, them = 0, pinMe = 0;
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+    const v = b[r][c]; if (!v) continue;
+    if (v === o) { me += val(r, c); if (pins[r][c]) pinMe++; } else them += val(r, c);
+  }
+  return (me - them) + w.front * (frontierSize(b, o) - frontierSize(b, other(o)))
+    - w.risk * (exposure(b, pins, o) - exposure(b, pins, other(o)))
+    + w.meter * (meters[o] - meters[other(o)]) + w.pin * pinMe;
+}
+
+/** Connected sets of 1..max squares where ok(r, c). */
+export function shapesWhere(ok, max) {
+  const out = [], seen = new Set();
+  const dirs = RULES.connectDiagonal ? N8 : N4;
+  const grow = (set) => {
+    const sig = set.map(([r, c]) => r * COLS + c).sort((a, b) => a - b).join(",");
+    if (seen.has(sig)) return; seen.add(sig); out.push(set);
+    if (set.length >= max) return;
+    for (const [r, c] of set) for (const [dr, dc] of dirs) {
+      const nr = r + dr, nc = c + dc;
+      if (nr < 0 || nc < 0 || nr >= ROWS || nc >= COLS || !ok(nr, nc) || set.some(([a, b2]) => a === nr && b2 === nc)) continue;
+      grow([...set, [nr, nc]]);
+    }
+  };
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (ok(r, c)) grow([[r, c]]);
+  return out;
+}
+
+/** Free pins: the most threatened of your squares (the centre, then those touching the enemy). */
+function pickPins(st, o, move) {
+  const n = Math.min(st.meters[o], RULES.deleteMax);
+  if (!RULES.pinIsFree || n <= 0) return null;
+  const { board: b, pins } = st;
+  const thr = (r, c) => (isCentre(r, c) ? 3 : 0) + N8.filter(([dr, dc]) => { const v = b[r + dr]?.[c + dc]; return v && v !== o; }).length * 0.5;
+  const banned = new Set(move && move.type === "delete" ? move.cells.map(([r, c]) => key(r, c)) : []);
+  const opts = shapesWhere((r, c) => b[r][c] === o && !pins[r][c] && !banned.has(key(r, c)), n);
+  if (!opts.length) return null;
+  const score = (cells) => cells.reduce((s, [r, c]) => s + thr(r, c), 0) + Math.random() * 0.1;
+  return opts.reduce((x, y) => (score(y) > score(x) ? y : x));
+}
+
+/**
+ * Picks this turn's action: { type: "place" | "delete", cells, blockId?, pins? },
+ * or null to pass. `st` is { board, pins, meters }.
+ */
+export function aiPickAction(st, piece, owner, level, levels) {
+  if (!RULES.actions) {
+    const m = aiPickMove(st.board, piece, owner, level, levels);
+    return m ? { type: "place", cells: m.cells, blockId: m.blockId } : null;
+  }
+  const t = levels > 1 ? (level - 1) / (levels - 1) : 1;
+  const w = { front: TUNED.front * t, risk: TUNED.risk * t, meter: TUNED.meter * t, pin: TUNED.pin * t };
+  const noise = 8 * (1 - t) + 0.05;
+  const { board: b, pins, meters } = st;
+  const list = enumerateMoves(b, [piece], owner).map((m) => ({ type: "place", cells: m.cells, blockId: m.blockId }));
+  const dels = shapesWhere((r, c) => b[r][c] !== null && !pins[r][c], RULES.deleteMax);
+  const q = (cells) => cells.reduce((s, [r, c]) => s + (b[r][c] === owner ? -val(r, c) : val(r, c)), 0);
+  dels.sort((x, y) => q(y) - q(x));
+  for (const d of dels.slice(0, 12)) list.push({ type: "delete", cells: d });
+  if (!list.length) return null;
+  let best = null, bs = -Infinity;
+  for (const m of list) {
+    const res = resolveTurn(b, owner === "A" ? m : null, owner === "B" ? m : null, pins);
+    const nm = nextMeters(meters, owner === "A" ? m : null, owner === "B" ? m : null, res.deleted);
+    const s = evalState(res.board, res.pins, nm, owner, w) + Math.random() * noise;
+    if (s > bs) { bs = s; best = m; }
+  }
+  // Weaker players forget to pin.
+  if (best && Math.random() < 0.3 + 0.7 * t) {
+    const p = pickPins(st, owner, best);
+    if (p && isLegalPin(b, pins, p, owner, meters[owner])) best = { ...best, pins: p };
+  }
+  if (best && best.type === "delete" && !isLegalDelete(b, pins, best.cells)) return null;
   return best;
 }

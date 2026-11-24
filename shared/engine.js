@@ -31,8 +31,11 @@ export const BLOCKS = [
   { name: "L", cells: [[0, 2], [1, 0], [1, 1], [1, 2]] },
 ];
 
-// Everyone plays all seven: there's no deck to build.
-export const DEFAULT_LOADOUT = BLOCKS.map((_, i) => i);
+// The single square: only dealt when RULES.monoPiece is on.
+export const MONO = BLOCKS.push({ name: "M", cells: [[0, 0]] }) - 1;
+
+// Everyone plays the same pieces: there's no deck to build.
+export const DEFAULT_LOADOUT = BLOCKS.map((_, i) => i).filter((i) => i !== MONO || RULES.monoPiece);
 
 export const sizeOf = (n) => (n <= 3 ? "SMALL" : n <= 7 ? "MEDIUM" : "BIG");
 
@@ -158,18 +161,98 @@ export function fullLines(board) {
   return { rows, cols };
 }
 
+/* ---------- delete and pin ---------- */
+
+export const emptyPins = () => Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+const isPinned = (pins, r, c) => !!(pins && pins[r] && pins[r][c]);
+
+/** Are these squares one connected shape (sides only, or corners too per RULES.connectDiagonal)? */
+export function connected(cells) {
+  if (!cells.length) return false;
+  const want = new Set(cells.map(([r, c]) => key(r, c)));
+  const seen = new Set([key(...cells[0])]);
+  const stack = [cells[0]];
+  while (stack.length) {
+    const [r, c] = stack.pop();
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+      if (!dr && !dc) continue;
+      if (dr && dc && !RULES.connectDiagonal) continue;
+      const k = key(r + dr, c + dc);
+      if (r + dr < 0 || c + dc < 0 || r + dr >= ROWS || c + dc >= COLS) continue;
+      if (want.has(k) && !seen.has(k)) { seen.add(k); stack.push([r + dr, c + dc]); }
+    }
+  }
+  return seen.size === want.size;
+}
+
+const distinctOnBoard = (cells) => {
+  if (!Array.isArray(cells)) return false;
+  const ks = new Set();
+  for (const p of cells) {
+    if (!Array.isArray(p)) return false;
+    const [r, c] = p;
+    if (!Number.isInteger(r) || !Number.isInteger(c) || r < 0 || c < 0 || r >= ROWS || c >= COLS) return false;
+    ks.add(key(r, c));
+  }
+  return ks.size === cells.length;
+};
+
+/** 1–4 connected squares with ink, none of them pinned. */
+export function isLegalDelete(board, pins, cells) {
+  if (!RULES.actions || !distinctOnBoard(cells) || cells.length < 1 || cells.length > RULES.deleteMax) return false;
+  for (const [r, c] of cells) if (board[r][c] === null || isPinned(pins, r, c)) return false;
+  return connected(cells);
+}
+
+/** Up to min(4, your meter) connected squares, yours (or any ink), not already pinned. */
+export function isLegalPin(board, pins, cells, owner, meter) {
+  if (!RULES.actions || !distinctOnBoard(cells) || cells.length < 1 || cells.length > Math.min(RULES.deleteMax, meter)) return false;
+  for (const [r, c] of cells) {
+    const v = board[r][c];
+    if (v === null || isPinned(pins, r, c)) return false;
+    if (RULES.pinOwnOnly && v !== owner) return false;
+  }
+  return connected(cells);
+}
+
 /**
- * Simultaneous resolution, in order:
- *   1. Both pieces land. A square both claimed stays empty.
- *   2. Every full row and column is wiped — both colours.
- *   3. A player left with no ink gets their starting domino back.
- * Returns the new board, the contested squares, the cleared lines, and every
- * square that lost its ink (with the colour it had) for the client to animate.
+ * Simultaneous resolution. A move is { type: "place", cells } (a plain
+ * { cells } is a placement too), { type: "delete", cells },
+ * { type: "pin", cells }, or null for a pass. In order:
+ *   1. Pins set.
+ *   2. Deletes remove ink (never pinned squares).
+ *   3. Both pieces land. A square both claimed stays empty.
+ *   4. Every full row and column is wiped — both colours, except pinned squares.
+ *   5. A player left with no ink gets their starting domino back.
+ * Returns the new board and pins, the contested squares, the cleared lines,
+ * every square that lost its ink (with the colour it had) for the client to
+ * animate, and how many squares each side deleted (which feeds the OTHER
+ * side's pin meter).
  */
-export function resolveTurn(board, moveA, moveB) {
+export function resolveTurn(board, moveA, moveB, pins = null) {
+  const kind = (m) => (!m ? null : m.type || "place");
   const nb = board.map((row) => [...row]);
-  const aCells = moveA ? moveA.cells : [];
-  const bCells = moveB ? moveB.cells : [];
+  const np = pins ? pins.map((row) => [...row]) : emptyPins();
+
+  // A pin action, or (RULES.pinIsFree) pins added on top of any action.
+  for (const m of [moveA, moveB]) {
+    if (kind(m) === "pin") for (const [r, c] of m.cells) np[r][c] = true;
+    if (m && m.pins) for (const [r, c] of m.pins) np[r][c] = true;
+  }
+
+  const deleted = { A: 0, B: 0 };
+  const gone = [];
+  [["A", moveA], ["B", moveB]].forEach(([side, m]) => {
+    if (kind(m) !== "delete") return;
+    for (const [r, c] of m.cells) {
+      if (np[r][c]) continue; // pinned this very turn: it holds
+      deleted[side]++;
+      if (nb[r][c] !== null) { gone.push([r, c, nb[r][c]]); nb[r][c] = null; }
+    }
+  });
+
+  const aCells = kind(moveA) === "place" ? moveA.cells : [];
+  const bCells = kind(moveB) === "place" ? moveB.cells : [];
   const bKeys = new Set(bCells.map(([r, c]) => key(r, c)));
   const contested = aCells.filter(([r, c]) => bKeys.has(key(r, c)));
   const ck = new Set(contested.map(([r, c]) => key(r, c)));
@@ -181,17 +264,49 @@ export function resolveTurn(board, moveA, moveB) {
   const staged = nb.map((row) => [...row]);
 
   const lines = fullLines(nb);
-  for (const r of lines.rows) for (let c = 0; c < COLS; c++) nb[r][c] = null;
-  for (const c of lines.cols) for (let r = 0; r < ROWS; r++) nb[r][c] = null;
+  for (const r of lines.rows) for (let c = 0; c < COLS; c++) if (!np[r][c]) nb[r][c] = null;
+  for (const c of lines.cols) for (let r = 0; r < ROWS; r++) if (!np[r][c]) nb[r][c] = null;
 
   if (RULES.restoreHome) restoreHomes(nb);
 
-  const cleared = [];
+  const cleared = [...gone];
   for (let r = 0; r < ROWS; r++)
     for (let c = 0; c < COLS; c++)
       if (staged[r][c] !== null && nb[r][c] === null) cleared.push([r, c, staged[r][c]]);
 
-  return { board: nb, contested, lines, cleared };
+  return { board: nb, pins: np, contested, lines, cleared, deleted };
+}
+
+/**
+ * Checks a whole action against the board. Returns an error string, or null.
+ * move: { type: "place"|"delete"|"pin"|"pass", cells, pins? }. Placements
+ * are checked by the caller (they come as rotation + position); here they
+ * only need their extra pins checked.
+ */
+export function checkAction(board, pins, meter, side, move) {
+  if (!move) return null;
+  const extra = move.pins || null;
+  if (move.type === "delete") {
+    if (!isLegalDelete(board, pins, move.cells)) return "illegal delete";
+  } else if (move.type === "pin") {
+    if (RULES.pinIsFree) return "pins ride along with a move";
+    if (!isLegalPin(board, pins, move.cells, side, meter)) return "illegal pin";
+  } else if (move.type !== "place" && move.type !== "pass") return "unknown action";
+  if (extra) {
+    if (!RULES.pinIsFree) return "pinning takes your turn";
+    if (!isLegalPin(board, pins, extra, side, meter)) return "illegal pin";
+    if (move.type === "delete" && extra.some(([r, c]) => move.cells.some(([a, b]) => a === r && b === c))) return "can't pin what you delete";
+  }
+  return null;
+}
+
+/** Pin meters after a turn: what each side deleted goes to the other; pins spent come off. */
+export function nextMeters(meters, moveA, moveB, deleted) {
+  const spent = (m) => (m && m.type === "pin" ? m.cells.length : 0) + (m && m.pins ? m.pins.length : 0);
+  return {
+    A: Math.min(RULES.pinCap, meters.A - spent(moveA) + deleted.B),
+    B: Math.min(RULES.pinCap, meters.B - spent(moveB) + deleted.A),
+  };
 }
 
 /** Points: one per square you own, RULES.centreValue for each centre square. */
