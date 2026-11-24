@@ -2626,10 +2626,12 @@ export default function TurfBlocks() {
       }
       .tb-scroll { -webkit-overflow-scrolling: touch; scrollbar-width: none; }
       .tb-scroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
-      /* Type: an old-book serif everywhere. The class name is historical. */
-      .font-mono { font-family: "IM Fell English", "Iowan Old Style", Georgia, serif; font-feature-settings: "liga" 1; }
-      .font-mono .italic, .font-mono em { font-family: "IM Fell English", Georgia, serif; font-style: italic; }
-      .tb-display { font-family: "IM Fell English SC", "IM Fell English", Georgia, serif; }
+      /* Type: Agrave Pro, a handwriting face, everywhere. The class name is historical.
+         It has no italic, so "italic" text is set lighter instead of being slanted
+         by the browser, which mangles handwriting. */
+      .font-mono { font-family: "Agrave Pro", "Segoe Print", "Bradley Hand", cursive; }
+      .font-mono .italic, .font-mono em { font-style: normal; font-weight: 300; }
+      .tb-display { font-family: "Agrave Pro", cursive; font-weight: 500; }
       .lucide { stroke-width: 1.6; }
 
       /* Paper: grain and a vignette over everything, drawn once, never animated. */
