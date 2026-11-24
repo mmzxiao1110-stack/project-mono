@@ -143,16 +143,25 @@ export function shapesWhere(ok, max) {
   return out;
 }
 
-/** Free pins: the most threatened of your squares (the centre, then those touching the enemy). */
+/** Pins for this turn: the most threatened of your squares (the centre, then those touching the enemy). */
 function pickPins(st, o, move) {
-  const n = Math.min(st.meters[o], RULES.deleteMax);
-  if (!RULES.pinIsFree || n <= 0) return null;
   const { board: b, pins } = st;
-  const thr = (r, c) => (isCentre(r, c) ? 3 : 0) + N8.filter(([dr, dc]) => { const v = b[r + dr]?.[c + dc]; return v && v !== o; }).length * 0.5;
+  let held = 0;
+  if (Number.isFinite(RULES.pinHoldMax)) for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (pins[r][c] && b[r][c] === o) held++;
+  const n = Math.min(st.meters[o], RULES.pinMax, Number.isFinite(RULES.pinHoldMax) ? RULES.pinHoldMax - held : Infinity);
+  if (n <= 0) return null;
+  const thr = (r, c) => (isCentre(r, c) ? 3 : 0) + N8.filter(([dr, dc]) => { const v = b[r + dr]?.[c + dc]; return v && v !== o; }).length * 0.5 + Math.random() * 0.1;
   const banned = new Set(move && move.type === "delete" ? move.cells.map(([r, c]) => key(r, c)) : []);
-  const opts = shapesWhere((r, c) => b[r][c] === o && !pins[r][c] && !banned.has(key(r, c)), n);
+  const mine = (r, c) => b[r][c] === o && !pins[r][c] && !banned.has(key(r, c));
+  if (!RULES.pinConnected) {
+    const all = [];
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (mine(r, c)) all.push([thr(r, c), [r, c]]);
+    all.sort((x, y) => y[0] - x[0]);
+    return all.length ? all.slice(0, n).map((x) => x[1]) : null;
+  }
+  const opts = shapesWhere(mine, Math.min(n, 4));
   if (!opts.length) return null;
-  const score = (cells) => cells.reduce((s, [r, c]) => s + thr(r, c), 0) + Math.random() * 0.1;
+  const score = (cells) => cells.reduce((s, [r, c]) => s + thr(r, c), 0);
   return opts.reduce((x, y) => (score(y) > score(x) ? y : x));
 }
 
@@ -182,8 +191,8 @@ export function aiPickAction(st, piece, owner, level, levels) {
     const s = evalState(res.board, res.pins, nm, owner, w) + Math.random() * noise;
     if (s > bs) { bs = s; best = m; }
   }
-  // Weaker players forget to pin.
-  if (best && Math.random() < 0.3 + 0.7 * t) {
+  // Weaker players forget to pin. (Pins only ride along when pinning is free.)
+  if (best && RULES.pinIsFree && Math.random() < 0.3 + 0.7 * t) {
     const p = pickPins(st, owner, best);
     if (p && isLegalPin(b, pins, p, owner, meters[owner])) best = { ...best, pins: p };
   }

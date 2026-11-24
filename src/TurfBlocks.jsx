@@ -540,7 +540,17 @@ function useActions({ board, pins, owner, meter, enabled, boardRef, flip = false
   const [staged, setStaged] = useState(null); // free pins, confirmed, riding along with the move
   const pinsSafe = pins || EMPTY_PINS;
 
-  const max = mode === "delete" ? RULES.deleteMax : Math.min(RULES.deleteMax, meter);
+  // Pins: no more than the meter, the per-pin limit, and what you may still hold.
+  const held = useMemo(() => {
+    if (!board || !Number.isFinite(RULES.pinHoldMax)) return 0;
+    let n = 0;
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (pinsSafe[r][c] && board[r][c] === owner) n++;
+    return n;
+  }, [board, pinsSafe, owner]);
+  const max = mode === "delete" ? RULES.deleteMax
+    : Math.max(0, Math.min(RULES.pinMax, meter, Number.isFinite(RULES.pinHoldMax) ? RULES.pinHoldMax - held : Infinity));
+  // Scattered pins (RULES.pinConnected off): squares needn't touch.
+  const loose = mode === "pin" && !RULES.pinConnected;
   const stagedKeys = useMemo(() => new Set((staged || []).map(([r, c]) => key(r, c))), [staged]);
   const ok = useCallback((r, c) => {
     if (!board || r < 0 || c < 0 || r >= ROWS || c >= COLS) return false;
@@ -569,7 +579,7 @@ function useActions({ board, pins, owner, meter, enabled, boardRef, flip = false
     let cur = cells;
     for (let guard = 0; guard < 8; guard++) {
       if (cur.length >= max || cur.some(([a, b]) => a === target[0] && b === target[1])) return cur;
-      if (touches(cur, target)) return ok(...target) ? [...cur, target] : cur;
+      if (loose || touches(cur, target)) return ok(...target) ? [...cur, target] : cur;
       // Step from the nearest square in the shape toward the target, the long way first.
       let near = cur[0], nd = Infinity;
       for (const q of cur) { const d = Math.abs(q[0] - target[0]) + Math.abs(q[1] - target[1]); if (d < nd) { nd = d; near = q; } }
@@ -579,14 +589,19 @@ function useActions({ board, pins, owner, meter, enabled, boardRef, flip = false
       cur = [...cur, step];
     }
     return cur;
-  }, [max, ok]);
+  }, [max, ok, loose]);
 
   const onPointerDown = useCallback((e) => {
     if (!enabled || mode === "place" || e.button > 0) return;
     e.preventDefault();
     const start = cellAt(e.clientX, e.clientY);
-    if (!start || !ok(...start) || max < 1) { setTrace([]); return; }
-    let cur = [start];
+    if (!start || !ok(...start) || max < 1) { if (!loose) setTrace([]); return; }
+    // Scattered pins: a tap adds or removes one square; a drag adds more.
+    let cur;
+    if (loose) {
+      const had = trace.some(([a, b]) => a === start[0] && b === start[1]);
+      cur = had ? trace.filter(([a, b]) => a !== start[0] || b !== start[1]) : trace.length < max ? [...trace, start] : trace;
+    } else cur = [start];
     setTrace(cur);
     const onMove = (ev) => {
       ev.preventDefault();
@@ -606,7 +621,7 @@ function useActions({ board, pins, owner, meter, enabled, boardRef, flip = false
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onUp);
     window.addEventListener("touchmove", noScroll, { passive: false });
-  }, [enabled, mode, cellAt, ok, grow, max]);
+  }, [enabled, mode, cellAt, ok, grow, max, loose, trace]);
 
   /** 1 / 2 / 3: switch modes. Pressing the mode you're in again goes back to placing. */
   const setMode = useCallback((m) => {
@@ -1026,8 +1041,8 @@ function BoardGrid({
   const art = Math.round(cell / P);
   const clip = art >= 9 ? CLIP : CLIP1;
   const shine = glassShine(art);
-  // A pinned square wears a chessboard: four by four checks, in whole pixels.
-  const q = Math.max(1, Math.floor(art / 4)) * P;
+  // A pinned square wears a fine chessboard: one-pixel checks.
+  const q = P;
   const CHESS = `repeating-conic-gradient(rgba(255,255,255,.26) 0 25%, rgba(0,0,0,.30) 0 50%) 0 0 / ${2 * q}px ${2 * q}px`;
   const DITHER = (col) => `repeating-conic-gradient(${col} 0 25%, transparent 0 50%) 0 0 / ${2 * P}px ${2 * P}px`;
 

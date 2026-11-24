@@ -18,7 +18,7 @@ import { saveProfile } from "./store.js";
 
 /** Squares from a client: a short list of [row, col] integer pairs, or null. */
 function cleanCells(v) {
-  if (!Array.isArray(v) || v.length < 1 || v.length > 4) return null;
+  if (!Array.isArray(v) || v.length < 1 || v.length > Math.max(RULES.deleteMax, RULES.pinMax)) return null;
   const out = [];
   for (const p of v) {
     if (!Array.isArray(p) || p.length !== 2 || !Number.isInteger(p[0]) || !Number.isInteger(p[1])) return null;

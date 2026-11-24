@@ -59,6 +59,10 @@ export const RULES = {
   connectDiagonal: false, // may a delete/pin shape join at corners?
   pinOwnOnly: true,       // pin only your own squares (else any square with ink)
   pinCap: 8,              // most pins you can bank
+  pinPerDelete: 1,        // pins your opponent gets for each square you delete
+  pinMax: 4,              // most squares one pin covers
+  pinConnected: true,     // must pinned squares touch each other?
+  pinHoldMax: Infinity,   // most pinned squares one player may hold at once
   pinIsFree: true,        // pins ride along with your action instead of taking the turn (simulated: as a turn of its own, pinning was never worth it)
   monoPiece: false,       // add the single square to the bag (8 pieces)
 
