@@ -1,14 +1,16 @@
 /**
  * One authoritative match.
  *
- * The server owns the shuffle, both hands, the board, and the clock.
- * A client can only ever say "I play hand slot 2, rotated once, at (4,6)".
+ * The server owns the shuffle, both queues, the board, and the clock.
+ * A client can only ever say "I play my current piece, rotated once, at (4,6)"
+ * or "I pass".
  * Everything else is derived here, which is what makes the simultaneous
  * reveal safe: neither player's move is transmitted until both have landed.
  */
 import {
-  BLOCKS, TURNS, GOLDEN_SLOT, initialBoard, isLegal, rotateN, absCells, boundsOf,
-  resolveTurn, scoreOf, newDeck, cycleHand, hasAnyMove, goldenCycleFor, ROWS, COLS,
+  BLOCKS, TURNS, initialBoard, isLegal, rotateN, absCells, boundsOf,
+  resolveTurn, scoreOf, newDeck, advanceDeck, currentPiece, currentPass, upcoming,
+  hasAnyMove, ROWS, COLS,
 } from "../shared/engine.js";
 import { glickoUpdate, rankIndexFor } from "../shared/glicko.js";
 import { saveProfile } from "./store.js";
@@ -27,7 +29,7 @@ const IDLE_MS = 180_000;
 let nextId = 1;
 
 // Client numbers arrive as JSON: accept real numbers only. Number() on an
-// object can throw, and a string like "1e400" is not a hand slot.
+// object can throw, and a string like "1e400" is not a position.
 const num = (v) => (typeof v === "number" ? v : NaN);
 
 export class Match {
@@ -47,8 +49,8 @@ export class Match {
     this.graceTimers = { A: null, B: null };
 
     this.seats = {
-      A: { ...seats[0], side: "A", connected: true, deck: newDeck(seats[0].loadout), goldenPlays: 0 },
-      B: { ...seats[1], side: "B", connected: true, deck: newDeck(seats[1].loadout), goldenPlays: 0 },
+      A: { ...seats[0], side: "A", connected: true, deck: newDeck(seats[0].loadout) },
+      B: { ...seats[1], side: "B", connected: true, deck: newDeck(seats[1].loadout) },
     };
 
     // Snapshot ratings at match start — this is what Glicko scores against.
@@ -80,20 +82,14 @@ export class Match {
       name: p.name,
       rating: Math.round(p.rating.r),
       rd: Math.round(p.rating.rd),
-      // Both players get to study each other's eight blocks.
       loadout: this.seats[side].loadout,
     };
   }
 
-  goldenBlock(side) {
-    return this.seats[side].loadout[GOLDEN_SLOT];
-  }
-
-  /** Charged AND actually holding it — a charge you can't play isn't a threat. */
-  goldenArmed(side) {
-    const seat = this.seats[side];
-    const id = this.goldenBlock(side);
-    return seat.goldenPlays >= goldenCycleFor(id) && seat.deck.hand.includes(id);
+  /** A seat's queue as the client sees it — both players see both queues. */
+  queueOf(side) {
+    const d = this.seats[side].deck;
+    return { piece: currentPiece(d), queue: upcoming(d), pass: currentPass(d) };
   }
 
   start() {
@@ -103,34 +99,31 @@ export class Match {
       you: side,
       opponent: this.publicSeat(this.other(side)),
       loadout: this.seats[side].loadout,
-      goldenSlot: GOLDEN_SLOT,
       turns: TURNS,
     }));
     this.sendTurn();
   }
 
-  /** Each player sees their own hand and only a count of the opponent's. */
-  sendTurn() {
-    if (this.over) return;
-    this.deadline = null;
-    this.both((side) => ({
+  turnMessage(side) {
+    const mine = this.queueOf(side);
+    return {
       t: "turn",
       matchId: this.id,
       turn: this.turn,
       board: this.board,
-      hand: this.seats[side].deck.hand,
-      bagLeft: this.seats[side].deck.bag.length,
-      oppHandCount: this.seats[this.other(side)].deck.hand.length,
-      golden: {
-        blockId: this.goldenBlock(side),
-        plays: this.seats[side].goldenPlays,
-        need: goldenCycleFor(this.goldenBlock(side)),
-        armed: this.goldenArmed(side),
-        oppArmed: this.goldenArmed(this.other(side)),
-      },
-      deadline: null,
-    }));
+      piece: mine.piece,
+      hand: [mine.piece],          // older clients read the hand; one piece now
+      queue: mine.queue,
+      pass: mine.pass,
+      opp: this.queueOf(this.other(side)),
+      deadline: this.deadline || null,
+    };
+  }
 
+  sendTurn() {
+    if (this.over) return;
+    this.deadline = null;
+    this.both((side) => this.turnMessage(side));
     clearTimeout(this.timer);
     // Nobody is on the clock yet — only the idle backstop is armed.
     this.timer = setTimeout(() => this.onIdle(), IDLE_MS);
@@ -148,7 +141,7 @@ export class Match {
   onTimeout() {
     if (this.over) return;
     for (const side of ["A", "B"]) {
-      if (this.pending[side] === undefined) this.applyDiscard(side, 0, true);
+      if (this.pending[side] === undefined) this.applyDiscard(side);
     }
     this.maybeResolve();
   }
@@ -157,24 +150,19 @@ export class Match {
   onIdle() {
     if (this.over) return;
     for (const side of ["A", "B"]) {
-      if (this.pending[side] === undefined) this.applyDiscard(side, 0, true);
+      if (this.pending[side] === undefined) this.applyDiscard(side);
     }
     this.maybeResolve();
   }
 
-  /** Validates and stores a placement. Returns an error string, or null. */
+  /** Validates and stores a placement of the current piece. Returns an error string, or null. */
   submitMove(side, msg) {
     if (this.over) return "match is over";
     if (msg.turn !== this.turn) return "wrong turn";
     if (this.pending[side] !== undefined) return "already submitted";
 
     const seat = this.seats[side];
-    const handIdx = num(msg.handIdx);
-    if (!Number.isInteger(handIdx) || handIdx < 0 || handIdx >= seat.deck.hand.length) {
-      return "no such card";
-    }
-
-    const blockId = seat.deck.hand[handIdx];
+    const blockId = currentPiece(seat.deck);
     const rot = Number.isInteger(msg.rot) ? msg.rot : 0;
     const pos = msg.pos;
     if (!Array.isArray(pos) || pos.length !== 2) return "bad position";
@@ -185,13 +173,10 @@ export class Match {
     if (!Number.isInteger(r) || !Number.isInteger(c)) return "bad position";
     if (r < 0 || c < 0 || r + h > ROWS || c + w > COLS) return "off the board";
 
-    // Golden status is decided here, never taken from the client.
-    const golden = blockId === this.goldenBlock(side) && this.goldenArmed(side);
-
     const cells = absCells(shape, [r, c]);
-    if (!isLegal(this.board, cells, side, { golden })) return "illegal placement";
+    if (!isLegal(this.board, cells, side)) return "illegal placement";
 
-    this.pending[side] = { handIdx, blockId, cells, golden, value: BLOCKS[blockId].cells.length };
+    this.pending[side] = { blockId, cells, value: BLOCKS[blockId].cells.length };
     this.send(side, { t: "ack", turn: this.turn });
     this.send(this.other(side), { t: "oppReady", turn: this.turn });
     this.startShotClock();
@@ -199,12 +184,12 @@ export class Match {
     return null;
   }
 
+  /** Passing: the current piece is spent without being placed. */
   submitDiscard(side, msg) {
     if (this.over) return "match is over";
     if (msg.turn !== this.turn) return "wrong turn";
     if (this.pending[side] !== undefined) return "already submitted";
-    const err = this.applyDiscard(side, num(msg.handIdx));
-    if (err) return err;
+    this.applyDiscard(side);
     this.send(side, { t: "ack", turn: this.turn });
     this.send(this.other(side), { t: "oppReady", turn: this.turn });
     this.startShotClock();
@@ -212,15 +197,8 @@ export class Match {
     return null;
   }
 
-  applyDiscard(side, handIdx, silent = false) {
-    const seat = this.seats[side];
-    if (!seat.deck.hand.length) { this.pending[side] = null; return null; }
-    if (!Number.isInteger(handIdx) || handIdx < 0 || handIdx >= seat.deck.hand.length) {
-      if (!silent) return "no such card";
-      handIdx = 0;
-    }
+  applyDiscard(side) {
     this.pending[side] = null; // null = passed, undefined = still thinking
-    this.pending[side + "_discard"] = handIdx;
     return null;
   }
 
@@ -232,23 +210,15 @@ export class Match {
     const res = resolveTurn(this.board, this.pending.A, this.pending.B);
     this.board = res.board;
 
-    // Consume the played or discarded block, then draw from the bag.
+    // Played or passed, the current piece is spent and the queue moves on.
     for (const side of ["A", "B"]) {
       const seat = this.seats[side];
-      const move = this.pending[side];
-      const idx = move ? move.handIdx : this.pending[side + "_discard"] ?? 0;
-      const played = seat.deck.hand[idx];
-
-      if (move && played === this.goldenBlock(side)) {
-        // Spending a charged golden piece resets it; otherwise it charges.
-        seat.goldenPlays = move.golden ? 0 : seat.goldenPlays + 1;
-      }
-      if (seat.deck.hand.length) seat.deck = cycleHand(seat.deck, idx, seat.loadout);
+      seat.deck = advanceDeck(seat.deck, seat.loadout);
     }
 
     const moves = {
-      A: this.pending.A ? { blockId: this.pending.A.blockId, cells: this.pending.A.cells, golden: this.pending.A.golden } : null,
-      B: this.pending.B ? { blockId: this.pending.B.blockId, cells: this.pending.B.cells, golden: this.pending.B.golden } : null,
+      A: this.pending.A ? { blockId: this.pending.A.blockId, cells: this.pending.A.cells } : null,
+      B: this.pending.B ? { blockId: this.pending.B.blockId, cells: this.pending.B.cells } : null,
     };
     const score = scoreOf(this.board);
 
@@ -259,19 +229,19 @@ export class Match {
       board: this.board,
       moves,
       contested: res.contested,
+      lines: res.lines,
       cleared: res.cleared,
       score,
     }));
 
     this.pending = { A: undefined, B: undefined };
 
-    const stuck =
-      !hasAnyMove(this.board, this.seats.A.deck.hand, "A", { goldenBlockId: this.goldenArmed("A") ? this.goldenBlock("A") : null }) &&
-      !hasAnyMove(this.board, this.seats.B.deck.hand, "B", { goldenBlockId: this.goldenArmed("B") ? this.goldenBlock("B") : null });
+    // Locked: neither player can place any piece of their deck anywhere.
+    const locked =
+      !hasAnyMove(this.board, this.seats.A.loadout, "A") &&
+      !hasAnyMove(this.board, this.seats.B.loadout, "B");
 
-    if (stuck) {
-      // Neither side can legally place anything — including with a charged
-      // golden piece. Nothing left to play for; call it here.
+    if (locked) {
       this.endReason = "locked";
       setTimeout(() => this.end(), REVEAL_MS);
     } else if (this.turn >= TURNS) {
@@ -388,28 +358,10 @@ export class Match {
       you: side,
       opponent: this.publicSeat(this.other(side)),
       loadout: this.seats[side].loadout,
-      goldenSlot: GOLDEN_SLOT,
       turns: TURNS,
       resumed: true,
     });
-    this.send(side, {
-      t: "turn",
-      matchId: this.id,
-      turn: this.turn,
-      board: this.board,
-      hand: this.seats[side].deck.hand,
-      bagLeft: this.seats[side].deck.bag.length,
-      oppHandCount: this.seats[this.other(side)].deck.hand.length,
-      golden: {
-        blockId: this.goldenBlock(side),
-        plays: this.seats[side].goldenPlays,
-        need: goldenCycleFor(this.goldenBlock(side)),
-        armed: this.goldenArmed(side),
-        oppArmed: this.goldenArmed(this.other(side)),
-      },
-      deadline: this.deadline,
-      alreadyMoved: this.pending[side] !== undefined,
-    });
+    this.send(side, { ...this.turnMessage(side), alreadyMoved: this.pending[side] !== undefined });
     return true;
   }
 }

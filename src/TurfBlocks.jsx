@@ -7,11 +7,11 @@ import {
 
 /* The rules live in one place and the server imports the same file. */
 import {
-  COLS, ROWS, TURNS, HAND_SIZE, SLOTS, GOLDEN_SLOT, BLOCKS, DEFAULT_LOADOUT,
+  COLS, ROWS, TURNS, SLOTS, BLOCKS, DEFAULT_LOADOUT, isCentre,
   sizeOf, key, rotateN, boundsOf, absCells, initialBoard, isLegal,
-  enumerateMoves, hasAnyMove, resolveTurn, scoreOf, newDeck, cycleHand,
-  goldenCycleFor,
+  hasAnyMove, resolveTurn, scoreOf, newDeck, advanceDeck, currentPiece, currentPass, upcoming,
 } from "../shared/engine.js";
+import { aiPickMove } from "../shared/ai.js";
 import {
   RANKS, PLACEMENT_GAMES, rankIndexFor, rankMin, rankProgress,
 } from "../shared/glicko.js";
@@ -135,58 +135,9 @@ const loadLoadout = () => {
 const saveLoadout = (l) => store.set("tb:loadout", JSON.stringify(l));
 
 /* ============================================================
-   AI — client only. Ranked opponents are real people.
+   AI — in shared/ai.js, so test tools play the same opponent.
    ============================================================ */
-function frontierSize(board, owner) {
-  const s = new Set();
-  for (let r = 0; r < ROWS; r++)
-    for (let c = 0; c < COLS; c++) {
-      if (board[r][c] !== owner) continue;
-      for (let dr = -1; dr <= 1; dr++)
-        for (let dc = -1; dc <= 1; dc++) {
-          const nr = r + dr, nc = c + dc;
-          if (nr < 0 || nc < 0 || nr >= ROWS || nc >= COLS) continue;
-          if (board[nr][nc] === null) s.add(key(nr, nc));
-        }
-    }
-  return s.size;
-}
 
-const weightsFor = (level) => {
-  const t = (level - 1) / (LEVELS.length - 1);
-  return { gain: 1, front: 0.35 * t, deny: 1.1 * t * t, adv: 0.3 * t, noise: 9 * (1 - t) + 0.15 };
-};
-
-function aiPickMove(board, hand, owner, level, goldenBlockId = null) {
-  const moves = enumerateMoves(board, hand, owner, { goldenBlockId });
-  if (!moves.length) return null;
-  const w = weightsFor(level);
-  const opp = owner === "A" ? "B" : "A";
-  const oppBefore = frontierSize(board, opp);
-  const homeRow = owner === "A" ? ROWS - 1 : 0;
-  let best = null, bestScore = -Infinity;
-  for (const m of moves) {
-    const nb = board.map((row) => [...row]);
-    for (const [r, c] of m.cells) nb[r][c] = owner;
-    const mine = w.front > 0 ? frontierSize(nb, owner) : 0;
-    const deny = w.deny > 0 ? oppBefore - frontierSize(nb, opp) : 0;
-    const avgR = m.cells.reduce((s, x) => s + x[0], 0) / m.cells.length;
-    const advance = owner === "A" ? homeRow - avgR : avgR;
-    // Converting enemy ink is worth roughly double a plain claim.
-    const s = w.gain * m.value * (m.golden ? 2 : 1) + w.front * mine + w.deny * deny + w.adv * advance + Math.random() * w.noise;
-    if (s > bestScore) { bestScore = s; best = m; }
-  }
-  return best;
-}
-
-function aiPickDiscard(hand) {
-  let idx = 0, big = -1;
-  hand.forEach((id, i) => {
-    const v = BLOCKS[id].cells.length;
-    if (v > big) { big = v; idx = i; }
-  });
-  return idx;
-}
 
 /* ============================================================
    NET SUBSCRIPTIONS
@@ -254,7 +205,7 @@ function useSize() {
  *          rotate with Q/E, swap blocks with 1–4, then click the board to
  *          place it. Click the card again, right-click or press Esc to put it back.
  */
-function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId = null }) {
+function usePlacement({ board, owner, hand, enabled, flip = false }) {
   const [sel, setSel] = useState({ handIdx: null, rot: 0, pos: null });
   // Pointer position while a piece is in hand. The piece follows this
   // exactly; only its shadow snaps to the grid. mode: "touch" | "hold".
@@ -291,12 +242,7 @@ function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId
   }, [sel.handIdx, sel.rot, hand]);
 
   const ghost = useMemo(() => (rotated && sel.pos ? absCells(rotated, sel.pos) : null), [rotated, sel.pos]);
-  // The selected block is golden only if it IS the charged one.
-  const goldenSel = sel.handIdx !== null && goldenBlockId !== null && hand[sel.handIdx] === goldenBlockId;
-  const ghostLegal = useMemo(
-    () => (ghost && board ? isLegal(board, ghost, owner, { golden: goldenSel }) : false),
-    [ghost, board, owner, goldenSel]
-  );
+  const ghostLegal = useMemo(() => (ghost && board ? isLegal(board, ghost, owner) : false), [ghost, board, owner]);
   const ghostKeys = useMemo(
     () => new Set((enabled && ghost ? ghost : []).map(([r, c]) => key(r, c))),
     [ghost, enabled]
@@ -448,19 +394,18 @@ function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId
   const spawnPos = useCallback((blockId, near) => {
     const cells = BLOCKS[blockId].cells;
     const { h, w } = boundsOf(cells);
-    const golden = goldenBlockId !== null && blockId === goldenBlockId;
     const target = near || [owner === "A" ? ROWS - 1 : 0, Math.floor(COLS / 2) - 1];
     let best = null, bestD = Infinity;
     if (board) {
       for (let r = 0; r <= ROWS - h; r++)
         for (let c = 0; c <= COLS - w; c++) {
-          if (!isLegal(board, absCells(cells, [r, c]), owner, { golden })) continue;
+          if (!isLegal(board, absCells(cells, [r, c]), owner)) continue;
           const d = Math.hypot(r + h / 2 - target[0], c + w / 2 - target[1]);
           if (d < bestD) { bestD = d; best = [r, c]; }
         }
     }
     return best || [Math.max(0, Math.min(ROWS - h, target[0])), Math.max(0, Math.min(COLS - w, target[1]))];
-  }, [board, owner, goldenBlockId]);
+  }, [board, owner]);
 
   /** Pick hand slot `i` from the keyboard. */
   const select = useCallback((i) => {
@@ -515,7 +460,7 @@ function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId
     });
   }, [hand]);
 
-  return { sel, setSel, reset, rotated, ghost, ghostLegal, ghostKeys, goldenSel, dragging, holding, drag, boardRef, onBoardPointerDown, onCardPointerDown, rotate, nudge, select, cycle, flip, spawnHere };
+  return { sel, setSel, reset, rotated, ghost, ghostLegal, ghostKeys, dragging, holding, drag, boardRef, onBoardPointerDown, onCardPointerDown, rotate, nudge, select, cycle, flip, spawnHere };
 }
 
 /**
@@ -541,11 +486,8 @@ function useGameKeys(pl, { enabled, onCommit, onDiscard }) {
       e.preventDefault();
       if (!enabled || pl.dragging) return;
 
-      const slot = { slot1: 0, slot2: 1, slot3: 2, slot4: 3 }[action];
-      if (slot !== undefined) return pl.select(slot);
-      if (action === "prev") return pl.cycle(-1);
-      if (action === "next") return pl.cycle(1);
-      // Drop is always available: with nothing picked, it drops your first block.
+      if (action === "slot1") return pl.select(0);
+      // Passing is always available, picked up or not.
       if (action === "discard") return onDiscard();
       if (pl.sel.handIdx === null) return;
 
@@ -765,6 +707,17 @@ function BoardGrid({
                 <Ink size={cell} color={ink[v]} {...inkOf(v)} seed={seed}
                   style={isGhost ? { opacity: 0.3 } : undefined} />
               )}
+              {isCentre(r, c) && (
+                // The centre: worth more, so it's marked whether or not it's taken.
+                <>
+                  <Ink size={cell} stroke="ghost" color={GOLD} seed={seed + 3}
+                    style={{ position: "absolute", inset: 0, opacity: v ? 0.85 : 0.6 }} />
+                  {!v && cell >= 14 && (
+                    <span className="absolute inset-0 flex items-center justify-center pointer-events-none"
+                      style={{ color: GOLD, fontSize: Math.max(8, cell * 0.42), opacity: 0.75 }}>×2</span>
+                  )}
+                </>
+              )}
               {pendingKeys?.has(k) && (
                 // Locked in, not yet revealed: inked, but with a dotted outline.
                 <Ink size={cell} stroke="pending" color={pendingInk} dir={youSide === "B" ? -1 : 1} seed={seed}
@@ -785,46 +738,67 @@ function BoardGrid({
   );
 }
 
-function HandRow({ hand, selIdx, dragging, ink, onPress, disabled, goldenBlockId = null, dir = 1, spentIdx = null }) {
+/**
+ * Your queue: the piece you play this turn, then the next QUEUE_SHOWN in
+ * order, and which pass through your deck you're on. The current piece is
+ * the card you pick up (click, key 1, or drag on a phone).
+ */
+function QueueBar({ piece, queue, pass, selected, dragging, ink, onPress, disabled, dir = 1, spent = false }) {
   const keys = useKeys();
   return (
-    <div className="grid grid-cols-4 gap-1.5 mb-1.5">
-      {Array.from({ length: HAND_SIZE }).map((_, i) => {
-        const blockId = hand[i];
-        if (blockId === undefined) {
-          return <div key={i} style={{ height: 66, ...sk(UI.line), opacity: 0.35 }} />;
-        }
-        const active = selIdx === i;
-        const spent = spentIdx === i;
-        const charged = goldenBlockId !== null && blockId === goldenBlockId;
-        return (
-          <div
-            key={i}
-            onPointerDown={(e) => !disabled && onPress(e, i)}
-            className="relative flex flex-col items-center justify-center gap-1 select-none"
-            style={{
-              height: 66,
-              ...sk(charged ? GOLD : active ? ink : UI.line),
-              ...(spent ? { borderImage: "none", border: `1.5px dashed ${UI.dim}` } : null),
-              background: spent ? "color-mix(in srgb, var(--tb-ground) 70%, black)" : active ? UI.panel : "transparent",
-              touchAction: "none",
-              transform: active && !dragging ? "rotate(-1.2deg) translateY(-2px)" : "none",
-              transition: "transform 140ms ease-out",
-              opacity: spent ? 0.3 : disabled ? 0.35 : active && dragging ? 0.25 : 1,
-            }}
-          >
-            {HAS_KEYBOARD && (
-              <span className="absolute text-[10px]" style={{ top: 5, left: 8, color: UI.dim, opacity: 0.8 }}>
-                {keyLabel(keys[`slot${i + 1}`])}
-              </span>
-            )}
-            <BlockGlyph blockId={blockId} box={32} color={charged ? GOLD : ink} glow={charged} dir={dir} />
-            <div className="text-[11px] tracking-wider" style={{ color: charged ? GOLD : UI.dim }}>
-              {charged ? "GOLDEN" : `${BLOCKS[blockId].name} · ${BLOCKS[blockId].cells.length}`}
+    <div className="flex items-stretch gap-1.5 mb-1.5" style={{ height: 66 }}>
+      <div
+        onPointerDown={(e) => !disabled && onPress(e, 0)}
+        className="relative flex flex-col items-center justify-center gap-1 select-none shrink-0"
+        style={{
+          width: 92,
+          ...sk(selected ? ink : UI.line),
+          ...(spent ? { borderImage: "none", border: `1.5px dashed ${UI.dim}` } : null),
+          background: spent ? "color-mix(in srgb, var(--tb-ground) 70%, black)" : selected ? UI.panel : "transparent",
+          touchAction: "none",
+          opacity: spent ? 0.3 : disabled ? 0.35 : selected && dragging ? 0.25 : 1,
+          transform: selected && !dragging ? "rotate(-1.2deg) translateY(-2px)" : "none",
+          transition: "transform 140ms ease-out",
+        }}
+      >
+        {HAS_KEYBOARD && (
+          <span className="absolute text-[10px]" style={{ top: 5, left: 8, color: UI.dim, opacity: 0.8 }}>
+            {keyLabel(keys.slot1)}
+          </span>
+        )}
+        <BlockGlyph blockId={piece} box={34} color={ink} dir={dir} />
+        <div className="text-[11px] tracking-wider" style={{ color: UI.dim }}>
+          {BLOCKS[piece].name} · {BLOCKS[piece].cells.length}
+        </div>
+      </div>
+      <div className="flex-1 min-w-0 flex flex-col justify-center px-2" style={{ ...sk(UI.line) }}>
+        <div className="flex items-center justify-between text-[10px] tracking-[0.2em] mb-1" style={{ color: UI.dim }}>
+          <span>NEXT</span>
+          <span>PASS {pass}</span>
+        </div>
+        <div className="flex items-center justify-between gap-1">
+          {queue.map((id, i) => (
+            <div key={i} className="flex items-center justify-center" style={{ width: 22, height: 22, opacity: 1 - i * 0.07 }}>
+              <BlockGlyph blockId={id} box={20} color={ink} dir={dir} gap={0.5} />
             </div>
-          </div>
-        );
-      })}
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** The opponent's piece this turn and what follows — both queues are public. */
+function OppQueue({ piece, queue, ink, dir }) {
+  if (piece === undefined || piece === null) return null;
+  return (
+    <div className="flex items-center gap-2 shrink-0 pb-1.5 text-[10px] tracking-[0.2em]" style={{ color: UI.dim }}>
+      <span>THEM</span>
+      <BlockGlyph blockId={piece} box={18} color={ink} dir={dir} />
+      <span style={{ opacity: 0.6 }}>then</span>
+      <div className="flex items-center gap-1" style={{ opacity: 0.7 }}>
+        {(queue || []).slice(0, 4).map((id, i) => <BlockGlyph key={i} blockId={id} box={13} color={ink} dir={dir} gap={0.5} />)}
+      </div>
     </div>
   );
 }
@@ -845,7 +819,7 @@ function ActionBar({ onRotate, onCommit, onDiscard, canRotate, canCommit, canDis
       <button onClick={onDiscard} disabled={!canDiscard}
         className="flex items-center justify-center gap-1.5 text-[12px] tracking-widest disabled:opacity-30 flex-1"
         style={{ height: 42, ...sk(), color: UI.dim }}>
-        <SkipForward size={13} /> DROP
+        <SkipForward size={13} /> PASS
       </button>
     </div>
   );
@@ -1190,32 +1164,30 @@ function DeckModal({ loadout, setLoadout, color, onClose }) {
       <div className="grid grid-cols-4 gap-1.5 pb-3" style={{ ...RULE_BELOW }}>
         {loadout.map((blockId, i) => {
           const hot = drag && drag.over === i;
-          const golden = i === GOLDEN_SLOT;
           return (
             <div key={i} ref={(el) => (slotRefs.current[i] = el)}
               onPointerDown={(e) => onPress(e, blockId, i, true)}
               className="rounded flex flex-col items-center justify-center gap-1 select-none relative"
               style={{
                 height: 62,
-                background: hot ? UI.cell : golden ? "color-mix(in srgb, var(--tb-special) 10%, transparent)" : "transparent",
-                ...sk(hot ? color : golden ? GOLD : UI.line),
+                background: hot ? UI.cell : "transparent",
+                ...sk(hot ? color : UI.line),
                 touchAction: "none",
                 transform: hot ? "scale(1.06)" : "none",
                 transition: "transform 120ms ease-out",
                 opacity: drag && drag.from === i ? 0.25 : 1,
               }}>
-              <BlockGlyph blockId={blockId} box={28} color={golden ? GOLD : color} />
-              <span className="text-[9px] tracking-wider" style={{ color: golden ? GOLD : UI.dim }}>
-                {golden ? "GOLDEN" : BLOCKS[blockId].name}
+              <BlockGlyph blockId={blockId} box={28} color={color} />
+              <span className="text-[9px] tracking-wider" style={{ color: UI.dim }}>
+                {BLOCKS[blockId].name}
               </span>
             </div>
           );
         })}
       </div>
       <div className="text-[11px] leading-relaxed pt-2 pb-1" style={{ color: UI.dim }}>
-        <span style={{ color: GOLD }}>Golden slot.</span> Play this block{" "}
-        {goldenCycleFor(loadout[GOLDEN_SLOT])}× to charge it — then it can be dropped
-        straight onto your opponent's squares and turns them yours.
+        You play one piece per turn, straight from the front of your queue. These
+        eight come round once per pass, shuffled each time — and your opponent can see them.
       </div>
     </>
   );
@@ -1487,7 +1459,7 @@ function ControlsSection() {
           className="text-[11px] tracking-[0.2em] py-1" style={{ color: UI.dim }}>RESET</button>
       </div>
       <div className="text-[11px] leading-relaxed mb-2" style={{ color: UI.dim }}>
-        Click a key, then press the new one. Esc cancels. ← → always cycle through your blocks.
+        Click a key, then press the new one. Esc cancels.
       </div>
       <div className="grid grid-cols-2 gap-x-4">
         {ACTIONS.map((a) => {
@@ -1538,7 +1510,7 @@ function ThemeModal({ theme, setTheme, onClose }) {
   const previewBoard = useMemo(() => {
     const b = initialBoard();
     const moves = [["A", [[13, 2], [13, 3], [14, 2]]], ["B", [[1, 4], [1, 5], [2, 5]]],
-      ["S", [[7, 3], [7, 4]]], ["A", [[10, 4], [11, 4]]], ["B", [[4, 2], [4, 3]]]];
+["A", [[10, 4], [11, 4]]], ["B", [[4, 2], [4, 3]]]];
     for (const [who, cells] of moves) for (const [r, c] of cells) b[r][c] = who;
     return b;
   }, []);
@@ -1604,7 +1576,7 @@ function ThemeModal({ theme, setTheme, onClose }) {
           <Row label="OPPONENT">
             {INKS.map((c) => <Swatch key={c} color={c} on={theme.rival === c} onClick={() => set({ rival: c })} />)}
           </Row>
-          <Row label="CONTESTED">
+          <Row label="CENTRE">
             {INKS.map((c) => <Swatch key={c} color={c} on={theme.special === c} onClick={() => set({ special: c })} />)}
           </Row>
           <div className="text-[11px] tracking-[0.2em] mt-4 mb-2" style={{ color: UI.dim }}>SURFACES</div>
@@ -2079,19 +2051,9 @@ function MiniBoard({ w, h, cells, size = 15, ink }) {
   );
 }
 
-const COLLISION_TEXT = {
-  vanish: "Both pieces lose that square. It empties out, and either of you can claim it again later.",
-  special: "The square turns gold. Nobody owns it and nobody can ever build on it again.",
-  clearRow: "The entire row is wiped — both colours, all the way across the board.",
-  clearColumn: "The entire column is wiped — both colours, top to bottom.",
-  blast: "Everything around the collision is destroyed, yours included.",
-  swap: "Whoever is behind on territory takes the square. Collide when you're losing.",
-};
-
 function HowToModal({ colors, loadout, onClose }) {
   const [page, setPage] = useState(0);
   const ink = { A: colors.you, B: colors.rival, S: colors.special };
-  const goldenId = loadout[GOLDEN_SLOT];
 
   const pages = [
     {
@@ -2100,7 +2062,18 @@ function HowToModal({ colors, loadout, onClose }) {
         "0,2": "B", "0,3": "B", "1,2": "B", "1,3": "B", "1,4": "B", "2,4": "B",
         "5,2": "A", "5,3": "A", "4,1": "A", "4,2": "A", "4,3": "A", "3,1": "A",
       }} />,
-      body: `Claim more squares than your opponent. After ${TURNS} turns, whoever covers more of the board wins. That's it.`,
+      body: `Own more of the ${COLS}×${ROWS} board than your opponent after ${TURNS} turns. Each square is a point; the four centre squares are worth ${RULES.centreValue}.`,
+    },
+    {
+      title: "ONE PIECE A TURN",
+      art: (
+        <div className="flex items-center justify-center gap-3">
+          <BlockGlyph blockId={loadout[0]} box={40} color={colors.you} />
+          <ChevronRight size={16} style={{ color: UI.dim }} />
+          {loadout.slice(1, 5).map((id, i) => <BlockGlyph key={i} blockId={id} box={20} color={colors.you} />)}
+        </div>
+      ),
+      body: "You don't choose from a hand. You play the piece at the front of your queue — rotate it and place it, or pass. Your whole queue is shown, so plan ahead.",
     },
     {
       title: "PLACING",
@@ -2108,7 +2081,7 @@ function HowToModal({ colors, loadout, onClose }) {
         "2,2": "A", "2,3": "A",
         "1,4": "ok", "3,1": "no",
       }} />,
-      body: "A block must land on empty squares AND touch ink you already own. Corners count, so diagonal contact is enough. The red placement is floating on its own — illegal.",
+      body: "A piece must land on empty squares AND touch ink you already own. Corners count, so diagonal contact is enough. The red one is floating on its own — illegal.",
     },
     {
       title: "BOTH AT ONCE",
@@ -2116,46 +2089,24 @@ function HowToModal({ colors, loadout, onClose }) {
         "3,1": "A", "3,2": "A", "4,1": "A",
         "1,4": "B", "1,3": "B", "0,4": "B",
       }} />,
-      body: "There are no alternating turns. You both choose in secret, lock in, and the moves land together. You never know where they're going until it's already happened.",
+      body: "There are no alternating turns. You both choose in secret and the moves land together. If you both grab the same square, it stays empty.",
     },
     {
-      title: "COLLISIONS",
-      art: <MiniBoard w={6} h={5} ink={ink} cells={{
-        "2,1": "A", "2,2": "A", "2,3": "S", "2,4": "B", "3,4": "B",
+      title: "FULL LINES CLEAR",
+      art: <MiniBoard w={6} h={4} ink={ink} cells={{
+        "1,0": "A", "1,1": "A", "1,2": "B", "1,3": "A", "1,4": "A", "1,5": "ok",
+        "0,1": "A", "2,4": "B", "3,2": "B",
       }} />,
-      body: `Sometimes you both reach for the same square. ${COLLISION_TEXT[RULES.golden] || COLLISION_TEXT.vanish}`,
-    },
-    {
-      title: "THE GOLDEN PIECE",
-      art: (
-        <div className="flex items-center justify-center gap-4">
-          <BlockGlyph blockId={goldenId} box={44} color={GOLD} glow />
-          <ChevronRight size={16} style={{ color: UI.dim }} />
-          <MiniBoard w={5} h={4} ink={ink} cells={{
-            "1,1": "B", "1,2": "B", "2,1": "S", "2,2": "S", "2,3": "B",
-          }} />
-        </div>
-      ),
-      body: `The first slot of your deck charges as you play it — ${goldenCycleFor(goldenId)} play${goldenCycleFor(goldenId) === 1 ? "" : "s"} for that block. Once charged, it can be dropped straight onto your opponent's squares and turns them yours. It still has to touch your own ink.`,
+      body: "Any row or column that fills up completely is wiped — both colours. Build too close to a full line and your opponent can finish it for you and delete your squares.",
     },
     {
       title: "YOUR DECK",
       art: (
         <div className="flex flex-wrap items-center justify-center gap-2.5">
-          {loadout.map((id, i) => (
-            <BlockGlyph key={i} blockId={id} box={26} color={i === GOLDEN_SLOT ? GOLD : colors.you} />
-          ))}
+          {loadout.map((id, i) => <BlockGlyph key={i} blockId={id} box={26} color={colors.you} />)}
         </div>
       ),
-      body: "Eight blocks, four in hand. Draws come in bags: across any eight draws you get each block exactly once, so nothing floods and nothing goes missing.",
-    },
-    {
-      title: "WATCH THE GOLD",
-      art: <div className="text-center text-[13px] leading-relaxed" style={{ color: GOLD }}>
-        <BookOpen size={22} style={{ margin: "0 auto 10px" }} />
-        You're told the turn their golden piece can actually fire.
-      </div>,
-      body: "A charge sitting in their bag is harmless. The moment you're warned it's ready, assume the square you care about is about to change colour.",
+      body: "Pick eight pieces in the deck editor. They come round in passes, like Tetris bags: every pass deals all eight once, freshly shuffled. Your opponent sees your queue, and you see theirs.",
     },
   ];
 
@@ -2539,7 +2490,6 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   const [turn, setTurn] = useState(1);
   const [phase, setPhase] = useState("PLAY_A");
   const [decks, setDecks] = useState(() => ({ A: newDeck(loadout), B: newDeck(loadout) }));
-  const [goldenPlays, setGoldenPlays] = useState({ A: 0, B: 0 });
   const [pendingA, setPendingA] = useState(null);
   const [reveal, setReveal] = useState(null);
   const [lockedOut, setLockedOut] = useState(false);
@@ -2547,20 +2497,17 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   const [stageRef, stage] = useSize();
 
   const player = phase === "PLAY_B" ? "B" : "A";
-  const hand = decks[player].hand;
-
-  // Declared after `player` — these read it.
-  const goldenBlockId = loadout[GOLDEN_SLOT];
-  const goldenNeed = goldenCycleFor(goldenBlockId);
-  const armedFor = (side) => goldenPlays[side] >= goldenNeed && decks[side].hand.includes(goldenBlockId);
-  const myArmed = armedFor(player);
+  const them = player === "A" ? "B" : "A";
+  // One piece per turn: the front of your queue.
+  const piece = currentPiece(decks[player]);
+  const hand = useMemo(() => [piece], [piece]);
   const inPlay = phase === "PLAY_A" || phase === "PLAY_B";
   const score = useMemo(() => scoreOf(board), [board]);
   const oppName = solo ? `AI ${LEVELS[aiLevel - 1]}` : "PLAYER 2";
 
-  const pl = usePlacement({ board, owner: player, hand, enabled: inPlay, goldenBlockId: myArmed ? goldenBlockId : null });
+  const pl = usePlacement({ board, owner: player, hand, enabled: inPlay });
   const contestedKeys = useMemo(() => new Set((reveal ? reveal.contested : []).map(([r, c]) => key(r, c))), [reveal]);
-  const stuck = useMemo(() => (inPlay ? !hasAnyMove(board, hand, player, { goldenBlockId: myArmed ? goldenBlockId : null }) : false), [board, hand, player, inPlay, myArmed, goldenBlockId]);
+  const stuck = useMemo(() => (inPlay ? !hasAnyMove(board, hand, player) : false), [board, hand, player, inPlay]);
 
   const g = theme.gap;
   const cell = Math.max(6, Math.floor(Math.min(
@@ -2569,18 +2516,13 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   )));
   const boardH = cell * ROWS + g * (ROWS + 1);
 
-  const drawInto = (side, handIdx, { played = false, spentGolden = false } = {}) => {
-    const wasGolden = decks[side].hand[handIdx] === goldenBlockId;
-    setDecks((st) => ({ ...st, [side]: cycleHand(st[side], handIdx, loadout) }));
-    if (played && wasGolden) {
-      setGoldenPlays((gp) => ({ ...gp, [side]: spentGolden ? 0 : gp[side] + 1 }));
-    }
-  };
+  // Played or passed, the current piece is spent and the queue moves on.
+  const advance = (side) => setDecks((st) => ({ ...st, [side]: advanceDeck(st[side], loadout) }));
 
   const finish = (mA, mB) => {
     const res = resolveTurn(board, mA, mB);
     setBoard(res.board);
-    setReveal({ contested: res.contested, cleared: res.cleared, a: mA, b: mB });
+    setReveal({ contested: res.contested, cleared: res.cleared, lines: res.lines, a: mA, b: mB });
     setPhase("REVEAL");
   };
 
@@ -2588,18 +2530,15 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
 
   const commit = () => {
     if (pl.sel.handIdx === null || !pl.ghost || !pl.ghostLegal) return;
-    const id = hand[pl.sel.handIdx];
-    drawInto(player, pl.sel.handIdx, { played: true, spentGolden: pl.goldenSel });
-    const move = { cells: pl.ghost, value: BLOCKS[id].cells.length, blockId: id, golden: pl.goldenSel };
+    advance(player);
+    const move = { cells: pl.ghost, value: BLOCKS[piece].cells.length, blockId: piece };
     if (player === "A") handOver(move); else finish(pendingA, move);
     pl.reset();
   };
 
-  // With nothing picked (the drop key), the first block in hand goes.
+  // Passing spends the current piece without placing it.
   const discard = () => {
-    const idx = pl.sel.handIdx ?? hand.findIndex((id) => id !== undefined);
-    if (idx < 0) return;
-    drawInto(player, idx);
+    advance(player);
     if (player === "A") handOver(null); else finish(pendingA, null);
     pl.reset();
   };
@@ -2609,16 +2548,9 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   useEffect(() => {
     if (phase !== "AI_THINK") return;
     const t = setTimeout(() => {
-      const aiHand = decks.B.hand;
-      const aiGolden = armedFor("B") ? goldenBlockId : null;
-      const move = aiPickMove(board, aiHand, "B", aiLevel, aiGolden);
-      if (move) {
-        drawInto("B", move.handIdx, { played: true, spentGolden: !!move.golden });
-        finish(pendingA, { cells: move.cells, value: move.value, blockId: move.blockId, golden: move.golden });
-      } else {
-        drawInto("B", aiPickDiscard(aiHand));
-        finish(pendingA, null);
-      }
+      const move = aiPickMove(board, currentPiece(decks.B), "B", aiLevel, LEVELS.length);
+      advance("B");
+      finish(pendingA, move ? { cells: move.cells, value: move.value, blockId: move.blockId } : null);
     }, AI_THINK_MS);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2629,21 +2561,16 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
     const t = setTimeout(() => {
       setReveal(null);
       setPendingA(null);
-      // A charged golden piece can land on enemy ink, so a board that looks
-      // full may still be playable. Check with it before ending anything.
-      const goldenOf = (side) =>
-        goldenPlays[side] >= goldenNeed && decks[side].hand.includes(goldenBlockId) ? goldenBlockId : null;
-      const bothStuck =
-        !hasAnyMove(board, decks.A.hand, "A", { goldenBlockId: goldenOf("A") }) &&
-        !hasAnyMove(board, decks.B.hand, "B", { goldenBlockId: goldenOf("B") });
-      if (bothStuck || turn >= TURNS) {
-        setLockedOut(bothStuck);
+      // Locked: neither player can place any piece of their deck anywhere.
+      const locked = !hasAnyMove(board, loadout, "A") && !hasAnyMove(board, loadout, "B");
+      if (locked || turn >= TURNS) {
+        setLockedOut(locked);
         setPhase("DONE");
       }
       else { setTurn((t2) => t2 + 1); setPhase("PLAY_A"); }
     }, REVEAL_MS);
     return () => clearTimeout(t);
-  }, [phase, board, decks, turn, goldenPlays, goldenNeed, goldenBlockId]);
+  }, [phase, board, turn, loadout]);
 
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ background: UI.ground, color: UI.text }}>
@@ -2658,15 +2585,18 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
         </div>
 
         <ScoreBar score={score} turn={turn} turns={TURNS} inkA={INK.A} inkB={INK.B} specialHex={INK.S} labelA="P1" labelB={solo ? "AI" : "P2"} />
+        {inPlay && (
+          <OppQueue piece={currentPiece(decks[them])} queue={upcoming(decks[them])} ink={INK[them]} dir={them === "B" ? -1 : 1} />
+        )}
 
         <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center">
           <div className="relative" style={{ width: cell * COLS + g * (COLS + 1), height: boardH }}>
             <BoardGrid
               board={board} cell={cell} ink={INK} theme={theme} youSide={player}
               pendingKeys={phase === "AI_THINK" && pendingA ? new Set(pendingA.cells.map(([r, c]) => key(r, c))) : null}
-              pendingInk={pendingA?.golden ? GOLD : INK.A}
+              pendingInk={INK.A}
               ghostKeys={pl.ghostKeys} ghostLegal={pl.ghostLegal}
-              ghostInk={pl.goldenSel ? GOLD : INK[player]} ghostGolden={pl.goldenSel}
+              ghostInk={INK[player]}
               contestedKeys={contestedKeys} boardRef={pl.boardRef} onPointerDown={(e) => pl.onBoardPointerDown(e, commit)}
             />
 
@@ -2680,7 +2610,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
             {pl.drag && pl.rotated && (
               <FloatingPiece
                 cells={pl.rotated} cell={cell} gap={theme.gap}
-                color={pl.goldenSel ? GOLD : INK[player]} legal={pl.ghostLegal} golden={pl.goldenSel}
+                color={INK[player]} legal={pl.ghostLegal}
                 dir={player === "B" ? -1 : 1}
                 x={pl.drag.x} y={pl.drag.y} lift={pl.drag.lift} faint={pl.holding && !!pl.sel.pos}
               />
@@ -2730,17 +2660,17 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
         <div className="shrink-0 flex flex-col justify-end" style={{ height: DOCK_H }}>
           {inPlay && (
             <>
-              <HandRow hand={hand} selIdx={pl.sel.handIdx} dragging={pl.dragging || pl.holding} ink={INK[player]}
-                onPress={pl.onCardPointerDown} goldenBlockId={myArmed ? goldenBlockId : null}
-                dir={player === "B" ? -1 : 1} />
+              <QueueBar piece={piece} queue={upcoming(decks[player])} pass={currentPass(decks[player])}
+                selected={pl.sel.handIdx === 0} dragging={pl.dragging || pl.holding} ink={INK[player]}
+                onPress={pl.onCardPointerDown} dir={player === "B" ? -1 : 1} />
               <ActionBar
                 ink={INK[player]}
                 onRotate={pl.rotate} onCommit={commit} onDiscard={discard}
-                canRotate={pl.sel.handIdx !== null} canCommit={pl.ghostLegal} canDiscard={pl.sel.handIdx !== null}
+                canRotate={pl.sel.handIdx !== null} canCommit={pl.ghostLegal} canDiscard={inPlay}
               />
               <div className="text-[12px] truncate" style={{ color: UI.dim, height: 14 }}>
-                {stuck ? <span style={{ color: UI.bad }}>Nowhere to play — drop a block.</span>
-                  : pl.sel.handIdx === null ? "Drag a block onto the grid."
+                {stuck ? <span style={{ color: UI.bad }}>No room for this piece — pass.</span>
+                  : pl.sel.handIdx === null ? "Pick up your piece and place it."
                   : !pl.sel.pos ? "Drag it onto the grid."
                   : !pl.ghostLegal ? <span style={{ color: UI.bad }}>Must touch your own ink.</span>
                   : "Drag to adjust, then lock in."}
@@ -2807,17 +2737,16 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   );
 
   const board = m?.board ?? null;
-  const hand = m?.hand ?? [];
+  // One piece per turn: the front of your queue.
+  const piece = m?.piece ?? m?.hand?.[0] ?? null;
+  const hand = useMemo(() => (piece === null ? [] : [piece]), [piece]);
   const canAct = !!board && !m.submitted && !m.reveal && !m.over;
-  const gold = m?.golden ?? null;
-  const myArmed = !!gold?.armed;
-  const goldenBlockId = gold?.blockId ?? null;
 
   // Seat B's home row is row 0 — the top. Rotate their view so both players
   // always build upward from the bottom of their own screen.
   const flip = you === "B";
 
-  const pl = usePlacement({ board, owner: you, hand, enabled: canAct, flip, goldenBlockId: myArmed ? goldenBlockId : null });
+  const pl = usePlacement({ board, owner: you, hand, enabled: canAct, flip });
   const contestedKeys = useMemo(
     () => new Set((m?.reveal ? m.reveal.contested : []).map(([r, c]) => key(r, c))),
     [m?.reveal]
@@ -2840,7 +2769,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   const commit = () => {
     if (!pl.ghostLegal || pl.sel.handIdx === null) return;
     // Show the block where it went (dotted, not yet real) until the turn resolves.
-    setPlaced({ turn: m.turn, cells: pl.ghost, handIdx: pl.sel.handIdx, golden: pl.goldenSel });
+    setPlaced({ turn: m.turn, cells: pl.ghost, handIdx: pl.sel.handIdx });
     net.move({ turn: m.turn, handIdx: pl.sel.handIdx, rot: ((pl.sel.rot % 4) + 4) % 4, pos: pl.sel.pos });
     pl.reset();
   };
@@ -2894,6 +2823,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
           turn={m.turn} turns={m.turns}
           inkA={colors.you} inkB={colors.rival} specialHex={colors.special} labelA="YOU" labelB="OPP"
         />
+        {m.opp && <OppQueue piece={m.opp.piece} queue={m.opp.queue} ink={colors.rival} dir={them === "B" ? -1 : 1} />}
 
         <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center">
           <div className="relative" style={{ width: cell * COLS + g * (COLS + 1), height: cell * ROWS + g * (ROWS + 1) }}>
@@ -2901,7 +2831,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
               <BoardGrid
                 board={board} cell={cell} ink={INK} theme={theme} youSide={you}
                 ghostKeys={pl.ghostKeys} ghostLegal={pl.ghostLegal} ghostInk={colors.you}
-                pendingKeys={pendingKeys} pendingInk={pending?.golden ? GOLD : colors.you}
+                pendingKeys={pendingKeys} pendingInk={colors.you}
                 contestedKeys={contestedKeys} boardRef={pl.boardRef} onPointerDown={(e) => pl.onBoardPointerDown(e, commit)}
               />
               {m.reveal && (
@@ -2915,7 +2845,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
             {pl.drag && pl.rotated && (
               <FloatingPiece
                 cells={pl.rotated} cell={cell} gap={theme.gap}
-                color={pl.goldenSel ? GOLD : colors.you} legal={pl.ghostLegal} flip={flip} golden={pl.goldenSel}
+                color={colors.you} legal={pl.ghostLegal} flip={flip}
                 dir={you === "B" ? -1 : 1}
                 x={pl.drag.x} y={pl.drag.y} lift={pl.drag.lift} faint={pl.holding && !!pl.sel.pos}
               />
@@ -2937,10 +2867,10 @@ function NetGame({ colors, theme, onResult, onAbort }) {
         </div>
 
         <div className="shrink-0 flex flex-col justify-end" style={{ height: DOCK_H }}>
-          <HandRow
-            hand={hand} selIdx={pl.sel.handIdx} dragging={pl.dragging || pl.holding}
-            ink={colors.you} onPress={pl.onCardPointerDown} disabled={!canAct} spentIdx={pending ? pending.handIdx : null}
-            goldenBlockId={myArmed ? goldenBlockId : null}
+          <QueueBar
+            piece={piece} queue={m.queue || []} pass={m.pass || 1}
+            selected={pl.sel.handIdx === 0} dragging={pl.dragging || pl.holding}
+            ink={colors.you} onPress={pl.onCardPointerDown} disabled={!canAct} spent={!!pending}
             dir={you === "B" ? -1 : 1}
           />
           <ActionBar
@@ -2948,7 +2878,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
             onRotate={pl.rotate} onCommit={commit} onDiscard={discard}
             canRotate={canAct && pl.sel.handIdx !== null}
             canCommit={canAct && pl.ghostLegal}
-            canDiscard={canAct && pl.sel.handIdx !== null}
+            canDiscard={canAct}
           />
           <div className="text-[12px] truncate" style={{ color: UI.dim, height: 14 }}>
             {err ? <span style={{ color: UI.bad }}>{err}</span>
@@ -2958,11 +2888,9 @@ function NetGame({ colors, theme, onResult, onAbort }) {
                   : "Turn resolved."
               )
               : m.submitted ? <span className="tb-pulse">Locked in — waiting for {m.opponent.name}…</span>
-              : pl.goldenSel ? <span style={{ color: GOLD }}>Golden — this can land on their ink.</span>
-              : gold?.oppArmed ? <span style={{ color: GOLD }}>They have a golden piece ready.</span>
               : m.oppReady ? <span style={{ color: GOLD }}>They've locked in. Your move.</span>
-              : stuck ? <span style={{ color: UI.bad }}>Nowhere to play — drop a block.</span>
-              : pl.sel.handIdx === null ? "Drag a block onto the grid."
+              : stuck ? <span style={{ color: UI.bad }}>No room for this piece — pass.</span>
+              : pl.sel.handIdx === null ? "Pick up your piece and place it."
               : !pl.sel.pos ? "Drag it onto the grid."
               : !pl.ghostLegal ? <span style={{ color: UI.bad }}>Must touch your own ink.</span>
               : "Drag to adjust, then lock in."}
