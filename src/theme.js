@@ -14,6 +14,12 @@
  */
 
 export const PRESETS = {
+  aquarium: {
+    label: "AQUARIUM",
+    ground: "#1B1A21", panel: "#2B2932", line: "#4A4656", cell: "#232129",
+    text: "#F2E8D2", dim: "#ABA1CF",
+    you: "#B4A3EE", rival: "#EAD6A4", special: "#7CC7BF",
+  },
   dream: {
     label: "DREAM",
     ground: "#0F0C29", panel: "#231C5A", line: "#3D3488", cell: "#1A1546",
@@ -54,7 +60,7 @@ export const PRESETS = {
 
 /** Ink swatches offered in the customiser — the block palette. */
 export const INKS = [
-  "#DB4F6D", "#C18A5E", "#C1C15E", "#6DC15E", "#5EA0C1",
+  "#B4A3EE", "#EAD6A4", "#7CC7BF", "#DB4F6D", "#C18A5E", "#C1C15E", "#6DC15E", "#5EA0C1",
   "#5E63C1", "#B25EC1", "#BBBBBB", "#828282",
 ];
 
@@ -65,12 +71,12 @@ export const STROKES = {
   outline: { label: "OUTLINE" },
 };
 
-// Space between squares, in pixel units (--p), not screen px.
-export const GRID_GAPS = [0, 1, 2];
+// Space between squares, in pixel units (--p), not screen px. Squares never touch.
+export const GRID_GAPS = [1, 2, 3];
 
 export const defaultTheme = () => ({
-  preset: "dream",
-  ...stripLabel(PRESETS.dream),
+  preset: "aquarium",
+  ...stripLabel(PRESETS.aquarium),
   stroke: "pixel",
   gap: 1,
   colorblind: false,
@@ -91,8 +97,8 @@ export function applyPreset(theme, key) {
 /** Any manual colour edit drops the preset label — it isn't that preset any more. */
 export const editTheme = (theme, patch) => ({ ...theme, ...patch, preset: "custom" });
 
-// v6: full pixel art. Older saves were for looks that no longer exist.
-const KEY = "tb:theme:v6";
+// v7: aquarium palette and glass board. Older saves start fresh on it.
+const KEY = "tb:theme:v7";
 
 export function loadTheme() {
   try {

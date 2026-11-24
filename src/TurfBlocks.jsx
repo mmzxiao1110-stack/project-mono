@@ -28,7 +28,6 @@ import { ACTIONS, getKeys, subscribeKeys, setKey, resetKeys, actionFor, keyLabel
    PRESENTATION CONSTANTS
    ============================================================ */
 const PHONE_W = 440;
-const DOCK_H = 140;
 const REVEAL_MS = 1100;
 const AI_THINK_MS = 550;
 const TOUCH_LIFT = 2;
@@ -82,6 +81,20 @@ function Scaled({ className = "", style, children }) {
 
 /** Stepped corners, one pixel per step. */
 const CLIP = `polygon(0 ${px(2)}, ${PX} ${px(2)}, ${PX} ${PX}, ${px(2)} ${PX}, ${px(2)} 0, calc(100% - ${px(2)}) 0, calc(100% - ${px(2)}) ${PX}, calc(100% - ${PX}) ${PX}, calc(100% - ${PX}) ${px(2)}, 100% ${px(2)}, 100% calc(100% - ${px(2)}), calc(100% - ${PX}) calc(100% - ${px(2)}), calc(100% - ${PX}) calc(100% - ${PX}), calc(100% - ${px(2)}) calc(100% - ${PX}), calc(100% - ${px(2)}) 100%, ${px(2)} 100%, ${px(2)} calc(100% - ${PX}), ${PX} calc(100% - ${PX}), ${PX} calc(100% - ${px(2)}), 0 calc(100% - ${px(2)}))`;
+// Pixel-rounded corners for small squares: one pixel off each corner.
+const CLIP1 = `polygon(${PX} 0, calc(100% - ${PX}) 0, calc(100% - ${PX}) ${PX}, 100% ${PX}, 100% calc(100% - ${PX}), calc(100% - ${PX}) calc(100% - ${PX}), calc(100% - ${PX}) 100%, ${PX} 100%, ${PX} calc(100% - ${PX}), 0 calc(100% - ${PX}), 0 ${PX}, ${PX} ${PX})`;
+/** A clear glass pane: faintly frosted, lit along the top and left, shaded below. */
+const GLASS = {
+  background: "color-mix(in srgb, var(--tb-text) 8%, transparent)",
+  boxShadow: `inset 0 ${PX} 0 color-mix(in srgb, var(--tb-text) 24%, transparent), inset ${PX} 0 0 color-mix(in srgb, var(--tb-text) 12%, transparent), inset 0 calc(var(--p) * -1) 0 rgba(0,0,0,.28), inset calc(var(--p) * -1) 0 0 rgba(0,0,0,.14)`,
+};
+/** The glint on a pane: a short streak near the top-left corner, in whole pixels. */
+function glassShine(art) {
+  const l = (x, y, w, h, a) => `linear-gradient(rgba(255,255,255,${a}), rgba(255,255,255,${a})) calc(var(--p) * ${x}) calc(var(--p) * ${y}) / calc(var(--p) * ${w}) calc(var(--p) * ${h}) no-repeat`;
+  if (art >= 9) return [l(2, 2, 3, 1, 0.45), l(2, 3, 1, 1, 0.35), l(art - 3, art - 3, 1, 1, 0.12)].join(", ");
+  if (art >= 6) return [l(1, 1, 2, 1, 0.4), l(1, 2, 1, 1, 0.3)].join(", ");
+  return l(1, 1, 1, 1, 0.35);
+}
 const BEVEL = `inset ${PX} ${PX} 0 var(--tb-edge), inset calc(var(--p) * -1) calc(var(--p) * -1) 0 var(--tb-shade)`;
 
 function sk(color = UI.line) {
@@ -574,15 +587,22 @@ const sky = { paused: 0, slow: false };
  * About 10 fps, half that in a match, paused while hidden or under a popup.
  */
 // Pastel star colours, shared by the sky and the dream-block board.
-const DREAM_COLOURS = ["#FFFFFF", "#F7B6C6", "#9FD8F0", "#F2F0A2", "#B7F0AE", "#C9B6F7"];
-const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map((v) => (v + 0.5) / 16);
 const rgbOf = (hex) => { const n = parseInt(String(hex).replace("#", ""), 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
 const mixRgb = (a, b, t) => [0, 1, 2].map((i) => Math.round(a[i] + (b[i] - a[i]) * t));
+const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map((v) => (v + 0.5) / 16);
 
+/** The sky is drawn in pixels this many times the UI pixel, so it reads soft and far away. */
+const SKY_SCALE = 2;
+
+/**
+ * The backdrop: deep water in space. Dithered bands of colour that ripple
+ * like water, two slow glows drifting through, and a few bubbles rising.
+ * Drawn at low resolution and scaled up with hard edges.
+ */
 function PixelSky({ theme }) {
   const ref = useRef(null);
-  const P = usePx();
-  const { ground, you, rival, panel, motion } = theme;
+  const P = usePx() * SKY_SCALE;
+  const { ground, you, special, panel, motion } = theme;
 
   useEffect(() => {
     const cv = ref.current;
@@ -593,66 +613,64 @@ function PixelSky({ theme }) {
       W = Math.max(1, Math.ceil(window.innerWidth / P));
       H = Math.max(1, Math.ceil(window.innerHeight / P));
       cv.width = W; cv.height = H;
-      // Exactly W×H pixels of P each: sky pixels match every other pixel.
       cv.style.width = `${W * P}px`; cv.style.height = `${H * P}px`;
       img = ctx.createImageData(W, H);
     };
     size();
     window.addEventListener("resize", size);
 
-    // Sky bands, top to bottom.
-    const g = rgbOf(ground), pa = rgbOf(panel), ri = rgbOf(rival), yo = rgbOf(you);
-    const BANDS = 7;
+    // Bands, top to bottom: deep dark down to a lavender haze.
+    const g = rgbOf(ground), pa = rgbOf(panel), yo = rgbOf(you), sp = rgbOf(special);
+    const BANDS = 9;
     const band = Array.from({ length: BANDS }, (_, i) => {
       const t = i / (BANDS - 1);
-      return t < 0.6 ? mixRgb(mixRgb(g, [0, 0, 0], 0.35), pa, t / 0.6) : mixRgb(pa, mixRgb(pa, ri, 0.5), (t - 0.6) / 0.4);
+      return t < 0.55 ? mixRgb(mixRgb(g, [0, 0, 0], 0.3), pa, t / 0.55) : mixRgb(pa, mixRgb(pa, yo, 0.45), (t - 0.55) / 0.45);
     });
-    const nebulae = [
-      { c: yo, x: 0.25, y: 0.3, r: 0.38, vx: 0.004, vy: 0.002 },
-      { c: ri, x: 0.75, y: 0.62, r: 0.42, vx: -0.003, vy: -0.0025 },
+    const glows = [
+      { c: yo, x: 0.28, y: 0.35, r: 0.42, vx: 0.004, vy: 0.002 },
+      { c: sp, x: 0.72, y: 0.65, r: 0.38, vx: -0.003, vy: -0.0025 },
     ];
-    const stars = Array.from({ length: Math.round((W * H) / 260) + 12 }, () => ({
-      x: Math.random(), y: Math.random() * 0.85, p: Math.random() * 6.28, s: 0.5 + Math.random(),
-      c: rgbOf(DREAM_COLOURS[Math.floor(Math.random() * DREAM_COLOURS.length)]), big: Math.random() < 0.1,
+    const bubbles = Array.from({ length: 9 }, () => ({
+      x: Math.random(), y: Math.random(), v: 0.012 + Math.random() * 0.02, p: Math.random() * 6.28, big: Math.random() < 0.4,
     }));
-    const wind = Array.from({ length: 10 }, () => ({ x: Math.random(), y: Math.random(), v: 0.02 + Math.random() * 0.03 }));
+    const cream = rgbOf("#F2E8D2");
 
-    const put = (x, y, c, a = 1) => {
+    const put = (x, y, c, a) => {
       if (x < 0 || y < 0 || x >= W || y >= H) return;
       const o = (y * W + x) * 4, d = img.data;
-      d[o] = d[o] + (c[0] - d[o]) * a; d[o + 1] = d[o + 1] + (c[1] - d[o + 1]) * a; d[o + 2] = d[o + 2] + (c[2] - d[o + 2]) * a;
+      d[o] += (c[0] - d[o]) * a; d[o + 1] += (c[1] - d[o + 1]) * a; d[o + 2] += (c[2] - d[o + 2]) * a;
     };
 
     const draw = (t) => {
       const d = img.data;
+      const s = t * 0.001;
+      // Per-column wave, worked out once a frame.
+      const wave = new Float32Array(W);
+      for (let x = 0; x < W; x++) wave[x] = Math.sin(x * 0.16 + s * 1.3) * 0.32 + Math.sin(x * 0.05 - s * 0.7) * 0.28;
       for (let y = 0; y < H; y++) {
-        const fy = (y / Math.max(1, H - 1)) * (BANDS - 1);
+        const fy0 = (y / Math.max(1, H - 1)) * (BANDS - 1);
         for (let x = 0; x < W; x++) {
           const th = BAYER[(y & 3) * 4 + (x & 3)];
-          // Band, with a dithered step between neighbours.
-          const bi = Math.min(BANDS - 1, Math.floor(fy + th - 0.5 + 0.5));
+          // The band edge rides the wave, with a dithered step between neighbours.
+          const bi = Math.max(0, Math.min(BANDS - 1, Math.floor(fy0 + wave[x] + th)));
           let c = band[bi];
-          // Nebulae: quantised glow, dithered at each level's edge.
-          for (const n of nebulae) {
+          for (const n of glows) {
             const dx = (x / W - n.x) * (W / Math.max(W, H)), dy = (y / H - n.y) * (H / Math.max(W, H));
             const v = 1 - Math.sqrt(dx * dx + dy * dy) / n.r;
             if (v <= 0) continue;
             const lvl = Math.floor(v * 3 + th);
-            if (lvl > 0) c = mixRgb(c, n.c, Math.min(3, lvl) * 0.11);
+            if (lvl > 0) c = mixRgb(c, n.c, Math.min(3, lvl) * 0.1);
           }
           const o = (y * W + x) * 4;
           d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = 255;
         }
       }
-      for (const st of stars) {
-        const tw = 0.5 + 0.5 * Math.sin(st.p + t * 0.0018 * st.s);
-        const x = Math.floor(st.x * W), y = Math.floor(st.y * H);
-        put(x, y, st.c, 0.25 + 0.6 * tw);
-        if (st.big && tw > 0.55) { const a = 0.45 * tw; put(x - 1, y, st.c, a); put(x + 1, y, st.c, a); put(x, y - 1, st.c, a); put(x, y + 1, st.c, a); }
-      }
-      for (const w of wind) {
-        const x = Math.floor(w.x * W), y = Math.floor(w.y * H);
-        put(x, y, [255, 255, 255], 0.35); put(x - 1, y, [255, 255, 255], 0.18); put(x - 2, y, [255, 255, 255], 0.08);
+      for (const b of bubbles) {
+        const x = Math.floor(b.x * W + Math.sin(b.p + s * 1.6) * 1.5), y = Math.floor(b.y * H);
+        if (b.big) {
+          put(x, y - 1, cream, 0.22); put(x - 1, y, cream, 0.22); put(x + 1, y, cream, 0.16); put(x, y + 1, cream, 0.16);
+          put(x - 1, y - 1, cream, 0.1);
+        } else put(x, y, cream, 0.2);
       }
       ctx.putImageData(img, 0, 0);
     };
@@ -663,25 +681,24 @@ function PixelSky({ theme }) {
     let raf, last = 0;
     const loop = (t) => {
       raf = requestAnimationFrame(loop);
-      const every = sky.slow ? 200 : 100;
+      const every = sky.slow ? 160 : 80;
       if (t - last < every || sky.paused > 0 || document.hidden) return;
       const dt = Math.min(0.3, (t - last) / 1000);
       last = t;
-      for (const n of nebulae) {
+      for (const n of glows) {
         n.x += n.vx * dt; n.y += n.vy * dt;
         if (n.x < 0.1 || n.x > 0.9) n.vx *= -1;
         if (n.y < 0.15 || n.y > 0.85) n.vy *= -1;
       }
-      for (const w of wind) {
-        w.x += w.v * dt * 3; w.y += w.v * dt * 0.6;
-        if (w.x > 1.05) { w.x = -0.05; w.y = Math.random(); }
-        if (w.y > 1) w.y = 0;
+      for (const b of bubbles) {
+        b.y -= b.v * dt;
+        if (b.y < -0.02) { b.y = 1.02; b.x = Math.random(); }
       }
       draw(t);
     };
     raf = requestAnimationFrame(loop);
     return () => { cancelAnimationFrame(raf); window.removeEventListener("resize", size); };
-  }, [ground, you, rival, panel, motion, P]);
+  }, [ground, you, special, panel, motion, P]);
 
   return (
     <canvas ref={ref} aria-hidden="true"
@@ -843,60 +860,6 @@ function FloatingPiece({ cells, cell, gap, color, x, y, lift, legal, flip = fals
   );
 }
 
-/**
- * The inside of a dream block: coloured pixel stars twinkling in the dark,
- * behind the board's squares. One canvas pixel = one screen pixel unit.
- */
-function DreamStars({ width, height }) {
-  const P = usePx();
-  const ref = useRef(null);
-  useEffect(() => {
-    const cv = ref.current;
-    if (!cv) return;
-    const W = Math.max(1, Math.round(width / P)), H = Math.max(1, Math.round(height / P));
-    cv.width = W; cv.height = H;
-    const ctx = cv.getContext("2d");
-    const n = Math.round((W * H) / 70);
-    const stars = Array.from({ length: n }, () => ({
-      x: Math.floor(Math.random() * W), y: Math.floor(Math.random() * H),
-      c: DREAM_COLOURS[Math.floor(Math.random() * DREAM_COLOURS.length)],
-      p: Math.random() * 6.28, s: 0.5 + Math.random(), big: Math.random() < 0.12,
-    }));
-    const draw = (t) => {
-      ctx.clearRect(0, 0, W, H);
-      for (const st of stars) {
-        const tw = 0.5 + 0.5 * Math.sin(st.p + t * 0.002 * st.s);
-        if (tw < 0.15) continue;
-        ctx.globalAlpha = 0.35 + 0.65 * tw;
-        ctx.fillStyle = st.c;
-        ctx.fillRect(st.x, st.y, 1, 1);
-        if (st.big && tw > 0.6) {
-          ctx.globalAlpha = 0.5 * tw;
-          ctx.fillRect(st.x - 1, st.y, 1, 1); ctx.fillRect(st.x + 1, st.y, 1, 1);
-          ctx.fillRect(st.x, st.y - 1, 1, 1); ctx.fillRect(st.x, st.y + 1, 1, 1);
-        }
-      }
-      ctx.globalAlpha = 1;
-    };
-    draw(0);
-    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    if (reduced) return;
-    let raf, last = 0;
-    const loop = (t) => {
-      raf = requestAnimationFrame(loop);
-      if (t - last < 125 || sky.paused > 0 || document.hidden) return;
-      last = t;
-      draw(t);
-    };
-    raf = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf);
-  }, [width, height, P]);
-  return (
-    <canvas ref={ref} aria-hidden="true"
-      style={{ position: "absolute", left: 0, top: 0, width, height, imageRendering: "pixelated", pointerEvents: "none" }} />
-  );
-}
-
 function BoardGrid({
   board, cell, ink, ghostKeys, ghostLegal, ghostInk, contestedKeys,
   boardRef, onPointerDown, theme, youSide = "A", ghostGolden = false,
@@ -905,8 +868,11 @@ function BoardGrid({
   const P = usePx();
   const gap = (theme.gap ?? 1) * P;
   const cb = theme.colorblind;
-  const boardW = COLS * cell + (COLS - 1) * gap, boardH = ROWS * cell + (ROWS - 1) * gap;
   const markSize = Math.max(7, Math.round(cell * 0.5));
+  // Every square is its own little pane of glass with pixel-rounded corners.
+  const art = Math.round(cell / P);
+  const clip = art >= 9 ? CLIP : CLIP1;
+  const shine = glassShine(art);
 
   return (
     <div
@@ -918,14 +884,8 @@ function BoardGrid({
         gridTemplateColumns: `repeat(${COLS}, ${cell}px)`,
         gridTemplateRows: `repeat(${ROWS}, ${cell}px)`,
         gap, touchAction: "none",
-        // A dream block: near-black inside, a white pixel outline, stars
-        // within. The frame is drawn with shadows rather than padding so cell
-        // positions (dragging, clear animations) stay exact.
-        background: "color-mix(in srgb, var(--tb-ground) 45%, #05040d)",
-        boxShadow: `0 0 0 ${P}px color-mix(in srgb, var(--tb-ground) 45%, #05040d), 0 0 0 ${2 * P}px var(--tb-text), 0 0 0 ${3 * P}px color-mix(in srgb, var(--tb-ground) 60%, black)`,
       }}
     >
-      <DreamStars width={boardW} height={boardH} />
       {board.map((row, r) =>
         row.map((v, c) => {
           const k = key(r, c);
@@ -955,14 +915,14 @@ function BoardGrid({
               className={contestedKeys.has(k) ? "tb-contest" : v ? "tb-drop" : undefined}
               style={{
                 position: "relative",
-                // Empty: a faint pixel socket the stars show through.
-                background: v ? undefined : "rgba(255,255,255,.045)",
-                boxShadow: v ? undefined : `inset ${P}px ${P}px 0 rgba(255,255,255,.05)`,
+                clipPath: clip,
+                // Empty: clear glass, the water showing through.
+                ...(v ? null : GLASS),
               }}
             >
               {v && (
                 <Ink size={cell} color={ink[v]} {...inkOf(v)} seed={seed}
-                  style={isGhost ? { opacity: 0.3 } : undefined} />
+                  style={{ opacity: isGhost ? 0.3 : 0.9 }} />
               )}
               {isCentre(r, c) && (
                 // The centre: worth more, so it's marked whether or not it's taken.
@@ -986,6 +946,7 @@ function BoardGrid({
                   
                   style={{ position: "absolute", inset: 0 }} />
               )}
+              <span aria-hidden="true" style={{ position: "absolute", inset: 0, pointerEvents: "none", background: shine }} />
               {mark}
             </div>
           );
@@ -995,50 +956,26 @@ function BoardGrid({
   );
 }
 
+/** Width of the forecast column beside the board, in pixels. */
+const NEXT_W = 14;
+
 /**
- * Your queue: the piece you play this turn, then the next QUEUE_SHOWN in
- * order, and which pass through your deck you're on. The current piece is
- * the card you pick up (click, key 1, or drag on a phone).
+ * The forecast: the next pieces in your queue, top to bottom, each in its
+ * own pane of glass, standing beside the board.
  */
-function QueueBar({ piece, queue, pass, selected, dragging, ink, onPress, disabled, dir = 1, spent = false }) {
-  const keys = useKeys();
+function NextColumn({ queue, ink, dir = 1, height, hidden = false }) {
+  const P = usePx();
+  const n = Math.max(1, queue.length);
+  const gap = P;
+  const item = Math.max(5 * P, Math.min(NEXT_W * P, Math.floor((height - gap * (n - 1)) / n / P) * P));
   return (
-    <div className="flex items-stretch gap-1.5 mb-1.5" style={{ height: 66 }}>
-      <div
-        onPointerDown={(e) => !disabled && onPress(e, 0)}
-        data-queue-card=""
-        className="relative flex flex-col items-center justify-center gap-1 select-none shrink-0"
-        style={{
-          width: 92,
-          ...sk(selected ? ink : UI.line),
-          ...(spent ? { borderImage: "none", border: `${PX} dashed ${UI.dim}` } : null),
-          background: spent ? "color-mix(in srgb, var(--tb-ground) 70%, black)" : selected ? UI.panel : "transparent",
-          touchAction: "none",
-          opacity: spent ? 0.3 : disabled ? 0.35 : selected && dragging ? 0.25 : 1,
-          transform: selected && !dragging ? `translateY(calc(var(--p) * -1))` : "none",
-        }}
-      >
-        {HAS_KEYBOARD && (
-          <span className="absolute tb-t" style={{ top: 5, left: 8, color: UI.dim, opacity: 0.8 }}>
-            {keyLabel(keys.slot1)}
-          </span>
-        )}
-        <BlockGlyph blockId={piece} box={34} color={ink} dir={dir} />
-        <div className="tb-t" style={{ color: UI.dim }}>{BLOCKS[piece].name}</div>
-      </div>
-      <div className="flex-1 min-w-0 flex flex-col justify-center px-2" style={{ ...sk(UI.line) }}>
-        <div className="flex items-center justify-between tb-t mb-1" style={{ color: UI.dim }}>
-          <span>NEXT</span>
-          <span>PASS {pass}</span>
+    <div aria-label="Next pieces" className="shrink-0 flex flex-col" style={{ width: NEXT_W * P, height, gap, visibility: hidden ? "hidden" : "visible" }}>
+      {queue.map((id, i) => (
+        <div key={i} className="flex items-center justify-center"
+          style={{ height: item, ...GLASS, clipPath: CLIP1, opacity: 1 - i * 0.08 }}>
+          <BlockGlyph blockId={id} box={Math.min(item, NEXT_W * P) - 4 * P} color={ink} dir={dir} />
         </div>
-        <div className="flex items-center justify-between gap-1">
-          {queue.map((id, i) => (
-            <div key={i} className="flex items-center justify-center" style={{ width: 22, height: 22, opacity: 1 - i * 0.07 }}>
-              <BlockGlyph blockId={id} box={20} color={ink} dir={dir} gap={0.5} />
-            </div>
-          ))}
-        </div>
-      </div>
+      ))}
     </div>
   );
 }
@@ -1058,23 +995,52 @@ function OppQueue({ piece, queue, ink, dir }) {
   );
 }
 
-function ActionBar({ onRotate, onCommit, onDiscard, canRotate, canCommit, canDiscard, ink }) {
+/** Every in-game button: same frame, same height. */
+const GAME_BTN_H = "max(48px, calc(var(--p) * 11 + 14px))";
+const gameBtn = (extra) => ({ height: GAME_BTN_H, ...sk(), color: UI.text, ...extra });
+
+/**
+ * The dock: the piece you play this turn (pick it up: click, key, or drag
+ * on a phone) and the turn's three actions, in one row.
+ */
+function PlayDock({
+  piece, selected, dragging, ink, onPress, disabled, dir = 1, spent = false,
+  onRotate, onCommit, onDiscard, canRotate, canCommit, canDiscard, commitLabel = "LOCK IN",
+}) {
+  const P = usePx();
   return (
-    <div className="flex items-center gap-1.5 mb-1">
-      <button onClick={onRotate} disabled={!canRotate}
-        className="flex items-center justify-center gap-1.5 tb-t disabled:opacity-30 flex-1"
-        style={{ height: 42, ...sk() }}>
-        <RotateCw size={13} /> TURN
+    <div className="flex items-stretch gap-1.5">
+      <div
+        onPointerDown={(e) => !disabled && onPress(e, 0)}
+        data-queue-card=""
+        aria-label={`Your piece: ${BLOCKS[piece].name}`}
+        className="relative flex items-center justify-center select-none shrink-0"
+        style={{
+          width: `max(52px, ${P * 18}px)`, height: GAME_BTN_H,
+          ...sk(selected ? ink : UI.line),
+          ...(spent ? { border: `${PX} dashed ${UI.dim}` } : null),
+          background: selected ? UI.panel : "transparent",
+          touchAction: "none",
+          opacity: spent ? 0.3 : disabled ? 0.35 : selected && dragging ? 0.25 : 1,
+          transform: selected && !dragging ? `translateY(calc(var(--p) * -1))` : "none",
+        }}
+      >
+        <BlockGlyph blockId={piece} box={P * 12} color={ink} dir={dir} />
+      </div>
+      <button onClick={onRotate} disabled={!canRotate} aria-label="Turn"
+        className="flex items-center justify-center gap-1.5 tb-t disabled:opacity-30 flex-1 min-w-0"
+        style={gameBtn()}>
+        <RotateCw size={13} /><span className="hidden sm:inline">TURN</span>
       </button>
       <button onClick={onCommit} disabled={!canCommit}
-        className="flex items-center justify-center gap-1.5 tb-t disabled:opacity-40"
-        style={{ height: 42, flex: 1.4, ...(canCommit ? skFill(ink) : sk(UI.line)), color: canCommit ? UI.text : UI.dim }}>
-        <Check size={13} /> LOCK IN
+        className="flex items-center justify-center gap-1.5 tb-t whitespace-nowrap disabled:opacity-40 min-w-0"
+        style={gameBtn({ flex: 2, ...(canCommit ? skFill(ink) : null), color: canCommit ? UI.text : UI.dim })}>
+        <Check size={13} /> {commitLabel}
       </button>
-      <button onClick={onDiscard} disabled={!canDiscard}
-        className="flex items-center justify-center gap-1.5 tb-t disabled:opacity-30 flex-1"
-        style={{ height: 42, ...sk(), color: UI.dim }}>
-        <SkipForward size={13} /> PASS
+      <button onClick={onDiscard} disabled={!canDiscard} aria-label="Pass"
+        className="flex items-center justify-center gap-1.5 tb-t disabled:opacity-30 flex-1 min-w-0"
+        style={gameBtn({ color: UI.dim })}>
+        <SkipForward size={13} /><span className="hidden sm:inline">PASS</span>
       </button>
     </div>
   );
@@ -1108,7 +1074,7 @@ function VMeter({ a, b, inkA, inkB, height }) {
   );
 }
 
-function ScoreBar({ score, turn, turns, inkA, inkB, labelA, labelB }) {
+function ScoreBar({ score, turn, turns, pass, inkA, inkB, labelA, labelB }) {
   return (
     <div className="shrink-0 pb-2">
       <div className="flex items-end justify-between mb-1.5">
@@ -1117,7 +1083,7 @@ function ScoreBar({ score, turn, turns, inkA, inkB, labelA, labelB }) {
           <span className="tb-t">{labelA}</span>
         </span>
         <span className="tb-t pb-0.5" style={{ color: UI.dim }}>
-          TURN {Math.min(turn, turns)}/{turns}
+          TURN {Math.min(turn, turns)}/{turns}{pass ? <span className="hidden sm:inline"> · PASS {pass}</span> : null}
         </span>
         <span className="flex items-baseline gap-1.5" style={{ color: inkB }}>
           <span className="tb-t">{labelB}</span>
@@ -2796,13 +2762,14 @@ function Matchmaking({ profile, loadout, colors, onCancel, onPlayAi }) {
   );
 }
 
-/** A small FORFEIT link that asks before ending the match. */
+/** The FORFEIT button: asks before ending the match. */
 function ForfeitButton({ onConfirm, ranked = false, disabled = false }) {
   const [asking, setAsking] = useState(false);
   return (
     <>
       <button onClick={() => setAsking(true)} disabled={disabled}
-        className="flex items-center gap-1 tb-t py-2 disabled:opacity-30" style={{ color: UI.dim }}>
+        className="flex items-center justify-center gap-1.5 tb-t px-3 disabled:opacity-30"
+        style={{ height: "calc(var(--p) * 11 + 10px)", ...sk(), color: UI.dim }}>
         <Flag size={12} /> FORFEIT
       </button>
       {asking && (
@@ -2858,11 +2825,11 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   const P = usePx();
   const g = (theme.gap ?? 1) * P;
   // Whole pixels: the square size is a whole number of pixels. Leave room for
-  // the board's 3-pixel frame and the score meter standing beside it.
-  const side = 7 * P, meterRoom = METER_W * P + side;
+  // the score meter on the left and the forecast on the right.
+  const side = 5 * P, sideRoom = (METER_W + NEXT_W) * P + 2 * side;
   const cellArt = Math.max(5, Math.floor(Math.min(
-    (stage.w - meterRoom - side - g * (COLS - 1)) / COLS,
-    (stage.h - side - g * (ROWS - 1)) / ROWS
+    (stage.w - sideRoom - g * (COLS - 1)) / COLS,
+    (stage.h - g * (ROWS - 1)) / ROWS
   ) / P));
   const cell = cellArt * P;
   const boardW = cell * COLS + g * (COLS - 1);
@@ -2927,21 +2894,20 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ color: UI.text }}>
       <div className="tb-col relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
-        <div className="flex items-center justify-between h-9 shrink-0">
-          <button onClick={onExit} className="flex items-center gap-1 tb-t py-2 -ml-1" style={{ color: UI.dim }}>
-            <ChevronLeft size={13} /> MENU
-          </button>
+        <div className="flex items-center justify-between shrink-0 py-1.5">
           <div className="tb-t" style={{ color: UI.dim }}>{solo ? oppName : "TAKE TURNS"}</div>
           <ForfeitButton disabled={phase === "DONE"}
             onConfirm={() => { pl.reset(); setForfeitBy(solo ? "A" : player); setPhase("DONE"); }} />
         </div>
 
-        <ScoreBar score={score} turn={turn} turns={TURNS} inkA={INK.A} inkB={INK.B} specialHex={INK.S} labelA="P1" labelB={solo ? "AI" : "P2"} />
+        <ScoreBar score={score} turn={turn} turns={TURNS} pass={currentPass(decks[inPlay ? player : "A"])}
+          inkA={INK.A} inkB={INK.B} labelA="P1" labelB={solo ? "AI" : "P2"} />
         {inPlay && (
           <OppQueue piece={currentPiece(decks[them])} queue={upcoming(decks[them])} ink={INK[them]} dir={them === "B" ? -1 : 1} />
         )}
 
-        <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center" style={{ gap: 7 * P }}>
+        <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center" style={{ gap: side }}>
+          <VMeter a={score.a} b={score.b} inkA={INK.A} inkB={INK.B} height={boardH} />
           <div className="relative" style={{ width: boardW, height: boardH }}>
             <BoardGrid
               board={board} cell={cell} ink={INK} theme={theme} youSide={player}
@@ -3007,44 +2973,33 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
               </div>
             )}
           </div>
-          <VMeter a={score.a} b={score.b} inkA={INK.A} inkB={INK.B} height={boardH} />
+          <NextColumn queue={upcoming(decks[inPlay ? player : "A"])} ink={INK[inPlay ? player : "A"]}
+            dir={inPlay && player === "B" ? -1 : 1} height={boardH} hidden={!inPlay && !solo} />
         </div>
 
-        <div className="shrink-0 flex flex-col justify-end" style={{ height: `calc(${DOCK_H - 14}px + var(--p) * 11)` }}>
+        <div className="shrink-0 flex flex-col justify-center py-2" style={{ minHeight: `calc(${GAME_BTN_H} + 16px)` }}>
           {inPlay && (
-            <>
-              <QueueBar piece={piece} queue={upcoming(decks[player])} pass={currentPass(decks[player])}
-                selected={pl.sel.handIdx === 0} dragging={pl.dragging || pl.holding} ink={INK[player]}
-                onPress={pl.onCardPointerDown} dir={player === "B" ? -1 : 1} />
-              <ActionBar
-                ink={INK[player]}
-                onRotate={pl.rotate} onCommit={commit} onDiscard={discard}
-                canRotate={pl.sel.handIdx !== null} canCommit={pl.ghostLegal} canDiscard={inPlay}
-              />
-              <div className="tb-t truncate" style={{ color: UI.dim, height: px(11) }}>
-                {stuck ? <span style={{ color: UI.bad }}>No room for this piece — pass.</span>
-                  : pl.sel.handIdx === null ? "Pick up your piece and place it."
-                  : !pl.sel.pos ? "Drag it onto the grid."
-                  : !pl.ghostLegal ? <span style={{ color: UI.bad }}>Must touch your own ink.</span>
-                  : "Drag to adjust, then lock in."}
-              </div>
-            </>
+            <PlayDock piece={piece}
+              selected={pl.sel.handIdx === 0} dragging={pl.dragging || pl.holding} ink={INK[player]}
+              onPress={pl.onCardPointerDown} dir={player === "B" ? -1 : 1}
+              onRotate={pl.rotate} onCommit={commit} onDiscard={discard}
+              canRotate={pl.sel.handIdx !== null} canCommit={pl.ghostLegal} canDiscard={inPlay}
+              commitLabel={stuck ? "NO ROOM" : "LOCK IN"}
+            />
           )}
 
           {phase === "AI_THINK" && (
-            <div className="tb-t tb-pulse pb-4" style={{ color: INK.B }}>{oppName} IS THINKING</div>
+            <div className="tb-t tb-pulse text-center" style={{ color: INK.B }}>{oppName} IS THINKING</div>
           )}
 
           {phase === "REVEAL" && reveal && (
-            <div className="tb-t space-y-1.5 pb-4">
-              {[["A", reveal.a, "P1"], ["B", reveal.b, solo ? "AI" : "P2"]].map(([side, mv, label]) => (
-                <div key={side} className="flex items-center gap-2.5">
-                  <span style={{ color: INK[side], width: 20 }}>{label}</span>
-                  {mv ? (<><BlockGlyph blockId={mv.blockId} box={20} color={INK[side]} /><span style={{ color: UI.dim }}>{BLOCKS[mv.blockId].name}</span></>)
-                    : <span style={{ color: UI.dim }}>dropped</span>}
-                </div>
+            <div className="tb-t flex items-center justify-center gap-3">
+              {[["A", reveal.a, "P1"], ["B", reveal.b, solo ? "AI" : "P2"]].map(([who, mv, label]) => (
+                <span key={who} className="flex items-center gap-1.5">
+                  <span style={{ color: INK[who] }}>{label}</span>
+                  {mv ? <BlockGlyph blockId={mv.blockId} box={20} color={INK[who]} /> : <span style={{ color: UI.dim }}>—</span>}
+                </span>
               ))}
-              {reveal.contested.length > 0 && <div style={{ color: GOLD }}>{reveal.contested.length} went special</div>}
             </div>
           )}
         </div>
@@ -3113,11 +3068,11 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   const P = usePx();
   const g = (theme.gap ?? 1) * P;
   // Whole pixels: the square size is a whole number of pixels. Leave room for
-  // the board's 3-pixel frame and the score meter standing beside it.
-  const side = 7 * P, meterRoom = METER_W * P + side;
+  // the score meter on the left and the forecast on the right.
+  const side = 5 * P, sideRoom = (METER_W + NEXT_W) * P + 2 * side;
   const cellArt = Math.max(5, Math.floor(Math.min(
-    (stage.w - meterRoom - side - g * (COLS - 1)) / COLS,
-    (stage.h - side - g * (ROWS - 1)) / ROWS
+    (stage.w - sideRoom - g * (COLS - 1)) / COLS,
+    (stage.h - g * (ROWS - 1)) / ROWS
   ) / P));
   const cell = cellArt * P;
   const boardW = cell * COLS + g * (COLS - 1);
@@ -3160,9 +3115,9 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ color: UI.text }}>
       <div className="tb-col relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
-        <div className="flex items-center justify-between h-9 shrink-0">
+        <div className="flex items-center justify-between shrink-0 py-1.5">
           <ForfeitButton ranked disabled={!m || !!m.over} onConfirm={() => net.forfeit()} />
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 min-w-0">
             {graceLeft !== null && (
               <span className="flex items-center gap-1 tb-t tabular-nums" style={{ color: GOLD }}>
                 <Clock size={11} /> {graceLeft}
@@ -3173,20 +3128,24 @@ function NetGame({ colors, theme, onResult, onAbort }) {
                 <Clock size={11} /> {secsLeft}
               </span>
             )}
-            <span className="tb-t" style={{ color: UI.dim }}>
-              {m.opponent.name} · {m.opponent.rating}
-            </span>
+            {err ? <span className="tb-t truncate" style={{ color: UI.bad }}>{err}</span> : (
+              <span className="tb-t truncate" style={{ color: m.oppReady ? GOLD : UI.dim }}
+                title={m.oppReady ? "They've locked in" : undefined}>
+                {m.opponent.name} · {m.opponent.rating}{m.oppReady ? " ✓" : ""}
+              </span>
+            )}
           </div>
         </div>
 
         <ScoreBar
           score={{ a: myScore, b: theirScore, s: score.s }}
-          turn={m.turn} turns={m.turns}
-          inkA={colors.you} inkB={colors.rival} specialHex={colors.special} labelA="YOU" labelB="OPP"
+          turn={m.turn} turns={m.turns} pass={m.pass || 1}
+          inkA={colors.you} inkB={colors.rival} labelA="YOU" labelB="OPP"
         />
         {m.opp && <OppQueue piece={m.opp.piece} queue={m.opp.queue} ink={colors.rival} dir={them === "B" ? -1 : 1} />}
 
-        <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center" style={{ gap: 7 * P }}>
+        <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center" style={{ gap: side }}>
+          <VMeter a={myScore} b={theirScore} inkA={colors.you} inkB={colors.rival} height={boardH} />
           <div className="relative" style={{ width: boardW, height: boardH }}>
             <div className="relative" style={{ transform: flip ? "rotate(180deg)" : "none" }}>
               <BoardGrid
@@ -3225,38 +3184,21 @@ function NetGame({ colors, theme, onResult, onAbort }) {
               </div>
             )}
           </div>
-          <VMeter a={myScore} b={theirScore} inkA={colors.you} inkB={colors.rival} height={boardH} />
+          <NextColumn queue={m.queue || []} ink={colors.you} dir={you === "B" ? -1 : 1} height={boardH} />
         </div>
 
-        <div className="shrink-0 flex flex-col justify-end" style={{ height: `calc(${DOCK_H - 14}px + var(--p) * 11)` }}>
-          <QueueBar
-            piece={piece} queue={m.queue || []} pass={m.pass || 1}
+        <div className="shrink-0 flex flex-col justify-center py-2" style={{ minHeight: `calc(${GAME_BTN_H} + 16px)` }}>
+          <PlayDock
+            piece={piece}
             selected={pl.sel.handIdx === 0} dragging={pl.dragging || pl.holding}
             ink={colors.you} onPress={pl.onCardPointerDown} disabled={!canAct} spent={!!pending}
             dir={you === "B" ? -1 : 1}
-          />
-          <ActionBar
-            ink={colors.you}
             onRotate={pl.rotate} onCommit={commit} onDiscard={discard}
             canRotate={canAct && pl.sel.handIdx !== null}
             canCommit={canAct && pl.ghostLegal}
             canDiscard={canAct}
+            commitLabel={m.submitted ? "WAITING" : stuck ? "NO ROOM" : "LOCK IN"}
           />
-          <div className="tb-t truncate" style={{ color: UI.dim, height: px(11) }}>
-            {err ? <span style={{ color: UI.bad }}>{err}</span>
-              : m.reveal ? (
-                m.reveal.contested.length
-                  ? <span style={{ color: GOLD }}>{m.reveal.contested.length} went special</span>
-                  : "Turn resolved."
-              )
-              : m.submitted ? <span className="tb-pulse">Locked in — waiting for {m.opponent.name}…</span>
-              : m.oppReady ? <span style={{ color: GOLD }}>They've locked in. Your move.</span>
-              : stuck ? <span style={{ color: UI.bad }}>No room for this piece — pass.</span>
-              : pl.sel.handIdx === null ? "Pick up your piece and place it."
-              : !pl.sel.pos ? "Drag it onto the grid."
-              : !pl.ghostLegal ? <span style={{ color: UI.bad }}>Must touch your own ink.</span>
-              : "Drag to adjust, then lock in."}
-          </div>
         </div>
       </div>
     </div>
@@ -3498,7 +3440,7 @@ export default function TurfBlocks() {
       .tb-scale { --p: ${BASE_P}px; zoom: var(--pz); }
       /* Big screens: the game column gets room for a bigger board. */
       @media (min-width: 1000px) and (min-height: 760px) {
-        .tb-col { max-width: 640px !important; }
+        .tb-col { max-width: 780px !important; }
       }
       /* Buttons light up under the pointer and press down one pixel. */
       button:not(:disabled) { transition: filter 120ms steps(2); }
