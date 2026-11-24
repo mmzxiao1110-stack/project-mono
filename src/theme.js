@@ -1,113 +1,76 @@
 /**
- * Theming. Entirely client-side — nothing here is ever sent to the server, and
- * your opponent never sees your choices.
+ * Theming — pixel glass.
+ *
+ * Entirely client-side: nothing here is sent to the server, and your opponent
+ * never sees your choices.
  *
  * Chrome colours become CSS custom properties so a change repaints everything
  * without React re-rendering the tree. Ink colours stay plain hex in JS because
- * the UI does alpha maths on them (`${ink}22`), which CSS vars can't do.
+ * the UI mixes them (color-mix) per element.
+ *
+ * The look: frosted, translucent panels with stepped pixel corners floating
+ * over a slowly moving pixelated sky. `panel` is the tint of the glass;
+ * the CSS turns it see-through.
  */
 
-import { frameUrl, frameImage, ruleUrl, shadeUrl, withAlpha, GRAIN_URL } from "./sketch.js";
-import { FX } from "./tuning.js";
-
 export const PRESETS = {
-  // Soft graphite and coloured pencil on black paper.
-  graphite: {
-    label: "GRAPHITE",
-    ground: "#161514", panel: "#1C1B19", line: "#4B4843", cell: "#1F1E1B",
-    text: "#D6D2CA", dim: "#8B8780",
-    you: "#CFCAC0", rival: "#C65A4D", special: "#C99B48",
+  neon: {
+    label: "NEON",
+    ground: "#0A0A1F", panel: "#1C1F4A", line: "#3A3F7A", cell: "#14163A",
+    text: "#EAF2FF", dim: "#8B93C9",
+    you: "#43E8FF", rival: "#FF4FD8", special: "#FFD447",
   },
-  // Pencil the way it usually is: grey lead on cream paper.
-  sketchbook: {
-    label: "SKETCHBOOK",
-    ground: "#ECE7DC", panel: "#F2EEE5", line: "#B5AEA1", cell: "#E3DDD0",
-    text: "#383632", dim: "#7D776C",
-    you: "#3D3B37", rival: "#B4463D", special: "#A97A22",
+  sunset: {
+    label: "SUNSET",
+    ground: "#170A1C", panel: "#3A1A3E", line: "#6B3460", cell: "#24102A",
+    text: "#FFEFF6", dim: "#C58DB0",
+    you: "#FFB547", rival: "#8F7BFF", special: "#FFE45C",
   },
-  sepia: {
-    label: "SEPIA",
-    ground: "#1A130D", panel: "#22190F", line: "#5A4632", cell: "#251B12",
-    text: "#E4D2B2", dim: "#9C8466",
-    you: "#E0CBA6", rival: "#6FA3B5", special: "#D9A441",
-  },
-  // Blue lead and red pencil on drafting paper.
-  blueprint: {
-    label: "DRAFTING",
-    ground: "#E9ECEA", panel: "#F1F3F1", line: "#AEB9C0", cell: "#DFE4E3",
-    text: "#2F3A44", dim: "#6E7C88",
-    you: "#2F5D8A", rival: "#B4463D", special: "#B0872D",
-  },
-  slate: {
-    label: "SLATE",
-    ground: "#0E1216", panel: "#151B21", line: "#222C35", cell: "#171E25",
-    text: "#C7D2DC", dim: "#6B7A88",
-    you: "#22D3EE", rival: "#F472B6", special: "#F2B33D",
-  },
-  carbon: {
-    label: "CARBON",
-    ground: "#0A0A0B", panel: "#141416", line: "#26262A", cell: "#1A1A1D",
-    text: "#E4E4E7", dim: "#71717A",
-    you: "#FAFAFA", rival: "#F87171", special: "#FBBF24",
-  },
-  moss: {
-    label: "MOSS",
-    ground: "#0C1310", panel: "#131D18", line: "#20302A", cell: "#16211C",
-    text: "#CFE0D6", dim: "#6E8579",
-    you: "#4ADE80", rival: "#FB923C", special: "#FDE047",
-  },
-  ultra: {
-    label: "ULTRA",
-    ground: "#0B0A18", panel: "#141227", line: "#241F42", cell: "#181530",
-    text: "#D6D2F0", dim: "#7A72A8",
-    you: "#A78BFA", rival: "#22D3EE", special: "#F472B6",
+  mint: {
+    label: "MINT",
+    ground: "#061614", panel: "#123A34", line: "#24605A", cell: "#0C2420",
+    text: "#E8FFF7", dim: "#7FB9AA",
+    you: "#4DFFB0", rival: "#FF6B7A", special: "#FFE45C",
   },
   ember: {
     label: "EMBER",
-    ground: "#140D0B", panel: "#1E1512", line: "#33231D", cell: "#241914",
-    text: "#EBD9CF", dim: "#96796C",
-    you: "#FB923C", rival: "#60A5FA", special: "#FCD34D",
+    ground: "#140A06", panel: "#3A1C10", line: "#6E3A22", cell: "#22110A",
+    text: "#FFF1E6", dim: "#C99A7E",
+    you: "#FF8A3D", rival: "#46C8FF", special: "#FFE066",
   },
-  paper: {
-    label: "PAPER",
-    ground: "#F2EFE8", panel: "#FBFAF7", line: "#D8D2C6", cell: "#E5E0D5",
-    text: "#26231F", dim: "#7C746A",
-    you: "#0F766E", rival: "#B91C1C", special: "#A16207",
+  frost: {
+    label: "FROST",
+    ground: "#C9D6F0", panel: "#FFFFFF", line: "#8EA0C8", cell: "#B4C3E4",
+    text: "#141B33", dim: "#4F5B82",
+    you: "#2F6BFF", rival: "#FF3D71", special: "#E59A00",
   },
   mono: {
     label: "MONO",
-    ground: "#101010", panel: "#181818", line: "#2A2A2A", cell: "#1D1D1D",
-    text: "#EDEDED", dim: "#767676",
-    you: "#EDEDED", rival: "#6E6E6E", special: "#B8B8B8",
+    ground: "#0B0B0D", panel: "#26262C", line: "#45454F", cell: "#16161A",
+    text: "#F4F4F6", dim: "#9A9AA6",
+    you: "#F4F4F6", rival: "#7E7E8C", special: "#FFD447",
   },
 };
 
 /** Ink swatches offered in the customiser. */
 export const INKS = [
-  "#CFCAC0", "#3D3B37", "#C65A4D", "#C99B48", "#2F5D8A", "#6FA3B5",
-  "#22D3EE", "#4ADE80", "#A78BFA", "#F472B6", "#FB923C",
-  "#F87171", "#60A5FA", "#FDE047", "#2DD4BF", "#E2E8F0",
-  "#0F766E", "#B91C1C",
+  "#43E8FF", "#FF4FD8", "#FFD447", "#4DFFB0", "#FF8A3D", "#8F7BFF",
+  "#FF6B7A", "#46C8FF", "#2F6BFF", "#FF3D71", "#F4F4F6", "#7E7E8C",
 ];
 
-/**
- * How a claimed square is inked. The two players always stroke in opposite
- * directions, so the board reads by texture as well as by colour.
- */
+/** How a claimed square is drawn. */
 export const STROKES = {
-  hatch: { label: "HATCH" },
-  cross: { label: "CROSS" },
-  scribble: { label: "SCRIBBLE" },
-  shaded: { label: "SHADED" },
+  glass: { label: "GLASS" },
+  solid: { label: "SOLID" },
   outline: { label: "OUTLINE" },
 };
 
-export const GRID_GAPS = [0, 1, 2, 3, 5];
+export const GRID_GAPS = [0, 1, 2, 3, 4];
 
 export const defaultTheme = () => ({
-  preset: "slate",
-  ...stripLabel(PRESETS.slate),
-  stroke: "hatch",
+  preset: "neon",
+  ...stripLabel(PRESETS.neon),
+  stroke: "glass",
   gap: 2,
   colorblind: false,
   motion: true,
@@ -127,25 +90,26 @@ export function applyPreset(theme, key) {
 /** Any manual colour edit drops the preset label — it isn't that preset any more. */
 export const editTheme = (theme, patch) => ({ ...theme, ...patch, preset: "custom" });
 
-// v4: Slate became the default. Bumping the key moves everyone onto it once;
-// after that their choices are kept as usual.
-const KEY = "tb:theme:v4";
+// v5: pixel glass. Older saves were for looks that no longer exist.
+const KEY = "tb:theme:v5";
 
 export function loadTheme() {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return defaultTheme();
-    return { ...defaultTheme(), ...JSON.parse(raw) };
-  } catch (e) {
+    const t = { ...defaultTheme(), ...JSON.parse(raw) };
+    if (!STROKES[t.stroke]) t.stroke = "glass";
+    return t;
+  } catch {
     return defaultTheme();
   }
 }
 
 export function saveTheme(t) {
-  try { localStorage.setItem(KEY, JSON.stringify(t)); } catch (e) {}
+  try { localStorage.setItem(KEY, JSON.stringify(t)); } catch { /* private mode: keep it for this session */ }
 }
 
-/** Perceived luminance — used to pick readable marks on top of ink. */
+/** Perceived luminance — light themes get dark glass edges instead of light ones. */
 export function isLight(hex) {
   const h = String(hex).replace("#", "");
   if (h.length < 6) return false;
@@ -155,40 +119,28 @@ export function isLight(hex) {
   return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.6;
 }
 
-/**
- * The CSS the app injects. Chrome only — inks stay in JS.
- *
- * Sketched frames can't take var() inside their SVG, so each one is baked here
- * from the theme's hex values and handed to CSS as a ready-made image.
- */
+/** The CSS custom properties the app injects. */
 export function themeVars(t) {
-  const S = FX.sketch;
-  const frame = (name, color, opts) => `--tb-sk-${name}: ${frameUrl(color, opts)};`;
+  const light = isLight(t.ground);
+  // On a dark sky glass catches white light; on a pale one it reads as tinted shade.
+  const shine = light ? "255,255,255" : "255,255,255";
+  const shade = light ? "20,27,51" : "0,0,0";
   return `
     --tb-ground: ${t.ground};
-    --tb-panel: ${t.panel};
+    --tb-panel: color-mix(in srgb, ${t.panel} ${light ? 62 : 58}%, transparent);
+    --tb-panel-solid: ${t.panel};
     --tb-line: ${t.line};
-    --tb-cell: ${t.cell};
+    --tb-cell: color-mix(in srgb, ${t.cell} 55%, transparent);
     --tb-text: ${t.text};
     --tb-dim: ${t.dim};
-    --tb-bad: #D9574B;
-    --tb-good: #7FA77A;
+    --tb-bad: #FF5A6E;
+    --tb-good: #4DFFB0;
     --tb-special: ${t.special};
-    ${frame("line", t.line)}
-    ${frame("dim", t.dim)}
-    ${frame("text", t.text, { weight: 1.6 })}
-    ${frame("special", t.special, { weight: 1.6 })}
-    ${frame("special-soft", withAlpha(t.special, 0.55))}
-    ${frame("bad", withAlpha("#D9574B", 0.7))}
-    --tb-shade-text: ${shadeUrl(t.text)};
-    --tb-shade-dim: ${shadeUrl(t.dim, { light: true })};
-    --tb-shade-text-dense: ${shadeUrl(t.text, { dense: true })};
-    --tb-shade-dim-dense: ${shadeUrl(t.dim, { dense: true })};
-    --tb-rule: ${ruleUrl(t.line)};
-    --tb-grain: ${GRAIN_URL};
-    --tb-grain-o: ${S.grain};
-    --tb-vignette: ${S.vignette};
+    --tb-you: ${t.you};
+    --tb-rival: ${t.rival};
+    --tb-edge: rgba(${shine}, ${light ? 0.75 : 0.16});
+    --tb-edge-strong: rgba(${shine}, ${light ? 0.95 : 0.32});
+    --tb-shade: rgba(${shade}, ${light ? 0.16 : 0.35});
+    --tb-glow-a: ${light ? 0.25 : 0.55};
   `;
 }
-
-export { frameUrl, frameImage };

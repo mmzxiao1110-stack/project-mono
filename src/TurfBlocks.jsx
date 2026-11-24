@@ -7,11 +7,11 @@ import {
 
 /* The rules live in one place and the server imports the same file. */
 import {
-  COLS, ROWS, TURNS, HAND_SIZE, SLOTS, GOLDEN_SLOT, BLOCKS, DEFAULT_LOADOUT,
+  COLS, ROWS, TURNS, SLOTS, BLOCKS, DEFAULT_LOADOUT, isCentre,
   sizeOf, key, rotateN, boundsOf, absCells, initialBoard, isLegal,
-  enumerateMoves, hasAnyMove, resolveTurn, scoreOf, newDeck, cycleHand,
-  goldenCycleFor,
+  hasAnyMove, resolveTurn, scoreOf, newDeck, advanceDeck, currentPiece, currentPass, upcoming,
 } from "../shared/engine.js";
+import { aiPickMove } from "../shared/ai.js";
 import {
   RANKS, PLACEMENT_GAMES, rankIndexFor, rankMin, rankProgress,
 } from "../shared/glicko.js";
@@ -20,9 +20,8 @@ import { FX } from "./tuning.js";
 import { RULES } from "../shared/rules.js";
 import {
   PRESETS, INKS, STROKES, GRID_GAPS,
-  loadTheme, saveTheme, applyPreset, editTheme, themeVars, frameUrl, frameImage,
+  loadTheme, saveTheme, applyPreset, editTheme, themeVars,
 } from "./theme.js";
-import { inkPaths, gridPath, shadeUrl, pencilFilter, GRAINS } from "./sketch.js";
 import { ACTIONS, getKeys, subscribeKeys, setKey, resetKeys, actionFor, keyLabel, canBind } from "./keys.js";
 
 /* ============================================================
@@ -56,34 +55,41 @@ const UI = {
 };
 
 /* ------------------------------------------------------------
-   Sketched frames. Every bordered surface goes through sk(): it swaps
-   the straight CSS border for a pencil-drawn border-image. Theme colours
-   use frames prebuilt in themeVars(); any other hex is drawn on demand.
+   Pixel glass. Every bordered surface goes through sk(): a translucent
+   pane with stepped pixel corners, a 2px edge in `color`, and a one-pixel
+   bevel (light along the top-left, shade along the bottom-right) so it
+   reads as a raised piece of glass. skFill() is the same pane tinted with
+   its colour — the pressed or primary state.
    ------------------------------------------------------------ */
-const SK_VAR = {
-  [UI.line]: "line", [UI.dim]: "dim", [UI.text]: "text",
-  [GOLD]: "special", [GOLD_SOFT]: "special-soft", [UI.badSoft]: "bad",
-};
-const SHADE_VAR = { [UI.text]: "text", [UI.dim]: "dim" };
+/** Stepped corners: a polygon that cuts each corner in `step`-px stairs. */
+function pixelClip(step = 2) {
+  const a = step, b = step * 2;
+  return `polygon(0 ${b}px, ${a}px ${b}px, ${a}px ${a}px, ${b}px ${a}px, ${b}px 0, calc(100% - ${b}px) 0, calc(100% - ${b}px) ${a}px, calc(100% - ${a}px) ${a}px, calc(100% - ${a}px) ${b}px, 100% ${b}px, 100% calc(100% - ${b}px), calc(100% - ${a}px) calc(100% - ${b}px), calc(100% - ${a}px) calc(100% - ${a}px), calc(100% - ${b}px) calc(100% - ${a}px), calc(100% - ${b}px) 100%, ${b}px 100%, ${b}px calc(100% - ${a}px), ${a}px calc(100% - ${a}px), ${a}px calc(100% - ${b}px), 0 calc(100% - ${b}px))`;
+}
+const CLIP = pixelClip(2);
+const CLIP_BIG = pixelClip(4);
+const BEVEL = "inset 2px 2px 0 var(--tb-edge), inset -2px -2px 0 var(--tb-shade)";
 
 function sk(color = UI.line) {
-  const name = SK_VAR[color];
-  const src = name ? `var(--tb-sk-${name})` : frameUrl(color);
-  return { borderWidth: 1, borderStyle: "solid", borderColor: "transparent", borderImage: frameImage(src), borderRadius: 0 };
+  return {
+    borderWidth: 2, borderStyle: "solid", borderRadius: 0, borderImage: "none",
+    borderColor: `color-mix(in srgb, ${color} 75%, transparent)`,
+    clipPath: CLIP,
+    boxShadow: BEVEL,
+  };
 }
-/**
- * A pencil-shaded surface: the "pressed" or primary state. Light enough to
- * write over, so text on it stays in the normal text colour. `dense` goes
- * over it twice, for swatches and small solid marks.
- */
 function skFill(color = UI.text, { dense = false } = {}) {
-  const name = SHADE_VAR[color];
-  const shade = name ? `var(--tb-shade-${name}${dense ? "-dense" : ""})` : shadeUrl(color, { dense });
-  // Shading runs a touch past the drawn frame, the way it does on paper.
-  return { ...sk(color), background: `${shade} 0 0 / 36px 36px`, backgroundClip: "padding-box" };
+  return {
+    ...sk(color),
+    background: `linear-gradient(180deg, color-mix(in srgb, ${color} ${dense ? 85 : 38}%, transparent), color-mix(in srgb, ${color} ${dense ? 65 : 20}%, transparent))`,
+    boxShadow: `${BEVEL}, inset 0 0 12px color-mix(in srgb, ${color} 30%, transparent)`,
+  };
 }
-/** A drawn rule under (or over) a block, in place of a 1px border. */
-const RULE_BELOW = { backgroundImage: "var(--tb-rule)", backgroundRepeat: "no-repeat", backgroundPosition: "bottom", backgroundSize: "100% 8px" };
+/** A dotted pixel rule under (or over) a block, in place of a 1px border. */
+const RULE_BELOW = {
+  backgroundImage: "linear-gradient(90deg, var(--tb-edge-strong) 50%, transparent 50%)",
+  backgroundRepeat: "repeat-x", backgroundPosition: "bottom", backgroundSize: "6px 2px",
+};
 const RULE_ABOVE = { ...RULE_BELOW, backgroundPosition: "top" };
 
 // AI opponents, weakest first. The names are placeholders: replace each
@@ -135,58 +141,9 @@ const loadLoadout = () => {
 const saveLoadout = (l) => store.set("tb:loadout", JSON.stringify(l));
 
 /* ============================================================
-   AI — client only. Ranked opponents are real people.
+   AI — in shared/ai.js, so test tools play the same opponent.
    ============================================================ */
-function frontierSize(board, owner) {
-  const s = new Set();
-  for (let r = 0; r < ROWS; r++)
-    for (let c = 0; c < COLS; c++) {
-      if (board[r][c] !== owner) continue;
-      for (let dr = -1; dr <= 1; dr++)
-        for (let dc = -1; dc <= 1; dc++) {
-          const nr = r + dr, nc = c + dc;
-          if (nr < 0 || nc < 0 || nr >= ROWS || nc >= COLS) continue;
-          if (board[nr][nc] === null) s.add(key(nr, nc));
-        }
-    }
-  return s.size;
-}
 
-const weightsFor = (level) => {
-  const t = (level - 1) / (LEVELS.length - 1);
-  return { gain: 1, front: 0.35 * t, deny: 1.1 * t * t, adv: 0.3 * t, noise: 9 * (1 - t) + 0.15 };
-};
-
-function aiPickMove(board, hand, owner, level, goldenBlockId = null) {
-  const moves = enumerateMoves(board, hand, owner, { goldenBlockId });
-  if (!moves.length) return null;
-  const w = weightsFor(level);
-  const opp = owner === "A" ? "B" : "A";
-  const oppBefore = frontierSize(board, opp);
-  const homeRow = owner === "A" ? ROWS - 1 : 0;
-  let best = null, bestScore = -Infinity;
-  for (const m of moves) {
-    const nb = board.map((row) => [...row]);
-    for (const [r, c] of m.cells) nb[r][c] = owner;
-    const mine = w.front > 0 ? frontierSize(nb, owner) : 0;
-    const deny = w.deny > 0 ? oppBefore - frontierSize(nb, opp) : 0;
-    const avgR = m.cells.reduce((s, x) => s + x[0], 0) / m.cells.length;
-    const advance = owner === "A" ? homeRow - avgR : avgR;
-    // Converting enemy ink is worth roughly double a plain claim.
-    const s = w.gain * m.value * (m.golden ? 2 : 1) + w.front * mine + w.deny * deny + w.adv * advance + Math.random() * w.noise;
-    if (s > bestScore) { bestScore = s; best = m; }
-  }
-  return best;
-}
-
-function aiPickDiscard(hand) {
-  let idx = 0, big = -1;
-  hand.forEach((id, i) => {
-    const v = BLOCKS[id].cells.length;
-    if (v > big) { big = v; idx = i; }
-  });
-  return idx;
-}
 
 /* ============================================================
    NET SUBSCRIPTIONS
@@ -254,7 +211,7 @@ function useSize() {
  *          rotate with Q/E, swap blocks with 1–4, then click the board to
  *          place it. Click the card again, right-click or press Esc to put it back.
  */
-function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId = null }) {
+function usePlacement({ board, owner, hand, enabled, flip = false }) {
   const [sel, setSel] = useState({ handIdx: null, rot: 0, pos: null });
   // Pointer position while a piece is in hand. The piece follows this
   // exactly; only its shadow snaps to the grid. mode: "touch" | "hold".
@@ -291,12 +248,7 @@ function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId
   }, [sel.handIdx, sel.rot, hand]);
 
   const ghost = useMemo(() => (rotated && sel.pos ? absCells(rotated, sel.pos) : null), [rotated, sel.pos]);
-  // The selected block is golden only if it IS the charged one.
-  const goldenSel = sel.handIdx !== null && goldenBlockId !== null && hand[sel.handIdx] === goldenBlockId;
-  const ghostLegal = useMemo(
-    () => (ghost && board ? isLegal(board, ghost, owner, { golden: goldenSel }) : false),
-    [ghost, board, owner, goldenSel]
-  );
+  const ghostLegal = useMemo(() => (ghost && board ? isLegal(board, ghost, owner) : false), [ghost, board, owner]);
   const ghostKeys = useMemo(
     () => new Set((enabled && ghost ? ghost : []).map(([r, c]) => key(r, c))),
     [ghost, enabled]
@@ -448,19 +400,18 @@ function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId
   const spawnPos = useCallback((blockId, near) => {
     const cells = BLOCKS[blockId].cells;
     const { h, w } = boundsOf(cells);
-    const golden = goldenBlockId !== null && blockId === goldenBlockId;
     const target = near || [owner === "A" ? ROWS - 1 : 0, Math.floor(COLS / 2) - 1];
     let best = null, bestD = Infinity;
     if (board) {
       for (let r = 0; r <= ROWS - h; r++)
         for (let c = 0; c <= COLS - w; c++) {
-          if (!isLegal(board, absCells(cells, [r, c]), owner, { golden })) continue;
+          if (!isLegal(board, absCells(cells, [r, c]), owner)) continue;
           const d = Math.hypot(r + h / 2 - target[0], c + w / 2 - target[1]);
           if (d < bestD) { bestD = d; best = [r, c]; }
         }
     }
     return best || [Math.max(0, Math.min(ROWS - h, target[0])), Math.max(0, Math.min(COLS - w, target[1]))];
-  }, [board, owner, goldenBlockId]);
+  }, [board, owner]);
 
   /** Pick hand slot `i` from the keyboard. */
   const select = useCallback((i) => {
@@ -515,7 +466,7 @@ function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId
     });
   }, [hand]);
 
-  return { sel, setSel, reset, rotated, ghost, ghostLegal, ghostKeys, goldenSel, dragging, holding, drag, boardRef, onBoardPointerDown, onCardPointerDown, rotate, nudge, select, cycle, flip, spawnHere };
+  return { sel, setSel, reset, rotated, ghost, ghostLegal, ghostKeys, dragging, holding, drag, boardRef, onBoardPointerDown, onCardPointerDown, rotate, nudge, select, cycle, flip, spawnHere };
 }
 
 /**
@@ -541,11 +492,8 @@ function useGameKeys(pl, { enabled, onCommit, onDiscard }) {
       e.preventDefault();
       if (!enabled || pl.dragging) return;
 
-      const slot = { slot1: 0, slot2: 1, slot3: 2, slot4: 3 }[action];
-      if (slot !== undefined) return pl.select(slot);
-      if (action === "prev") return pl.cycle(-1);
-      if (action === "next") return pl.cycle(1);
-      // Drop is always available: with nothing picked, it drops your first block.
+      if (action === "slot1") return pl.select(0);
+      // Passing is always available, picked up or not.
       if (action === "discard") return onDiscard();
       if (pl.sel.handIdx === null) return;
 
@@ -567,6 +515,99 @@ function useGameKeys(pl, { enabled, onCommit, onDiscard }) {
 }
 
 /* ============================================================
+   PIXEL SKY — the animated background behind every screen
+   ============================================================ */
+/**
+ * `paused` counts open popups (their frosted glass would otherwise re-blur
+ * a moving picture every frame); `slow` is set during matches, when the
+ * sky should stay out of the way.
+ */
+const sky = { paused: 0, slow: false };
+
+/**
+ * A tiny canvas (64 px wide) blown up to fill the screen with
+ * image-rendering: pixelated, so soft glowing blobs become chunky pixel
+ * light. Drawing 64×~120 pixels is nearly free, and it runs at ~12 fps,
+ * half that during a match, and not at all while hidden or paused.
+ */
+function PixelSky({ theme }) {
+  const ref = useRef(null);
+  const { ground, you, rival, special, panel, motion } = theme;
+
+  useEffect(() => {
+    const cv = ref.current;
+    if (!cv) return;
+    const ctx = cv.getContext("2d", { alpha: false });
+    // About 8 screen pixels per sky pixel, whatever the screen.
+    let W = 64, H = 112;
+    const size = () => {
+      W = Math.max(48, Math.min(200, Math.round(window.innerWidth / 8)));
+      H = Math.max(40, Math.min(160, Math.round(window.innerHeight / 8)));
+      cv.width = W; cv.height = H;
+    };
+    size();
+    window.addEventListener("resize", size);
+
+    const rnd = (a, b) => a + Math.random() * (b - a);
+    const blobs = [you, rival, special, panel, you].map((color, i) => ({
+      color, x: rnd(0, 1), y: rnd(0, 1), r: rnd(0.35, 0.6) * (i === 4 ? 0.6 : 1),
+      vx: rnd(-1, 1) * 0.012, vy: rnd(-1, 1) * 0.01, a: i === 3 ? 0.55 : i === 2 ? 0.22 : 0.38,
+    }));
+    const stars = Array.from({ length: 24 }, () => ({ x: Math.random(), y: Math.random(), p: Math.random() * 6.28, s: rnd(0.6, 1.6) }));
+
+    const hexA = (hex, a) => {
+      const h = hex.replace("#", "");
+      return `rgba(${parseInt(h.slice(0, 2), 16)},${parseInt(h.slice(2, 4), 16)},${parseInt(h.slice(4, 6), 16)},${a})`;
+    };
+
+    const draw = (t) => {
+      ctx.fillStyle = ground;
+      ctx.fillRect(0, 0, W, H);
+      ctx.globalCompositeOperation = "lighter";
+      for (const b of blobs) {
+        const cx = b.x * W, cy = b.y * H, rr = b.r * Math.max(W, H);
+        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, rr);
+        g.addColorStop(0, hexA(b.color, b.a));
+        g.addColorStop(1, hexA(b.color, 0));
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, W, H);
+      }
+      ctx.globalCompositeOperation = "source-over";
+      for (const st of stars) {
+        const tw = 0.5 + 0.5 * Math.sin(st.p + t * 0.0016 * st.s);
+        ctx.fillStyle = `rgba(255,255,255,${(0.06 + 0.3 * tw * tw).toFixed(3)})`;
+        ctx.fillRect(Math.floor(st.x * W), Math.floor(st.y * H), 1, 1);
+      }
+    };
+
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (!motion || reduced) { draw(0); return () => window.removeEventListener("resize", size); }
+
+    let raf, last = 0;
+    const loop = (t) => {
+      raf = requestAnimationFrame(loop);
+      const every = sky.slow ? 160 : 80;
+      if (t - last < every || sky.paused > 0 || document.hidden) return;
+      const dt = Math.min(0.25, (t - last) / 1000);
+      last = t;
+      for (const b of blobs) {
+        b.x += b.vx * dt * 4; b.y += b.vy * dt * 4;
+        if (b.x < -0.2 || b.x > 1.2) b.vx *= -1;
+        if (b.y < -0.2 || b.y > 1.2) b.vy *= -1;
+      }
+      draw(t);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => { cancelAnimationFrame(raf); window.removeEventListener("resize", size); };
+  }, [ground, you, rival, special, panel, motion]);
+
+  return (
+    <canvas ref={ref} aria-hidden="true"
+      style={{ position: "fixed", inset: 0, width: "100%", height: "100%", imageRendering: "pixelated", zIndex: 0, pointerEvents: "none" }} />
+  );
+}
+
+/* ============================================================
    SHARED VIEWS
    ============================================================ */
 /** The stroke style the player picked in Theme. Read by every Ink. */
@@ -576,55 +617,69 @@ const InkStyle = createContext("hatch");
 const inkOf = (owner) => (owner === "S" ? { stroke: "cross", dir: 1 } : { stroke: undefined, dir: owner === "B" ? -1 : 1 });
 
 /**
- * The pencil grain filters, mounted once per page. Ink picks one by seed so
- * neighbouring squares don't share a grain pattern.
+ * One square of a piece: a pixel-glass tile. Pure CSS (no SVG), so a full
+ * board stays cheap on phones.
+ *   stroke: glass | solid | outline   — a claimed square (theme picks the default)
+ *           ghost                     — dashed landing guide
+ *           slot                      — faint empty square
+ *           pending                   — placed this turn, not yet revealed
+ * `fluid` fills its box instead of taking `size`.
  */
-function PencilDefs() {
-  const markup = useMemo(
-    () => Array.from({ length: GRAINS }, (_, i) => pencilFilter(`tb-pencil-${i}`, i * 17 + 3)).join(""),
-    []
-  );
-  return (
-    <svg aria-hidden="true" width="0" height="0" style={{ position: "absolute" }}>
-      <defs dangerouslySetInnerHTML={{ __html: markup }} />
-    </svg>
-  );
-}
-
-/**
- * One pencil-drawn square. Paths come from sketch.js, seeded, so the same
- * square always gets the same strokes. `fluid` stretches it to its box.
- */
-function Ink({ size, color, stroke, dir = 1, seed = 0, fluid = false, className, style }) {
+function Ink({ size, color, stroke, fluid = false, className, style }) {
   const picked = useContext(InkStyle);
-  const p = inkPaths(size, stroke || picked, dir, seed);
-  return (
-    <svg
-      aria-hidden="true" className={className}
-      width={fluid ? "100%" : size} height={fluid ? "100%" : size}
-      viewBox={`0 0 ${size} ${size}`} preserveAspectRatio={fluid ? "none" : undefined}
-      style={{ display: "block", overflow: "visible", pointerEvents: "none", ...style }}
-    >
-      <g filter={`url(#tb-pencil-${p.grain})`}>
-        {p.layers.map((l, i) => l.fill
-          ? <path key={i} d={l.d} style={{ fill: color }} opacity={l.o} />
-          : <path key={i} d={l.d} fill="none" style={{ stroke: color }} strokeWidth={l.w} opacity={l.o}
-              strokeLinecap="round" strokeLinejoin="round" strokeDasharray={l.dash} />
-        )}
-      </g>
-    </svg>
-  );
+  const kind = stroke || picked;
+  const px = Math.max(1, Math.round(size / 14));          // one "pixel" at this tile size
+  const inset = Math.max(1, Math.round(size * 0.07));
+  const box = fluid ? "100%" : size;
+  // Square corners on purpose: clip-path would also cut off the glow, and at
+  // this size a square already reads as one big pixel.
+  const base = { width: box, height: box, boxSizing: "border-box", pointerEvents: "none" };
+  let look;
+  if (kind === "ghost") {
+    look = { border: `${Math.max(1, px)}px dashed ${color}`, background: `color-mix(in srgb, ${color} 14%, transparent)` };
+  } else if (kind === "slot") {
+    look = { border: `1px solid color-mix(in srgb, ${color} 55%, transparent)`, background: `color-mix(in srgb, ${color} 8%, transparent)` };
+  } else if (kind === "pending") {
+    look = {
+      border: `${Math.max(1, px)}px dashed var(--tb-text)`,
+      background: `color-mix(in srgb, ${color} 38%, transparent)`,
+    };
+  } else if (kind === "outline") {
+    look = {
+      border: `${Math.max(2, px * 2)}px solid ${color}`,
+      background: `color-mix(in srgb, ${color} 10%, transparent)`,
+      boxShadow: `0 0 ${Math.round(size * 0.35)}px color-mix(in srgb, ${color} calc(var(--tb-glow-a) * 50%), transparent)`,
+    };
+  } else if (kind === "solid") {
+    look = {
+      background: color,
+      boxShadow: `inset ${px}px ${px}px 0 rgba(255,255,255,.45), inset -${px}px -${px}px 0 rgba(0,0,0,.35)`,
+    };
+  } else {
+    // Glass: a see-through tint, a bright pixel highlight on the top-left,
+    // a deeper edge on the bottom-right, a sparkle pixel and a soft glow.
+    const spark = Math.max(1, px * 2);
+    look = {
+      background:
+        `linear-gradient(rgba(255,255,255,.85), rgba(255,255,255,.85)) ${inset + px}px ${inset + px}px / ${spark}px ${spark}px no-repeat, ` +
+        `linear-gradient(135deg, color-mix(in srgb, ${color} 78%, white) 0%, color-mix(in srgb, ${color} 62%, transparent) 55%, color-mix(in srgb, ${color} 42%, transparent) 100%)`,
+      boxShadow:
+        `inset ${px}px ${px}px 0 rgba(255,255,255,.55), inset -${px}px -${px}px 0 color-mix(in srgb, ${color} 55%, black), ` +
+        `0 0 ${Math.round(size * 0.45)}px color-mix(in srgb, ${color} calc(var(--tb-glow-a) * 60%), transparent)`,
+    };
+  }
+  return <div aria-hidden="true" className={className} style={{ ...base, ...look, ...style }} />;
 }
 
 /** A block's silhouette, drawn in ink. Used on cards, in the deck and the tutorial. */
-function BlockGlyph({ blockId, box = 40, color, gap = 1, glow = false, dir = 1 }) {
+function BlockGlyph({ blockId, box = 40, color, gap = 1, glow = false }) {
   const cells = BLOCKS[blockId].cells;
   const { h, w } = boundsOf(cells);
   const span = Math.max(h, w);
   const size = Math.max(4, Math.floor((box - gap * (span - 1)) / span));
   const filled = new Set(cells.map(([r, c]) => r * 100 + c));
   return (
-    <div className={glow ? "tb-boil" : undefined} style={{
+    <div className={glow ? "tb-shine" : undefined} style={{
       display: "grid",
       gridTemplateColumns: `repeat(${w}, ${size}px)`,
       gridTemplateRows: `repeat(${h}, ${size}px)`,
@@ -632,7 +687,7 @@ function BlockGlyph({ blockId, box = 40, color, gap = 1, glow = false, dir = 1 }
     }}>
       {Array.from({ length: h * w }).map((_, i) => (
         filled.has(Math.floor(i / w) * 100 + (i % w))
-          ? <Ink key={i} size={size} color={color} dir={dir} seed={blockId * 11 + i} stroke={glow ? "cross" : undefined} />
+          ? <Ink key={i} size={size} color={color} />
           : <div key={i} />
       ))}
     </div>
@@ -676,7 +731,7 @@ function FloatingPiece({ cells, cell, gap, color, x, y, lift, legal, flip = fals
   const filled = new Set(cells.map(([r, c]) => r * 100 + c));
   return (
     <div
-      className={golden ? "tb-boil" : undefined}
+      
       style={{
         position: "fixed",
         left: x,
@@ -696,7 +751,7 @@ function FloatingPiece({ cells, cell, gap, color, x, y, lift, legal, flip = fals
     >
       {Array.from({ length: h * w }).map((_, i) => (
         filled.has(Math.floor(i / w) * 100 + (i % w))
-          ? <Ink key={i} size={cell} color={color} dir={dir} seed={i * 5 + 1} stroke={golden ? "cross" : undefined} />
+          ? <Ink key={i} size={cell} color={color} />
           : <div key={i} />
       ))}
     </div>
@@ -711,7 +766,6 @@ function BoardGrid({
   const gap = theme.gap;
   const cb = theme.colorblind;
   const markSize = Math.max(7, Math.round(cell * 0.5));
-  const grid = useMemo(() => gridPath(COLS, ROWS, cell, gap), [cell, gap]);
 
   return (
     <div
@@ -723,15 +777,14 @@ function BoardGrid({
         gridTemplateColumns: `repeat(${COLS}, ${cell}px)`,
         gridTemplateRows: `repeat(${ROWS}, ${cell}px)`,
         gap, touchAction: "none",
+        // A pane of frosted glass. The frame is drawn with shadows rather than
+        // padding so cell positions (dragging, clear animations) stay exact.
+        background: "color-mix(in srgb, var(--tb-panel-solid) 30%, transparent)",
+        backdropFilter: "blur(10px) saturate(1.3)",
+        WebkitBackdropFilter: "blur(10px) saturate(1.3)",
+        boxShadow: "0 0 0 4px color-mix(in srgb, var(--tb-panel-solid) 30%, transparent), 0 0 0 6px var(--tb-edge), 0 18px 40px rgba(0,0,0,.35)",
       }}
     >
-      <svg aria-hidden="true" width={grid.W} height={grid.H}
-        style={{ position: "absolute", left: 0, top: 0, overflow: "visible", pointerEvents: "none" }}>
-        <g filter="url(#tb-pencil-0)" fill="none" strokeLinecap="round">
-          <path d={grid.inner} style={{ stroke: UI.line }} strokeWidth={0.9} opacity={FX.sketch.gridOpacity} />
-          <path d={grid.edge} style={{ stroke: UI.dim }} strokeWidth={1.1} opacity={0.8} />
-        </g>
-      </svg>
       {board.map((row, r) =>
         row.map((v, c) => {
           const k = key(r, c);
@@ -759,11 +812,26 @@ function BoardGrid({
             <div
               key={k}
               className={contestedKeys.has(k) ? "tb-contest" : v ? "tb-drop" : undefined}
-              style={{ position: "relative" }}
+              style={{
+                position: "relative",
+                background: v ? undefined : "color-mix(in srgb, var(--tb-line) 22%, transparent)",
+                boxShadow: v ? undefined : "inset 1px 1px 0 var(--tb-edge), inset -1px -1px 0 var(--tb-shade)",
+              }}
             >
               {v && (
                 <Ink size={cell} color={ink[v]} {...inkOf(v)} seed={seed}
                   style={isGhost ? { opacity: 0.3 } : undefined} />
+              )}
+              {isCentre(r, c) && (
+                // The centre: worth more, so it's marked whether or not it's taken.
+                <>
+                  <Ink size={cell} stroke="ghost" color={GOLD} seed={seed + 3}
+                    style={{ position: "absolute", inset: 0, opacity: v ? 0.85 : 0.6 }} />
+                  {!v && cell >= 14 && (
+                    <span className="absolute inset-0 flex items-center justify-center pointer-events-none"
+                      style={{ color: GOLD, fontSize: Math.max(8, cell * 0.42), opacity: 0.75 }}>×2</span>
+                  )}
+                </>
               )}
               {pendingKeys?.has(k) && (
                 // Locked in, not yet revealed: inked, but with a dotted outline.
@@ -773,7 +841,7 @@ function BoardGrid({
               {isGhost && (
                 <Ink size={cell} stroke="ghost" seed={seed}
                   color={ghostLegal ? ghostInk : UI.bad}
-                  className={ghostGolden && ghostLegal ? "tb-boil" : undefined}
+                  
                   style={{ position: "absolute", inset: 0 }} />
               )}
               {mark}
@@ -785,46 +853,67 @@ function BoardGrid({
   );
 }
 
-function HandRow({ hand, selIdx, dragging, ink, onPress, disabled, goldenBlockId = null, dir = 1, spentIdx = null }) {
+/**
+ * Your queue: the piece you play this turn, then the next QUEUE_SHOWN in
+ * order, and which pass through your deck you're on. The current piece is
+ * the card you pick up (click, key 1, or drag on a phone).
+ */
+function QueueBar({ piece, queue, pass, selected, dragging, ink, onPress, disabled, dir = 1, spent = false }) {
   const keys = useKeys();
   return (
-    <div className="grid grid-cols-4 gap-1.5 mb-1.5">
-      {Array.from({ length: HAND_SIZE }).map((_, i) => {
-        const blockId = hand[i];
-        if (blockId === undefined) {
-          return <div key={i} style={{ height: 66, ...sk(UI.line), opacity: 0.35 }} />;
-        }
-        const active = selIdx === i;
-        const spent = spentIdx === i;
-        const charged = goldenBlockId !== null && blockId === goldenBlockId;
-        return (
-          <div
-            key={i}
-            onPointerDown={(e) => !disabled && onPress(e, i)}
-            className="relative flex flex-col items-center justify-center gap-1 select-none"
-            style={{
-              height: 66,
-              ...sk(charged ? GOLD : active ? ink : UI.line),
-              ...(spent ? { borderImage: "none", border: `1.5px dashed ${UI.dim}` } : null),
-              background: spent ? "color-mix(in srgb, var(--tb-ground) 70%, black)" : active ? UI.panel : "transparent",
-              touchAction: "none",
-              transform: active && !dragging ? "rotate(-1.2deg) translateY(-2px)" : "none",
-              transition: "transform 140ms ease-out",
-              opacity: spent ? 0.3 : disabled ? 0.35 : active && dragging ? 0.25 : 1,
-            }}
-          >
-            {HAS_KEYBOARD && (
-              <span className="absolute text-[10px]" style={{ top: 5, left: 8, color: UI.dim, opacity: 0.8 }}>
-                {keyLabel(keys[`slot${i + 1}`])}
-              </span>
-            )}
-            <BlockGlyph blockId={blockId} box={32} color={charged ? GOLD : ink} glow={charged} dir={dir} />
-            <div className="text-[11px] tracking-wider" style={{ color: charged ? GOLD : UI.dim }}>
-              {charged ? "GOLDEN" : `${BLOCKS[blockId].name} · ${BLOCKS[blockId].cells.length}`}
+    <div className="flex items-stretch gap-1.5 mb-1.5" style={{ height: 66 }}>
+      <div
+        onPointerDown={(e) => !disabled && onPress(e, 0)}
+        className="relative flex flex-col items-center justify-center gap-1 select-none shrink-0"
+        style={{
+          width: 92,
+          ...sk(selected ? ink : UI.line),
+          ...(spent ? { borderImage: "none", border: `1.5px dashed ${UI.dim}` } : null),
+          background: spent ? "color-mix(in srgb, var(--tb-ground) 70%, black)" : selected ? UI.panel : "transparent",
+          touchAction: "none",
+          opacity: spent ? 0.3 : disabled ? 0.35 : selected && dragging ? 0.25 : 1,
+          transform: selected && !dragging ? "rotate(-1.2deg) translateY(-2px)" : "none",
+          transition: "transform 140ms ease-out",
+        }}
+      >
+        {HAS_KEYBOARD && (
+          <span className="absolute text-[10px]" style={{ top: 5, left: 8, color: UI.dim, opacity: 0.8 }}>
+            {keyLabel(keys.slot1)}
+          </span>
+        )}
+        <BlockGlyph blockId={piece} box={34} color={ink} dir={dir} />
+        <div className="text-[11px] tracking-wider" style={{ color: UI.dim }}>
+          {BLOCKS[piece].name} · {BLOCKS[piece].cells.length}
+        </div>
+      </div>
+      <div className="flex-1 min-w-0 flex flex-col justify-center px-2" style={{ ...sk(UI.line) }}>
+        <div className="flex items-center justify-between text-[10px] tracking-[0.2em] mb-1" style={{ color: UI.dim }}>
+          <span>NEXT</span>
+          <span>PASS {pass}</span>
+        </div>
+        <div className="flex items-center justify-between gap-1">
+          {queue.map((id, i) => (
+            <div key={i} className="flex items-center justify-center" style={{ width: 22, height: 22, opacity: 1 - i * 0.07 }}>
+              <BlockGlyph blockId={id} box={20} color={ink} dir={dir} gap={0.5} />
             </div>
-          </div>
-        );
-      })}
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** The opponent's piece this turn and what follows — both queues are public. */
+function OppQueue({ piece, queue, ink, dir }) {
+  if (piece === undefined || piece === null) return null;
+  return (
+    <div className="flex items-center gap-2 shrink-0 pb-1.5 text-[10px] tracking-[0.2em]" style={{ color: UI.dim }}>
+      <span>THEM</span>
+      <BlockGlyph blockId={piece} box={18} color={ink} dir={dir} />
+      <span style={{ opacity: 0.6 }}>then</span>
+      <div className="flex items-center gap-1" style={{ opacity: 0.7 }}>
+        {(queue || []).slice(0, 4).map((id, i) => <BlockGlyph key={i} blockId={id} box={13} color={ink} dir={dir} gap={0.5} />)}
+      </div>
     </div>
   );
 }
@@ -845,39 +934,43 @@ function ActionBar({ onRotate, onCommit, onDiscard, canRotate, canCommit, canDis
       <button onClick={onDiscard} disabled={!canDiscard}
         className="flex items-center justify-center gap-1.5 text-[12px] tracking-widest disabled:opacity-30 flex-1"
         style={{ height: 42, ...sk(), color: UI.dim }}>
-        <SkipForward size={13} /> DROP
+        <SkipForward size={13} /> PASS
       </button>
     </div>
   );
 }
 
 /** Territory as three pencil-shaded strips over a drawn baseline. */
-const shadeBg = (color, dir = 1, dense = false) => `${shadeUrl(color, { dir, dense })} 0 0 / 36px 36px`;
+/** A segmented pixel fill: 4px blocks with 1px gaps, glowing in its colour. */
+const pixelFill = (color) => ({
+  background: `repeating-linear-gradient(90deg, ${color} 0 4px, color-mix(in srgb, ${color} 35%, transparent) 4px 5px)`,
+  boxShadow: `0 0 8px color-mix(in srgb, ${color} 60%, transparent)`,
+});
 
-function ScoreBar({ score, turn, turns, inkA, inkB, specialHex, labelA, labelB }) {
-  const pct = (n) => (n / (ROWS * COLS)) * 100;
+function ScoreBar({ score, turn, turns, inkA, inkB, labelA, labelB }) {
+  // Scores can exceed the square count (centre squares are worth more), so
+  // the bar is each side's share of what's been scored so far.
+  const total = Math.max(1, score.a + score.b);
   return (
     <div className="shrink-0 pb-2">
-      <div className="flex items-end justify-between mb-1">
+      <div className="flex items-end justify-between mb-1.5">
         <span className="flex items-baseline gap-1.5" style={{ color: inkA }}>
-          <span className="text-[24px] leading-none tabular-nums">{score.a}</span>
+          <span className="tb-num text-[26px] leading-none tabular-nums">{score.a}</span>
           <span className="text-[11px] tracking-[0.25em]">{labelA}</span>
         </span>
-        <span className="text-[13px] italic pb-0.5" style={{ color: UI.dim }}>
-          turn {Math.min(turn, turns)} of {turns}
-          {score.s > 0 && <span style={{ color: GOLD }}> · {score.s}◆</span>}
+        <span className="text-[12px] tracking-[0.15em] pb-0.5" style={{ color: UI.dim }}>
+          TURN {Math.min(turn, turns)}/{turns}
         </span>
         <span className="flex items-baseline gap-1.5" style={{ color: inkB }}>
           <span className="text-[11px] tracking-[0.25em]">{labelB}</span>
-          <span className="text-[24px] leading-none tabular-nums">{score.b}</span>
+          <span className="tb-num text-[26px] leading-none tabular-nums">{score.b}</span>
         </span>
       </div>
-      <div className="flex w-full" style={{ height: 7 }}>
-        <div style={{ width: `${pct(score.a)}%`, background: shadeBg(inkA, 1, true), transition: "width 300ms ease-out" }} />
-        <div style={{ width: `${pct(score.s)}%`, background: shadeBg(specialHex, 1, true) }} />
-        <div style={{ marginLeft: "auto", width: `${pct(score.b)}%`, background: shadeBg(inkB, -1, true), transition: "width 300ms ease-out" }} />
+      <div className="flex w-full p-[2px]" style={{ height: 12, background: "color-mix(in srgb, var(--tb-panel-solid) 35%, transparent)", clipPath: CLIP, boxShadow: BEVEL }}>
+        <div style={{ width: `${(score.a / total) * 100}%`, ...pixelFill(inkA), transition: "width 400ms steps(8)" }} />
+        <div style={{ flex: 1 }} />
+        <div style={{ width: `${(score.b / total) * 100}%`, ...pixelFill(inkB), transition: "width 400ms steps(8)" }} />
       </div>
-      <div style={{ height: 8, ...RULE_BELOW, backgroundPosition: "top" }} />
     </div>
   );
 }
@@ -981,7 +1074,7 @@ function AmbientField({ colors, theme, paused }) {
         position: "absolute", left: "50%", top: "50%",
         width: dims.cols * FIELD_CELL, height: dims.rows * FIELD_CELL,
         transform: "translate(-50%, -50%) rotate(-14deg)",
-        opacity: field.fading ? 0 : 0.34,
+        opacity: field.fading ? 0 : 0.2,
         transition: "opacity 1400ms ease",
       }}>
         {[...field.cells].map(([k, v]) => {
@@ -1000,13 +1093,15 @@ function AmbientField({ colors, theme, paused }) {
 }
 
 function Popup({ title, onClose, children, pinned, maxW = 430 }) {
+  useEffect(() => { sky.paused++; return () => { sky.paused--; }; }, []);
   return (
     <div
       className="fixed inset-0 z-40 flex items-center justify-center tb-fade"
       style={{
-        // Opaque on purpose: a translucent backdrop re-samples whatever moves
-        // behind it every frame, which reads as flicker.
-        background: "var(--tb-ground)",
+        // A dimmed, see-through backdrop. The sky behind is paused while a
+        // popup is open (see PixelSky), so the frosted panel isn't re-blurring
+        // a moving picture every frame.
+        background: "color-mix(in srgb, var(--tb-ground) 62%, transparent)",
         padding: "clamp(14px, 5vw, 56px) clamp(14px, 5vw, 56px)",
         paddingTop: "max(clamp(14px,5vw,56px), env(safe-area-inset-top,0px))",
         paddingBottom: "max(clamp(14px,5vw,56px), env(safe-area-inset-bottom,0px))",
@@ -1014,13 +1109,16 @@ function Popup({ title, onClose, children, pinned, maxW = 430 }) {
       onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
-        className="tb-pop w-full flex flex-col overflow-hidden"
+        className="tb-pop tb-scale-pop w-full flex flex-col overflow-hidden"
         style={{
           maxWidth: maxW,
           maxHeight: "100%",
-          background: UI.panel,
+          background: "color-mix(in srgb, var(--tb-panel-solid) 55%, transparent)",
+          backdropFilter: "blur(18px) saturate(1.4)",
+          WebkitBackdropFilter: "blur(18px) saturate(1.4)",
           ...sk(UI.dim),
-          boxShadow: "0 18px 40px rgba(0,0,0,.35)",
+          clipPath: CLIP_BIG,
+          boxShadow: `${BEVEL}, inset 0 1px 30px rgba(255,255,255,.04)`,
         }}
       >
         <div className="flex items-center justify-between px-4 h-12 shrink-0 mx-2" style={RULE_BELOW}>
@@ -1190,32 +1288,30 @@ function DeckModal({ loadout, setLoadout, color, onClose }) {
       <div className="grid grid-cols-4 gap-1.5 pb-3" style={{ ...RULE_BELOW }}>
         {loadout.map((blockId, i) => {
           const hot = drag && drag.over === i;
-          const golden = i === GOLDEN_SLOT;
           return (
             <div key={i} ref={(el) => (slotRefs.current[i] = el)}
               onPointerDown={(e) => onPress(e, blockId, i, true)}
               className="rounded flex flex-col items-center justify-center gap-1 select-none relative"
               style={{
                 height: 62,
-                background: hot ? UI.cell : golden ? "color-mix(in srgb, var(--tb-special) 10%, transparent)" : "transparent",
-                ...sk(hot ? color : golden ? GOLD : UI.line),
+                background: hot ? UI.cell : "transparent",
+                ...sk(hot ? color : UI.line),
                 touchAction: "none",
                 transform: hot ? "scale(1.06)" : "none",
                 transition: "transform 120ms ease-out",
                 opacity: drag && drag.from === i ? 0.25 : 1,
               }}>
-              <BlockGlyph blockId={blockId} box={28} color={golden ? GOLD : color} />
-              <span className="text-[9px] tracking-wider" style={{ color: golden ? GOLD : UI.dim }}>
-                {golden ? "GOLDEN" : BLOCKS[blockId].name}
+              <BlockGlyph blockId={blockId} box={28} color={color} />
+              <span className="text-[9px] tracking-wider" style={{ color: UI.dim }}>
+                {BLOCKS[blockId].name}
               </span>
             </div>
           );
         })}
       </div>
       <div className="text-[11px] leading-relaxed pt-2 pb-1" style={{ color: UI.dim }}>
-        <span style={{ color: GOLD }}>Golden slot.</span> Play this block{" "}
-        {goldenCycleFor(loadout[GOLDEN_SLOT])}× to charge it — then it can be dropped
-        straight onto your opponent's squares and turns them yours.
+        You play one piece per turn, straight from the front of your queue. These
+        eight come round once per pass, shuffled each time — and your opponent can see them.
       </div>
     </>
   );
@@ -1487,7 +1583,7 @@ function ControlsSection() {
           className="text-[11px] tracking-[0.2em] py-1" style={{ color: UI.dim }}>RESET</button>
       </div>
       <div className="text-[11px] leading-relaxed mb-2" style={{ color: UI.dim }}>
-        Click a key, then press the new one. Esc cancels. ← → always cycle through your blocks.
+        Click a key, then press the new one. Esc cancels.
       </div>
       <div className="grid grid-cols-2 gap-x-4">
         {ACTIONS.map((a) => {
@@ -1537,8 +1633,10 @@ function ThemeModal({ theme, setTheme, onClose }) {
 
   const previewBoard = useMemo(() => {
     const b = initialBoard();
-    const moves = [["A", [[13, 2], [13, 3], [14, 2]]], ["B", [[1, 4], [1, 5], [2, 5]]],
-      ["S", [[7, 3], [7, 4]]], ["A", [[10, 4], [11, 4]]], ["B", [[4, 2], [4, 3]]]];
+    // A few squares each, within the smallest board the game uses.
+    const last = ROWS - 1;
+    const moves = [["A", [[last - 1, 4], [last - 1, 5], [last - 2, 4]]], ["B", [[1, 5], [1, 6], [2, 6]]],
+      ["A", [[last - 3, 3], [last - 4, 3]]], ["B", [[3, 7], [3, 8]]]];
     for (const [who, cells] of moves) for (const [r, c] of cells) b[r][c] = who;
     return b;
   }, []);
@@ -1604,7 +1702,7 @@ function ThemeModal({ theme, setTheme, onClose }) {
           <Row label="OPPONENT">
             {INKS.map((c) => <Swatch key={c} color={c} on={theme.rival === c} onClick={() => set({ rival: c })} />)}
           </Row>
-          <Row label="CONTESTED">
+          <Row label="CENTRE">
             {INKS.map((c) => <Swatch key={c} color={c} on={theme.special === c} onClick={() => set({ special: c })} />)}
           </Row>
           <div className="text-[11px] tracking-[0.2em] mt-4 mb-2" style={{ color: UI.dim }}>SURFACES</div>
@@ -2079,19 +2177,9 @@ function MiniBoard({ w, h, cells, size = 15, ink }) {
   );
 }
 
-const COLLISION_TEXT = {
-  vanish: "Both pieces lose that square. It empties out, and either of you can claim it again later.",
-  special: "The square turns gold. Nobody owns it and nobody can ever build on it again.",
-  clearRow: "The entire row is wiped — both colours, all the way across the board.",
-  clearColumn: "The entire column is wiped — both colours, top to bottom.",
-  blast: "Everything around the collision is destroyed, yours included.",
-  swap: "Whoever is behind on territory takes the square. Collide when you're losing.",
-};
-
 function HowToModal({ colors, loadout, onClose }) {
   const [page, setPage] = useState(0);
   const ink = { A: colors.you, B: colors.rival, S: colors.special };
-  const goldenId = loadout[GOLDEN_SLOT];
 
   const pages = [
     {
@@ -2100,7 +2188,18 @@ function HowToModal({ colors, loadout, onClose }) {
         "0,2": "B", "0,3": "B", "1,2": "B", "1,3": "B", "1,4": "B", "2,4": "B",
         "5,2": "A", "5,3": "A", "4,1": "A", "4,2": "A", "4,3": "A", "3,1": "A",
       }} />,
-      body: `Claim more squares than your opponent. After ${TURNS} turns, whoever covers more of the board wins. That's it.`,
+      body: `Own more of the ${COLS}×${ROWS} board than your opponent after ${TURNS} turns. Each square is a point; the four centre squares are worth ${RULES.centreValue}.`,
+    },
+    {
+      title: "ONE PIECE A TURN",
+      art: (
+        <div className="flex items-center justify-center gap-3">
+          <BlockGlyph blockId={loadout[0]} box={40} color={colors.you} />
+          <ChevronRight size={16} style={{ color: UI.dim }} />
+          {loadout.slice(1, 5).map((id, i) => <BlockGlyph key={i} blockId={id} box={20} color={colors.you} />)}
+        </div>
+      ),
+      body: "You don't choose from a hand. You play the piece at the front of your queue — rotate it and place it, or pass. Your whole queue is shown, so plan ahead.",
     },
     {
       title: "PLACING",
@@ -2108,7 +2207,7 @@ function HowToModal({ colors, loadout, onClose }) {
         "2,2": "A", "2,3": "A",
         "1,4": "ok", "3,1": "no",
       }} />,
-      body: "A block must land on empty squares AND touch ink you already own. Corners count, so diagonal contact is enough. The red placement is floating on its own — illegal.",
+      body: "A piece must land on empty squares AND touch ink you already own. Corners count, so diagonal contact is enough. The red one is floating on its own — illegal.",
     },
     {
       title: "BOTH AT ONCE",
@@ -2116,46 +2215,24 @@ function HowToModal({ colors, loadout, onClose }) {
         "3,1": "A", "3,2": "A", "4,1": "A",
         "1,4": "B", "1,3": "B", "0,4": "B",
       }} />,
-      body: "There are no alternating turns. You both choose in secret, lock in, and the moves land together. You never know where they're going until it's already happened.",
+      body: "There are no alternating turns. You both choose in secret and the moves land together. If you both grab the same square, it stays empty.",
     },
     {
-      title: "COLLISIONS",
-      art: <MiniBoard w={6} h={5} ink={ink} cells={{
-        "2,1": "A", "2,2": "A", "2,3": "S", "2,4": "B", "3,4": "B",
+      title: "FULL LINES CLEAR",
+      art: <MiniBoard w={6} h={4} ink={ink} cells={{
+        "1,0": "A", "1,1": "A", "1,2": "B", "1,3": "A", "1,4": "A", "1,5": "ok",
+        "0,1": "A", "2,4": "B", "3,2": "B",
       }} />,
-      body: `Sometimes you both reach for the same square. ${COLLISION_TEXT[RULES.golden] || COLLISION_TEXT.vanish}`,
-    },
-    {
-      title: "THE GOLDEN PIECE",
-      art: (
-        <div className="flex items-center justify-center gap-4">
-          <BlockGlyph blockId={goldenId} box={44} color={GOLD} glow />
-          <ChevronRight size={16} style={{ color: UI.dim }} />
-          <MiniBoard w={5} h={4} ink={ink} cells={{
-            "1,1": "B", "1,2": "B", "2,1": "S", "2,2": "S", "2,3": "B",
-          }} />
-        </div>
-      ),
-      body: `The first slot of your deck charges as you play it — ${goldenCycleFor(goldenId)} play${goldenCycleFor(goldenId) === 1 ? "" : "s"} for that block. Once charged, it can be dropped straight onto your opponent's squares and turns them yours. It still has to touch your own ink.`,
+      body: "Any row or column that fills up completely is wiped — both colours. Build too close to a full line and your opponent can finish it for you and delete your squares.",
     },
     {
       title: "YOUR DECK",
       art: (
         <div className="flex flex-wrap items-center justify-center gap-2.5">
-          {loadout.map((id, i) => (
-            <BlockGlyph key={i} blockId={id} box={26} color={i === GOLDEN_SLOT ? GOLD : colors.you} />
-          ))}
+          {loadout.map((id, i) => <BlockGlyph key={i} blockId={id} box={26} color={colors.you} />)}
         </div>
       ),
-      body: "Eight blocks, four in hand. Draws come in bags: across any eight draws you get each block exactly once, so nothing floods and nothing goes missing.",
-    },
-    {
-      title: "WATCH THE GOLD",
-      art: <div className="text-center text-[13px] leading-relaxed" style={{ color: GOLD }}>
-        <BookOpen size={22} style={{ margin: "0 auto 10px" }} />
-        You're told the turn their golden piece can actually fire.
-      </div>,
-      body: "A charge sitting in their bag is harmless. The moment you're warned it's ready, assume the square you care about is about to change colour.",
+      body: "Pick eight pieces in the deck editor. They come round in passes, like Tetris bags: every pass deals all eight once, freshly shuffled. Your opponent sees your queue, and you see theirs.",
     },
   ];
 
@@ -2210,13 +2287,23 @@ function HowToModal({ colors, loadout, onClose }) {
    MENU
    ============================================================ */
 /** A pen underline that tapers at both ends: two loose strokes, never quite parallel. */
-function Flourish({ width = 160 }) {
+/** Under the title: a row of pixels with a light running along it. */
+function PixelRule({ count = 18 }) {
   return (
-    <svg aria-hidden="true" width={width} height="16" viewBox="0 0 160 16" style={{ display: "block", margin: "6px auto 0", overflow: "visible" }}>
-      <path d="M6 9 C 40 4, 70 12, 96 8 S 140 5, 154 8" fill="none" style={{ stroke: UI.text }} strokeWidth="1.6" strokeLinecap="round" />
-      <path d="M22 11.5 C 55 8, 92 13.5, 136 9.5" fill="none" style={{ stroke: UI.dim }} strokeWidth="1" strokeLinecap="round" />
-      <path d="M150 4.5 l7 3.4 -7 3.2" fill="none" style={{ stroke: UI.text }} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <div aria-hidden="true" className="relative flex justify-center gap-[3px] mt-3 mx-auto" style={{ width: count * 9 }}>
+      {Array.from({ length: count }).map((_, i) => {
+        const t = i / (count - 1);
+        return (
+          <span key={i} style={{
+            width: 6, height: 6, display: "block",
+            background: `color-mix(in srgb, var(--tb-you) ${Math.round((1 - t) * 100)}%, var(--tb-rival))`,
+            opacity: 0.35 + 0.65 * Math.sin(Math.PI * t),
+            boxShadow: "0 0 6px color-mix(in srgb, var(--tb-you) 50%, transparent)",
+          }} />
+        );
+      })}
+      <span className="tb-runner" />
+    </div>
   );
 }
 function Menu({ onPick, loadout, setLoadout, colors, profile, status, name, rename, onLogout, theme, setTheme }) {
@@ -2231,15 +2318,15 @@ function Menu({ onPick, loadout, setLoadout, colors, profile, status, name, rena
   const notice = useNotice();
 
   return (
-    <div className="tb-screen tb-safe relative w-full flex items-center justify-center px-5 font-mono overflow-hidden" style={{ background: UI.ground, color: UI.text }}>
+    <div className="tb-screen tb-safe relative w-full flex items-center justify-center px-5 font-mono overflow-hidden" style={{ color: UI.text }}>
       <AmbientField colors={colors} theme={theme} paused={!!modal} />
       <div className="absolute inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse at 50% 46%, color-mix(in srgb, var(--tb-ground) 45%, transparent) 0%, color-mix(in srgb, var(--tb-ground) 20%, transparent) 50%, transparent 80%)" }} />
 
-      <div className="relative w-full" style={{ maxWidth: 330 }}>
+      <div className="relative w-full tb-scale" style={{ maxWidth: 330 }}>
         <div className="text-center mb-9">
-          <div className="tb-display text-[68px] leading-none tracking-[0.16em]"
-            style={{ marginRight: "-0.16em", color: UI.text }}>MINO</div>
-          <Flourish width={170} />
+          <div className="tb-display tb-title text-[76px] leading-none tracking-[0.12em]"
+            style={{ marginRight: "-0.12em" }}>MINO</div>
+          <PixelRule />
         </div>
 
         <button
@@ -2359,8 +2446,8 @@ function Menu({ onPick, loadout, setLoadout, colors, profile, status, name, rena
 function Difficulty({ onStart, onBack, colors }) {
   const [lv, setLv] = useState(DEFAULT_LEVEL);
   return (
-    <div className="tb-screen tb-safe w-full flex items-center justify-center px-5 font-mono" style={{ background: UI.ground, color: UI.text }}>
-      <div className="w-full" style={{ maxWidth: 330 }}>
+    <div className="tb-screen tb-safe w-full flex items-center justify-center px-5 font-mono" style={{ color: UI.text }}>
+      <div className="w-full tb-scale" style={{ maxWidth: 330 }}>
         <button onClick={onBack} className="flex items-center gap-1 text-[12px] tracking-[0.25em] mb-6 py-2" style={{ color: UI.dim }}>
           <ChevronLeft size={13} /> MENU
         </button>
@@ -2417,8 +2504,8 @@ function Matchmaking({ profile, loadout, colors, onCancel, onPlayAi }) {
   const elapsed = search?.elapsed ?? 0;
 
   return (
-    <div className="tb-screen tb-safe w-full flex flex-col items-center justify-center px-6 font-mono" style={{ background: UI.ground, color: UI.text }}>
-      <div className="w-full" style={{ maxWidth: 330 }}>
+    <div className="tb-screen tb-safe w-full flex flex-col items-center justify-center px-6 font-mono" style={{ color: UI.text }}>
+      <div className="w-full tb-scale" style={{ maxWidth: 330 }}>
         {!found ? (
           <>
             <div className="text-center mb-8">
@@ -2532,6 +2619,7 @@ function ForfeitButton({ onConfirm, ranked = false, disabled = false }) {
    LOCAL GAME — hotseat and solo. Client owns everything.
    ============================================================ */
 function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart }) {
+  useEffect(() => { sky.slow = true; return () => { sky.slow = false; }; }, []);
   const solo = mode === "SOLO";
   const INK = useMemo(() => ({ A: colors.you, B: colors.rival, S: colors.special }), [colors]);
 
@@ -2539,7 +2627,6 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   const [turn, setTurn] = useState(1);
   const [phase, setPhase] = useState("PLAY_A");
   const [decks, setDecks] = useState(() => ({ A: newDeck(loadout), B: newDeck(loadout) }));
-  const [goldenPlays, setGoldenPlays] = useState({ A: 0, B: 0 });
   const [pendingA, setPendingA] = useState(null);
   const [reveal, setReveal] = useState(null);
   const [lockedOut, setLockedOut] = useState(false);
@@ -2547,20 +2634,17 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   const [stageRef, stage] = useSize();
 
   const player = phase === "PLAY_B" ? "B" : "A";
-  const hand = decks[player].hand;
-
-  // Declared after `player` — these read it.
-  const goldenBlockId = loadout[GOLDEN_SLOT];
-  const goldenNeed = goldenCycleFor(goldenBlockId);
-  const armedFor = (side) => goldenPlays[side] >= goldenNeed && decks[side].hand.includes(goldenBlockId);
-  const myArmed = armedFor(player);
+  const them = player === "A" ? "B" : "A";
+  // One piece per turn: the front of your queue.
+  const piece = currentPiece(decks[player]);
+  const hand = useMemo(() => [piece], [piece]);
   const inPlay = phase === "PLAY_A" || phase === "PLAY_B";
   const score = useMemo(() => scoreOf(board), [board]);
   const oppName = solo ? `AI ${LEVELS[aiLevel - 1]}` : "PLAYER 2";
 
-  const pl = usePlacement({ board, owner: player, hand, enabled: inPlay, goldenBlockId: myArmed ? goldenBlockId : null });
+  const pl = usePlacement({ board, owner: player, hand, enabled: inPlay });
   const contestedKeys = useMemo(() => new Set((reveal ? reveal.contested : []).map(([r, c]) => key(r, c))), [reveal]);
-  const stuck = useMemo(() => (inPlay ? !hasAnyMove(board, hand, player, { goldenBlockId: myArmed ? goldenBlockId : null }) : false), [board, hand, player, inPlay, myArmed, goldenBlockId]);
+  const stuck = useMemo(() => (inPlay ? !hasAnyMove(board, hand, player) : false), [board, hand, player, inPlay]);
 
   const g = theme.gap;
   const cell = Math.max(6, Math.floor(Math.min(
@@ -2569,18 +2653,13 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   )));
   const boardH = cell * ROWS + g * (ROWS + 1);
 
-  const drawInto = (side, handIdx, { played = false, spentGolden = false } = {}) => {
-    const wasGolden = decks[side].hand[handIdx] === goldenBlockId;
-    setDecks((st) => ({ ...st, [side]: cycleHand(st[side], handIdx, loadout) }));
-    if (played && wasGolden) {
-      setGoldenPlays((gp) => ({ ...gp, [side]: spentGolden ? 0 : gp[side] + 1 }));
-    }
-  };
+  // Played or passed, the current piece is spent and the queue moves on.
+  const advance = (side) => setDecks((st) => ({ ...st, [side]: advanceDeck(st[side], loadout) }));
 
   const finish = (mA, mB) => {
     const res = resolveTurn(board, mA, mB);
     setBoard(res.board);
-    setReveal({ contested: res.contested, cleared: res.cleared, a: mA, b: mB });
+    setReveal({ contested: res.contested, cleared: res.cleared, lines: res.lines, a: mA, b: mB });
     setPhase("REVEAL");
   };
 
@@ -2588,18 +2667,15 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
 
   const commit = () => {
     if (pl.sel.handIdx === null || !pl.ghost || !pl.ghostLegal) return;
-    const id = hand[pl.sel.handIdx];
-    drawInto(player, pl.sel.handIdx, { played: true, spentGolden: pl.goldenSel });
-    const move = { cells: pl.ghost, value: BLOCKS[id].cells.length, blockId: id, golden: pl.goldenSel };
+    advance(player);
+    const move = { cells: pl.ghost, value: BLOCKS[piece].cells.length, blockId: piece };
     if (player === "A") handOver(move); else finish(pendingA, move);
     pl.reset();
   };
 
-  // With nothing picked (the drop key), the first block in hand goes.
+  // Passing spends the current piece without placing it.
   const discard = () => {
-    const idx = pl.sel.handIdx ?? hand.findIndex((id) => id !== undefined);
-    if (idx < 0) return;
-    drawInto(player, idx);
+    advance(player);
     if (player === "A") handOver(null); else finish(pendingA, null);
     pl.reset();
   };
@@ -2609,16 +2685,9 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   useEffect(() => {
     if (phase !== "AI_THINK") return;
     const t = setTimeout(() => {
-      const aiHand = decks.B.hand;
-      const aiGolden = armedFor("B") ? goldenBlockId : null;
-      const move = aiPickMove(board, aiHand, "B", aiLevel, aiGolden);
-      if (move) {
-        drawInto("B", move.handIdx, { played: true, spentGolden: !!move.golden });
-        finish(pendingA, { cells: move.cells, value: move.value, blockId: move.blockId, golden: move.golden });
-      } else {
-        drawInto("B", aiPickDiscard(aiHand));
-        finish(pendingA, null);
-      }
+      const move = aiPickMove(board, currentPiece(decks.B), "B", aiLevel, LEVELS.length);
+      advance("B");
+      finish(pendingA, move ? { cells: move.cells, value: move.value, blockId: move.blockId } : null);
     }, AI_THINK_MS);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2629,25 +2698,20 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
     const t = setTimeout(() => {
       setReveal(null);
       setPendingA(null);
-      // A charged golden piece can land on enemy ink, so a board that looks
-      // full may still be playable. Check with it before ending anything.
-      const goldenOf = (side) =>
-        goldenPlays[side] >= goldenNeed && decks[side].hand.includes(goldenBlockId) ? goldenBlockId : null;
-      const bothStuck =
-        !hasAnyMove(board, decks.A.hand, "A", { goldenBlockId: goldenOf("A") }) &&
-        !hasAnyMove(board, decks.B.hand, "B", { goldenBlockId: goldenOf("B") });
-      if (bothStuck || turn >= TURNS) {
-        setLockedOut(bothStuck);
+      // Locked: neither player can place any piece of their deck anywhere.
+      const locked = !hasAnyMove(board, loadout, "A") && !hasAnyMove(board, loadout, "B");
+      if (locked || turn >= TURNS) {
+        setLockedOut(locked);
         setPhase("DONE");
       }
       else { setTurn((t2) => t2 + 1); setPhase("PLAY_A"); }
     }, REVEAL_MS);
     return () => clearTimeout(t);
-  }, [phase, board, decks, turn, goldenPlays, goldenNeed, goldenBlockId]);
+  }, [phase, board, turn, loadout]);
 
   return (
-    <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ background: UI.ground, color: UI.text }}>
-      <div className="relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
+    <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ color: UI.text }}>
+      <div className="tb-col relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
         <div className="flex items-center justify-between h-9 shrink-0">
           <button onClick={onExit} className="flex items-center gap-1 text-[12px] tracking-[0.25em] py-2 -ml-1" style={{ color: UI.dim }}>
             <ChevronLeft size={13} /> MENU
@@ -2658,15 +2722,18 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
         </div>
 
         <ScoreBar score={score} turn={turn} turns={TURNS} inkA={INK.A} inkB={INK.B} specialHex={INK.S} labelA="P1" labelB={solo ? "AI" : "P2"} />
+        {inPlay && (
+          <OppQueue piece={currentPiece(decks[them])} queue={upcoming(decks[them])} ink={INK[them]} dir={them === "B" ? -1 : 1} />
+        )}
 
         <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center">
           <div className="relative" style={{ width: cell * COLS + g * (COLS + 1), height: boardH }}>
             <BoardGrid
               board={board} cell={cell} ink={INK} theme={theme} youSide={player}
               pendingKeys={phase === "AI_THINK" && pendingA ? new Set(pendingA.cells.map(([r, c]) => key(r, c))) : null}
-              pendingInk={pendingA?.golden ? GOLD : INK.A}
+              pendingInk={INK.A}
               ghostKeys={pl.ghostKeys} ghostLegal={pl.ghostLegal}
-              ghostInk={pl.goldenSel ? GOLD : INK[player]} ghostGolden={pl.goldenSel}
+              ghostInk={INK[player]}
               contestedKeys={contestedKeys} boardRef={pl.boardRef} onPointerDown={(e) => pl.onBoardPointerDown(e, commit)}
             />
 
@@ -2680,7 +2747,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
             {pl.drag && pl.rotated && (
               <FloatingPiece
                 cells={pl.rotated} cell={cell} gap={theme.gap}
-                color={pl.goldenSel ? GOLD : INK[player]} legal={pl.ghostLegal} golden={pl.goldenSel}
+                color={INK[player]} legal={pl.ghostLegal}
                 dir={player === "B" ? -1 : 1}
                 x={pl.drag.x} y={pl.drag.y} lift={pl.drag.lift} faint={pl.holding && !!pl.sel.pos}
               />
@@ -2730,17 +2797,17 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
         <div className="shrink-0 flex flex-col justify-end" style={{ height: DOCK_H }}>
           {inPlay && (
             <>
-              <HandRow hand={hand} selIdx={pl.sel.handIdx} dragging={pl.dragging || pl.holding} ink={INK[player]}
-                onPress={pl.onCardPointerDown} goldenBlockId={myArmed ? goldenBlockId : null}
-                dir={player === "B" ? -1 : 1} />
+              <QueueBar piece={piece} queue={upcoming(decks[player])} pass={currentPass(decks[player])}
+                selected={pl.sel.handIdx === 0} dragging={pl.dragging || pl.holding} ink={INK[player]}
+                onPress={pl.onCardPointerDown} dir={player === "B" ? -1 : 1} />
               <ActionBar
                 ink={INK[player]}
                 onRotate={pl.rotate} onCommit={commit} onDiscard={discard}
-                canRotate={pl.sel.handIdx !== null} canCommit={pl.ghostLegal} canDiscard={pl.sel.handIdx !== null}
+                canRotate={pl.sel.handIdx !== null} canCommit={pl.ghostLegal} canDiscard={inPlay}
               />
               <div className="text-[12px] truncate" style={{ color: UI.dim, height: 14 }}>
-                {stuck ? <span style={{ color: UI.bad }}>Nowhere to play — drop a block.</span>
-                  : pl.sel.handIdx === null ? "Drag a block onto the grid."
+                {stuck ? <span style={{ color: UI.bad }}>No room for this piece — pass.</span>
+                  : pl.sel.handIdx === null ? "Pick up your piece and place it."
                   : !pl.sel.pos ? "Drag it onto the grid."
                   : !pl.ghostLegal ? <span style={{ color: UI.bad }}>Must touch your own ink.</span>
                   : "Drag to adjust, then lock in."}
@@ -2774,6 +2841,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
    NET GAME — ranked. The server owns the board; we render it.
    ============================================================ */
 function NetGame({ colors, theme, onResult, onAbort }) {
+  useEffect(() => { sky.slow = true; return () => { sky.slow = false; }; }, []);
   const m = useMatch();
 
   // The match vanished without finishing (server restart): back to the menu,
@@ -2807,17 +2875,16 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   );
 
   const board = m?.board ?? null;
-  const hand = m?.hand ?? [];
+  // One piece per turn: the front of your queue.
+  const piece = m?.piece ?? m?.hand?.[0] ?? null;
+  const hand = useMemo(() => (piece === null ? [] : [piece]), [piece]);
   const canAct = !!board && !m.submitted && !m.reveal && !m.over;
-  const gold = m?.golden ?? null;
-  const myArmed = !!gold?.armed;
-  const goldenBlockId = gold?.blockId ?? null;
 
   // Seat B's home row is row 0 — the top. Rotate their view so both players
   // always build upward from the bottom of their own screen.
   const flip = you === "B";
 
-  const pl = usePlacement({ board, owner: you, hand, enabled: canAct, flip, goldenBlockId: myArmed ? goldenBlockId : null });
+  const pl = usePlacement({ board, owner: you, hand, enabled: canAct, flip });
   const contestedKeys = useMemo(
     () => new Set((m?.reveal ? m.reveal.contested : []).map(([r, c]) => key(r, c))),
     [m?.reveal]
@@ -2840,7 +2907,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   const commit = () => {
     if (!pl.ghostLegal || pl.sel.handIdx === null) return;
     // Show the block where it went (dotted, not yet real) until the turn resolves.
-    setPlaced({ turn: m.turn, cells: pl.ghost, handIdx: pl.sel.handIdx, golden: pl.goldenSel });
+    setPlaced({ turn: m.turn, cells: pl.ghost, handIdx: pl.sel.handIdx });
     net.move({ turn: m.turn, handIdx: pl.sel.handIdx, rot: ((pl.sel.rot % 4) + 4) % 4, pos: pl.sel.pos });
     pl.reset();
   };
@@ -2858,7 +2925,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
 
   if (!m || !board) {
     return (
-      <div className="tb-screen tb-safe w-full flex items-center justify-center font-mono" style={{ background: UI.ground, color: UI.dim }}>
+      <div className="tb-screen tb-safe w-full flex items-center justify-center font-mono" style={{ color: UI.dim }}>
         <div className="text-[13px] tracking-[0.3em] tb-pulse">DEALING…</div>
       </div>
     );
@@ -2868,8 +2935,8 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   const theirScore = you === "A" ? score.b : score.a;
 
   return (
-    <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ background: UI.ground, color: UI.text }}>
-      <div className="relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
+    <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ color: UI.text }}>
+      <div className="tb-col relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
         <div className="flex items-center justify-between h-9 shrink-0">
           <ForfeitButton ranked disabled={!m || !!m.over} onConfirm={() => net.forfeit()} />
           <div className="flex items-center gap-2">
@@ -2894,6 +2961,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
           turn={m.turn} turns={m.turns}
           inkA={colors.you} inkB={colors.rival} specialHex={colors.special} labelA="YOU" labelB="OPP"
         />
+        {m.opp && <OppQueue piece={m.opp.piece} queue={m.opp.queue} ink={colors.rival} dir={them === "B" ? -1 : 1} />}
 
         <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center">
           <div className="relative" style={{ width: cell * COLS + g * (COLS + 1), height: cell * ROWS + g * (ROWS + 1) }}>
@@ -2901,7 +2969,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
               <BoardGrid
                 board={board} cell={cell} ink={INK} theme={theme} youSide={you}
                 ghostKeys={pl.ghostKeys} ghostLegal={pl.ghostLegal} ghostInk={colors.you}
-                pendingKeys={pendingKeys} pendingInk={pending?.golden ? GOLD : colors.you}
+                pendingKeys={pendingKeys} pendingInk={colors.you}
                 contestedKeys={contestedKeys} boardRef={pl.boardRef} onPointerDown={(e) => pl.onBoardPointerDown(e, commit)}
               />
               {m.reveal && (
@@ -2915,7 +2983,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
             {pl.drag && pl.rotated && (
               <FloatingPiece
                 cells={pl.rotated} cell={cell} gap={theme.gap}
-                color={pl.goldenSel ? GOLD : colors.you} legal={pl.ghostLegal} flip={flip} golden={pl.goldenSel}
+                color={colors.you} legal={pl.ghostLegal} flip={flip}
                 dir={you === "B" ? -1 : 1}
                 x={pl.drag.x} y={pl.drag.y} lift={pl.drag.lift} faint={pl.holding && !!pl.sel.pos}
               />
@@ -2937,10 +3005,10 @@ function NetGame({ colors, theme, onResult, onAbort }) {
         </div>
 
         <div className="shrink-0 flex flex-col justify-end" style={{ height: DOCK_H }}>
-          <HandRow
-            hand={hand} selIdx={pl.sel.handIdx} dragging={pl.dragging || pl.holding}
-            ink={colors.you} onPress={pl.onCardPointerDown} disabled={!canAct} spentIdx={pending ? pending.handIdx : null}
-            goldenBlockId={myArmed ? goldenBlockId : null}
+          <QueueBar
+            piece={piece} queue={m.queue || []} pass={m.pass || 1}
+            selected={pl.sel.handIdx === 0} dragging={pl.dragging || pl.holding}
+            ink={colors.you} onPress={pl.onCardPointerDown} disabled={!canAct} spent={!!pending}
             dir={you === "B" ? -1 : 1}
           />
           <ActionBar
@@ -2948,7 +3016,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
             onRotate={pl.rotate} onCommit={commit} onDiscard={discard}
             canRotate={canAct && pl.sel.handIdx !== null}
             canCommit={canAct && pl.ghostLegal}
-            canDiscard={canAct && pl.sel.handIdx !== null}
+            canDiscard={canAct}
           />
           <div className="text-[12px] truncate" style={{ color: UI.dim, height: 14 }}>
             {err ? <span style={{ color: UI.bad }}>{err}</span>
@@ -2958,11 +3026,9 @@ function NetGame({ colors, theme, onResult, onAbort }) {
                   : "Turn resolved."
               )
               : m.submitted ? <span className="tb-pulse">Locked in — waiting for {m.opponent.name}…</span>
-              : pl.goldenSel ? <span style={{ color: GOLD }}>Golden — this can land on their ink.</span>
-              : gold?.oppArmed ? <span style={{ color: GOLD }}>They have a golden piece ready.</span>
               : m.oppReady ? <span style={{ color: GOLD }}>They've locked in. Your move.</span>
-              : stuck ? <span style={{ color: UI.bad }}>Nowhere to play — drop a block.</span>
-              : pl.sel.handIdx === null ? "Drag a block onto the grid."
+              : stuck ? <span style={{ color: UI.bad }}>No room for this piece — pass.</span>
+              : pl.sel.handIdx === null ? "Pick up your piece and place it."
               : !pl.sel.pos ? "Drag it onto the grid."
               : !pl.ghostLegal ? <span style={{ color: UI.bad }}>Must touch your own ink.</span>
               : "Drag to adjust, then lock in."}
@@ -3003,7 +3069,7 @@ function Result({ over, colors, onQueue, onMenu }) {
   }, [trFrom, trTo]);
 
   return (
-    <div className="tb-screen tb-safe w-full flex flex-col items-center justify-center px-6 font-mono" style={{ background: UI.ground, color: UI.text }}>
+    <div className="tb-screen tb-safe w-full flex flex-col items-center justify-center px-6 font-mono" style={{ color: UI.text }}>
       <div
         aria-hidden="true"
         className="absolute inset-0 pointer-events-none"
@@ -3011,7 +3077,7 @@ function Result({ over, colors, onQueue, onMenu }) {
           background: `radial-gradient(ellipse at 50% 34%, color-mix(in srgb, ${verdictInk} 26%, transparent) 0%, transparent 62%)`,
         }}
       />
-      <div className="relative w-full" style={{ maxWidth: 330 }}>
+      <div className="relative w-full tb-scale" style={{ maxWidth: 330 }}>
         <div className="text-center mb-7">
           <div className="text-[32px] leading-none tracking-[0.15em]" style={{ color: verdictInk }}>
             {drew ? "DRAW" : won ? "VICTORY" : "DEFEAT"}
@@ -3122,7 +3188,8 @@ export default function TurfBlocks() {
   const shell = (
     <style>{`
       :root { ${themeVars(theme)} }
-      .tb-screen { height: 100vh; height: 100dvh; overscroll-behavior: none; position: relative; }
+      html, body, #root { background: var(--tb-ground); }
+      .tb-screen { height: 100vh; height: 100dvh; overscroll-behavior: none; position: relative; z-index: 1; }
       .tb-safe {
         padding-top: env(safe-area-inset-top, 0px);
         padding-bottom: env(safe-area-inset-bottom, 0px);
@@ -3131,66 +3198,93 @@ export default function TurfBlocks() {
       }
       .tb-scroll { -webkit-overflow-scrolling: touch; scrollbar-width: none; }
       .tb-scroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
-      /* Type: Indie Flower, a handwritten face, everywhere. The class name is
-         historical. It has one weight and no italic, so the browser is told not
-         to fake bold or slanted versions, which smear handwriting. */
-      .font-mono { font-family: "Indie Flower", "Comic Neue", "Chalkboard SE", cursive; font-synthesis: none; }
-      .font-mono .italic, .font-mono em { font-style: normal; opacity: .85; }
-      .tb-display { font-family: "Indie Flower", cursive; font-weight: 400; }
-      .lucide { stroke-width: 1.6; }
 
-      /* Paper: grain and a vignette over everything, drawn once, never animated. */
+      /* Type: Bitcount Single, a pixel face, everywhere. The class name is historical. */
+      .font-mono { font-family: "Bitcount Single", ui-monospace, monospace; font-weight: 420; font-synthesis: none; }
+      .font-mono .italic, .font-mono em { font-style: normal; opacity: .85; }
+      .tb-display { font-family: "Bitcount Single", ui-monospace, monospace; font-weight: 800; }
+      .tb-num { font-weight: 700; }
+      .lucide { stroke-width: 2; shape-rendering: crispEdges; }
+
+      /* The title: a slow shimmer through your colours, with a hard pixel shadow. */
+      .tb-title {
+        background: linear-gradient(90deg, var(--tb-you), var(--tb-special), var(--tb-rival), var(--tb-you));
+        background-size: 300% 100%;
+        -webkit-background-clip: text; background-clip: text; color: transparent;
+        filter: drop-shadow(4px 4px 0 rgba(0,0,0,.45)) drop-shadow(0 0 18px color-mix(in srgb, var(--tb-you) 40%, transparent));
+        animation: tbShimmer 7s linear infinite;
+      }
+      @keyframes tbShimmer { from { background-position: 0% 0 } to { background-position: 300% 0 } }
+      /* A point of light running along the pixel rule under the title. */
+      .tb-runner {
+        position: absolute; top: 0; left: 0; width: 6px; height: 6px; background: #fff;
+        box-shadow: 0 0 8px #fff, 0 0 16px var(--tb-you);
+        animation: tbRun 2.6s steps(18) infinite;
+      }
+      @keyframes tbRun { from { left: 0 } to { left: calc(100% - 6px) } }
+
+      /* A pixel screen: faint scanlines and a vignette over everything. Static. */
       body::after {
         content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 60;
-        background: radial-gradient(ellipse at 50% 45%, transparent 52%, rgba(0,0,0, calc(var(--tb-vignette) * .55)) 100%);
-      }
-      body::before {
-        content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 60;
-        background: var(--tb-grain); background-size: 330px 330px;
-        opacity: var(--tb-grain-o);
+        background:
+          repeating-linear-gradient(0deg, rgba(0,0,0,.07) 0 1px, transparent 1px 3px),
+          radial-gradient(ellipse at 50% 45%, transparent 55%, rgba(0,0,0,.45) 100%);
       }
 
-      /* Ink going down: the strokes are wiped on left to right, like a pen pass. */
-      @keyframes tbDrop { from { clip-path: inset(0 100% 0 0) } to { clip-path: inset(0 0 0 0) } }
-      .tb-drop { animation: tbDrop .24s cubic-bezier(.3,.7,.4,1) both; }
-      @keyframes tbFadeIn { from { opacity: 0; transform: scale(.94) } to { opacity: 1; transform: none } }
-      .tb-fadein { animation: tbFadeIn 1.8s ease-out both; }
-      @keyframes tbBoot { from { clip-path: inset(0 100% 0 0); opacity: 0 } to { clip-path: inset(0 0 0 0); opacity: 1 } }
-      .tb-boot { animation: tbBoot 900ms ease-out both; }
-      /* A collision: the square shudders. */
+      /* Animations step rather than glide: motion in whole pixels. */
+      @keyframes tbDrop {
+        0%   { transform: scale(.25); filter: brightness(2.4) }
+        60%  { transform: scale(1.15); filter: brightness(1.4) }
+        100% { transform: none; filter: none }
+      }
+      .tb-drop { animation: tbDrop .3s steps(5) both; }
+      @keyframes tbFadeIn { from { opacity: 0; transform: scale(.6) } to { opacity: 1; transform: none } }
+      .tb-fadein { animation: tbFadeIn 1.6s steps(8) both; }
+      /* A collision: the square glitches side to side. */
       @keyframes tbContest {
-        0%,100% { transform: none } 20% { transform: translate(-1.5px, 1px) rotate(-4deg) }
-        40% { transform: translate(1.5px, -1px) rotate(3deg) } 60% { transform: translate(-1px, -1px) rotate(-2deg) }
-        80% { transform: translate(1px, 1px) rotate(1deg) }
+        0%,100% { transform: none } 20% { transform: translate(-2px, 0) } 40% { transform: translate(2px, -1px) }
+        60% { transform: translate(-1px, 1px) } 80% { transform: translate(1px, 0) }
       }
-      .tb-contest { animation: tbContest .42s steps(5) 2; z-index: 2; }
-      /* Erased: the ink lifts, twists and fades like a rubbed-out mark. */
+      .tb-contest { animation: tbContest .4s steps(5) 2; z-index: 2; }
+      /* Cleared: a white flash, then the square breaks down to nothing. */
       @keyframes tbVanish {
-        0%   { transform: none; opacity: 1 }
-        35%  { transform: rotate(-6deg) scale(1.08); opacity: .9 }
-        100% { transform: rotate(14deg) scale(.55); opacity: 0 }
+        0%   { transform: none; opacity: 1; filter: none }
+        25%  { transform: scale(1.12); filter: brightness(3) saturate(0) }
+        100% { transform: scale(0); opacity: 0; filter: brightness(2) }
       }
-      .tb-vanish { animation: tbVanish 560ms cubic-bezier(.32,0,.2,1) both; }
-      /* Line boil: a held drawing redrawn a few times a second. Marks charged things. */
-      @keyframes tbBoil {
-        0%   { transform: translate(0, 0) rotate(0) }
-        33%  { transform: translate(.6px, -.4px) rotate(.5deg) }
-        66%  { transform: translate(-.5px, .5px) rotate(-.4deg) }
+      .tb-vanish { animation: tbVanish 600ms steps(6) both; }
+      /* A full line about to clear: a bar of light sweeps along it. */
+      @keyframes tbLine {
+        0%   { transform: scaleX(0); opacity: 0 }
+        30%  { transform: scaleX(1); opacity: 1 }
+        100% { transform: scaleX(1); opacity: 0 }
       }
-      .tb-boil { animation: tbBoil .42s steps(1) infinite; }
+      .tb-line { animation: tbLine 700ms steps(7) both; transform-origin: left center; }
+      @keyframes tbShine { 0%,100% { filter: none } 50% { filter: brightness(1.5) } }
+      .tb-shine { animation: tbShine 1.2s steps(4) infinite; }
       @keyframes tbPulse { 0%,100% { opacity:.45 } 50% { opacity:1 } }
-      .tb-pulse { animation: tbPulse 1.4s ease-in-out infinite; }
+      .tb-pulse { animation: tbPulse 1.2s steps(4) infinite; }
       @keyframes tbFade { from { opacity: 0 } to { opacity: 1 } }
-      .tb-fade { animation: tbFade .16s ease-out both; }
-      /* Cards land like a sheet of paper dropped on a desk. */
-      @keyframes tbPop { from { opacity: 0; transform: rotate(-1.4deg) translateY(10px) } to { opacity: 1; transform: none } }
-      .tb-pop { animation: tbPop .22s cubic-bezier(.2,.9,.3,1) both; }
-      ${theme.motion ? "" : ".tb-contest,.tb-drop,.tb-boot,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-boil { animation: none !important }"}
+      .tb-fade { animation: tbFade .18s steps(3) both; }
+      /* Popups open like a window on an old screen: a quick stepped scale-in. */
+      @keyframes tbPop { from { opacity: 0; transform: scale(.9) } to { opacity: 1; transform: none } }
+      .tb-pop { animation: tbPop .2s steps(4) both; }
+      ${theme.motion ? "" : ".tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-title,.tb-runner,.tb-line,.tb-vanish { animation: none !important }"}
       @media (prefers-reduced-motion: reduce) {
-        .tb-contest,.tb-drop,.tb-boot,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-boil { animation: none }
+        .tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-title,.tb-runner,.tb-line { animation: none }
       }
+      /* Big screens: menus scale up, and the game column gets room for a bigger board. */
+      @media (min-width: 1000px) and (min-height: 760px) {
+        .tb-scale { zoom: 1.3; }
+        .tb-scale-pop { zoom: 1.15; }
+        .tb-col { max-width: 600px !important; }
+      }
+      /* Buttons light up under the pointer and press down one pixel. */
+      button:not(:disabled) { transition: filter 120ms steps(2), transform 60ms steps(1); }
+      button:not(:disabled):hover { filter: brightness(1.18); }
+      button:not(:disabled):active { transform: translateY(1px); }
       button { cursor: pointer; }
-      /* A phone held sideways leaves the 8×16 board too short to aim at. */
+      /* A phone held sideways leaves the board too short to aim at. */
       .tb-rotate { display: none; }
       @media (orientation: landscape) and (max-height: 500px) and (pointer: coarse) {
         .tb-rotate {
@@ -3257,7 +3351,7 @@ export default function TurfBlocks() {
 
   return (
     <InkStyle.Provider value={theme.stroke}>
-      <PencilDefs />{shell}{view}
+      <PixelSky theme={theme} />{shell}{view}
       <div className="tb-rotate font-mono" aria-live="polite">
         <RotateCw size={26} style={{ color: UI.dim }} />
         <div className="text-[16px]">Turn your phone upright</div>

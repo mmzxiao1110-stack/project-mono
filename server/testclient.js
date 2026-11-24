@@ -46,15 +46,13 @@ function bot(name) {
           side = m.you;
           break;
         case "turn": {
-          const golden = m.golden?.armed ? m.golden.blockId : null;
-          const moves = enumerateMoves(m.board, m.hand, side, { goldenBlockId: golden });
+          // One piece per turn: place the current piece somewhere legal, or pass.
+          const moves = enumerateMoves(m.board, [m.piece], side);
           if (moves.length) {
-            // Biggest block first, like a mid-level AI.
-            moves.sort((a, b) => b.value - a.value);
-            const mv = moves[Math.floor(Math.random() * Math.min(5, moves.length))];
-            send({ t: "move", turn: m.turn, handIdx: mv.handIdx, rot: mv.rot, pos: mv.pos });
+            const mv = moves[Math.floor(Math.random() * moves.length)];
+            send({ t: "move", turn: m.turn, rot: mv.rot, pos: mv.pos });
           } else {
-            send({ t: "discard", turn: m.turn, handIdx: 0 });
+            send({ t: "discard", turn: m.turn });
           }
           break;
         }

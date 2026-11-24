@@ -10,41 +10,40 @@
 
 export const RULES = {
   /* ----------------------------------------------------------
-     MATCH LENGTH
+     BOARD AND MATCH LENGTH
      ---------------------------------------------------------- */
-  turns: 30,     // rounds per match
-  handSize: 4,   // blocks held at once
+  size: 12,        // the board is size × size
+  turns: 25,       // rounds per match. Simulated on 12×12: ~3.5 line clears a game, 98% of games have one; longer mostly adds forced passes
+  // A match also ends early once neither player can place ANY piece from
+  // their deck anywhere ("locked").
 
   /* ----------------------------------------------------------
-     GOLDEN TILE PROPERTY
-     What happens to a square both players claim on the same turn.
-
-     "special"     Turns gold. Permanent, unbuildable, counts for nobody.
-     "vanish"      The square empties, like a Tetris clear.
-     "clearRow"    Wipes the entire row — everyone's ink, both colours.
-     "clearColumn" Same, vertically.
-     "blast"       Clears a square area around the collision.
-     "swap"        The square goes to whoever currently holds LESS turf.
+     THE QUEUE
+     You play exactly one piece per turn: the front of your queue. Your
+     8-piece deck comes round in bags, Tetris-style — each pass through it
+     deals all eight pieces once, freshly shuffled, so nothing floods and
+     nothing goes missing.
      ---------------------------------------------------------- */
-  golden: "vanish",
-  blastRadius: 1,   // only used by "blast". 1 = 3x3, 2 = 5x5
-  restoreHome: true, // give a wiped-out player their starting domino back
+  queueShown: 8,   // upcoming pieces shown after the current one (both players see both queues)
 
   /* ----------------------------------------------------------
-     GOLDEN PIECE
-     One slot in your deck charges up. Once charged, that block can be
-     played straight over your opponent's ink and converts it to yours.
+     COLLISIONS
+     A square both players claim on the same turn stays empty.
      ---------------------------------------------------------- */
-  goldenSlot: 0,     // which deck slot is the golden one (0 = first)
 
-  // How many times the block must be played before it charges.
-  // Bigger blocks cost more, so a large golden piece is a rarer, heavier swing.
-  goldenCycle: {
-    small: 1,   // 1–3 squares
-    medium: 2,  // 4–7 squares
-    large: 3,   // 8–12 squares
-  },
+  /* ----------------------------------------------------------
+     LINE CLEARS
+     Any row or column that is completely full — whatever the colours — is
+     wiped for both players. Building too close to a full line invites your
+     opponent to finish it for you.
+     ---------------------------------------------------------- */
+  clearRows: true,
+  clearColumns: true,
+  restoreHome: true, // a player wiped to nothing gets their starting domino back
 
-  // May a charged golden piece overwrite contested/special squares too?
-  goldenEatsSpecial: false,
+  /* ----------------------------------------------------------
+     THE CENTRE
+     The middle 2×2 squares are worth extra at the end.
+     ---------------------------------------------------------- */
+  centreValue: 2,  // points per centre square (ordinary squares are worth 1)
 };

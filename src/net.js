@@ -363,14 +363,14 @@ class Net {
           you: m.you,
           opponent: m.opponent,
           loadout: m.loadout,
-          goldenSlot: m.goldenSlot,
           turns: m.turns,
           turn: 0,
           board: null,
           hand: [],
-          golden: null,
-          bagLeft: 0,
-          oppHandCount: 0,
+          piece: null,
+          queue: [],
+          pass: 1,
+          opp: null,
           deadline: 0,
           submitted: false,
           oppReady: false,
@@ -387,9 +387,10 @@ class Net {
           turn: m.turn,
           board: m.board,
           hand: m.hand,
-          golden: m.golden,
-          bagLeft: m.bagLeft,
-          oppHandCount: m.oppHandCount,
+          piece: m.piece,     // the one piece you play this turn
+          queue: m.queue,     // your next pieces, in order
+          pass: m.pass,       // which pass through your deck
+          opp: m.opp,         // { piece, queue, pass } — both queues are public
           deadline: m.deadline,
           submitted: !!m.alreadyMoved,
           oppReady: false,
@@ -412,7 +413,7 @@ class Net {
       case "reveal":
         this.patch({
           board: m.board,
-          reveal: { moves: m.moves, contested: m.contested, cleared: m.cleared || [], score: m.score, turn: m.turn },
+          reveal: { moves: m.moves, contested: m.contested, cleared: m.cleared || [], lines: m.lines || { rows: [], cols: [] }, score: m.score, turn: m.turn },
           submitted: false,
           oppReady: false,
         });

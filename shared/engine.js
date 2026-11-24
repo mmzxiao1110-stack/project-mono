@@ -1,5 +1,5 @@
 /**
- * TURF BLOCKS — rules engine.
+ * MINO — rules engine.
  *
  * Pure functions only. No React, no DOM, no Node APIs.
  * The client imports this to render and predict; the server imports the
@@ -8,12 +8,16 @@
 
 import { RULES } from "./rules.js";
 
-export const COLS = 8;
-export const ROWS = 16;
+export const COLS = RULES.size;
+export const ROWS = RULES.size;
 export const TURNS = RULES.turns;
-export const HAND_SIZE = RULES.handSize;
 export const SLOTS = 8;
-export const GOLDEN_SLOT = RULES.goldenSlot;
+export const QUEUE_SHOWN = RULES.queueShown;
+
+/** The middle 2×2 squares, worth RULES.centreValue each. */
+const MID = Math.floor(RULES.size / 2) - 1;
+export const CENTRE = [[MID, MID], [MID, MID + 1], [MID + 1, MID], [MID + 1, MID + 1]];
+export const isCentre = (r, c) => (r === MID || r === MID + 1) && (c === MID || c === MID + 1);
 
 export const BLOCKS = [
   // SMALL 1–3
@@ -57,12 +61,6 @@ export const DEFAULT_LOADOUT = ["DOT", "BAR", "RUN", "ELL", "BLOK", "TEE", "CROS
 
 export const sizeOf = (n) => (n <= 3 ? "SMALL" : n <= 7 ? "MEDIUM" : "BIG");
 
-/** Plays needed before the golden slot charges, by block size. */
-export function goldenCycleFor(blockId) {
-  const s = sizeOf(BLOCKS[blockId].cells.length);
-  const c = RULES.goldenCycle;
-  return s === "SMALL" ? c.small : s === "MEDIUM" ? c.medium : c.large;
-}
 export const key = (r, c) => r * COLS + c;
 
 /* ---------- geometry ---------- */
@@ -103,20 +101,12 @@ export function initialBoard() {
   return b;
 }
 
-/**
- * Every square must be free, and at least one must touch your own ink (8-way).
- * A charged golden piece may also land on the opponent's ink, converting it.
- */
-export function isLegal(board, cells, owner, { golden = false } = {}) {
-  const opp = owner === "A" ? "B" : "A";
+/** Every square must be free, and at least one must touch your own ink (8-way). */
+export function isLegal(board, cells, owner) {
   for (const [r, c] of cells) {
     if (!Number.isInteger(r) || !Number.isInteger(c)) return false;
     if (r < 0 || c < 0 || r >= ROWS || c >= COLS) return false;
-    const v = board[r][c];
-    if (v === null) continue;
-    if (golden && v === opp) continue;
-    if (golden && v === "S" && RULES.goldenEatsSpecial) continue;
-    return false;
+    if (board[r][c] !== null) return false;
   }
   for (const [r, c] of cells)
     for (let dr = -1; dr <= 1; dr++)
@@ -129,31 +119,46 @@ export function isLegal(board, cells, owner, { golden = false } = {}) {
   return false;
 }
 
-/** @param goldenBlockId if that block is in hand it is enumerated as golden. */
-export function enumerateMoves(board, hand, owner, { goldenBlockId = null } = {}) {
+/**
+ * Every legal placement of the given pieces. In a match you hold one piece,
+ * so `pieces` is usually [current]; the whole deck is passed to ask "can
+ * this player still place anything at all?".
+ */
+export function enumerateMoves(board, pieces, owner) {
   const out = [];
   const seen = new Set();
-  for (let hi = 0; hi < hand.length; hi++) {
-    const blockId = hand[hi];
-    const golden = goldenBlockId !== null && blockId === goldenBlockId;
+  for (let hi = 0; hi < pieces.length; hi++) {
+    const blockId = pieces[hi];
     for (let rot = 0; rot < 4; rot++) {
       const cells = rotateN(BLOCKS[blockId].cells, rot);
       const { h, w } = boundsOf(cells);
       for (let r = 0; r <= ROWS - h; r++)
         for (let c = 0; c <= COLS - w; c++) {
           const abs = absCells(cells, [r, c]);
-          if (!isLegal(board, abs, owner, { golden })) continue;
+          if (!isLegal(board, abs, owner)) continue;
           const sig = hi + ":" + abs.map(([a, b]) => key(a, b)).sort((x, y) => x - y).join(",");
           if (seen.has(sig)) continue;
           seen.add(sig);
-          out.push({ handIdx: hi, blockId, rot, pos: [r, c], cells: abs, value: cells.length, golden });
+          out.push({ handIdx: hi, blockId, rot, pos: [r, c], cells: abs, value: cells.length });
         }
     }
   }
   return out;
 }
 
-export const hasAnyMove = (board, hand, owner, opts) => enumerateMoves(board, hand, owner, opts).length > 0;
+/** Cheaper than enumerateMoves when you only need a yes or no. */
+export function hasAnyMove(board, pieces, owner) {
+  for (const blockId of new Set(pieces)) {
+    for (let rot = 0; rot < 4; rot++) {
+      const cells = rotateN(BLOCKS[blockId].cells, rot);
+      const { h, w } = boundsOf(cells);
+      for (let r = 0; r <= ROWS - h; r++)
+        for (let c = 0; c <= COLS - w; c++)
+          if (isLegal(board, absCells(cells, [r, c]), owner)) return true;
+    }
+  }
+  return false;
+}
 
 const homeCells = (owner) => {
   const m = Math.floor(COLS / 2) - 1;
@@ -170,9 +175,21 @@ function restoreHomes(nb) {
   }
 }
 
+/** Full rows and columns, as { rows: [r…], cols: [c…] }. */
+export function fullLines(board) {
+  const rows = [], cols = [];
+  if (RULES.clearRows) for (let r = 0; r < ROWS; r++) if (board[r].every((v) => v !== null)) rows.push(r);
+  if (RULES.clearColumns) for (let c = 0; c < COLS; c++) if (board.every((row) => row[c] !== null)) cols.push(c);
+  return { rows, cols };
+}
+
 /**
- * Simultaneous resolution. Both moves land at once; squares claimed by both
- * are resolved by RULES.golden.
+ * Simultaneous resolution, in order:
+ *   1. Both pieces land. A square both claimed stays empty.
+ *   2. Every full row and column is wiped — both colours.
+ *   3. A player left with no ink gets their starting domino back.
+ * Returns the new board, the contested squares, the cleared lines, and every
+ * square that lost its ink (with the colour it had) for the client to animate.
  */
 export function resolveTurn(board, moveA, moveB) {
   const nb = board.map((row) => [...row]);
@@ -184,67 +201,35 @@ export function resolveTurn(board, moveA, moveB) {
   for (const [r, c] of aCells) if (!ck.has(key(r, c))) nb[r][c] = "A";
   for (const [r, c] of bCells) if (!ck.has(key(r, c))) nb[r][c] = "B";
 
-  // Snapshot AFTER both moves land. A block placed this turn and immediately
-  // wiped by clearRow still needs to be seen appearing and then destroyed.
+  // Snapshot after both pieces land, so a piece placed and immediately
+  // cleared is still seen appearing and then going.
   const staged = nb.map((row) => [...row]);
 
-  const wipe = (r, c) => { if (r >= 0 && c >= 0 && r < ROWS && c < COLS) nb[r][c] = null; };
+  const lines = fullLines(nb);
+  for (const r of lines.rows) for (let c = 0; c < COLS; c++) nb[r][c] = null;
+  for (const c of lines.cols) for (let r = 0; r < ROWS; r++) nb[r][c] = null;
 
-  switch (RULES.golden) {
-    case "vanish":
-      for (const [r, c] of contested) wipe(r, c);
-      break;
+  if (RULES.restoreHome) restoreHomes(nb);
 
-    case "clearRow":
-      for (const [r] of contested) for (let c = 0; c < COLS; c++) wipe(r, c);
-      break;
-
-    case "clearColumn":
-      for (const [, c] of contested) for (let r = 0; r < ROWS; r++) wipe(r, c);
-      break;
-
-    case "blast": {
-      const rad = Math.max(0, RULES.blastRadius | 0);
-      for (const [r, c] of contested)
-        for (let dr = -rad; dr <= rad; dr++)
-          for (let dc = -rad; dc <= rad; dc++) wipe(r + dr, c + dc);
-      break;
-    }
-
-    case "swap": {
-      // Whoever is behind on turf takes the contested squares.
-      const s = scoreOf(nb);
-      const winner = s.a === s.b ? (Math.random() < 0.5 ? "A" : "B") : s.a < s.b ? "A" : "B";
-      for (const [r, c] of contested) nb[r][c] = winner;
-      break;
-    }
-
-    case "special":
-    default:
-      for (const [r, c] of contested) nb[r][c] = "S";
-  }
-
-  if (RULES.restoreHome && contested.length) restoreHomes(nb);
-
-  // Everything that lost its ink this turn, with the colour it used to be —
-  // the client animates these rippling out of existence.
   const cleared = [];
   for (let r = 0; r < ROWS; r++)
     for (let c = 0; c < COLS; c++)
       if (staged[r][c] !== null && nb[r][c] === null) cleared.push([r, c, staged[r][c]]);
 
-  return { board: nb, contested, cleared };
+  return { board: nb, contested, lines, cleared };
 }
 
+/** Points: one per square you own, RULES.centreValue for each centre square. */
 export function scoreOf(board) {
-  let a = 0, b = 0, s = 0;
-  for (const row of board)
-    for (const v of row) {
-      if (v === "A") a++;
-      else if (v === "B") b++;
-      else if (v === "S") s++;
+  let a = 0, b = 0;
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++) {
+      const v = board[r][c];
+      if (v !== "A" && v !== "B") continue;
+      const pts = isCentre(r, c) ? RULES.centreValue : 1;
+      if (v === "A") a += pts; else b += pts;
     }
-  return { a, b, s };
+  return { a, b, s: 0 };
 }
 
 /* ---------- decks ---------- */
@@ -259,25 +244,35 @@ export function shuffled(arr, rand = Math.random) {
 }
 
 /**
- * Bag randomiser, Tetris-style. Each bag is one shuffled copy of your eight
- * blocks, so across any eight draws you see each block exactly once — no
- * droughts, no floods, but the order inside a bag is still a surprise.
- * The opening hand comes off the first bag, so it's a fair random four.
+ * The queue. Your 8-piece deck comes round in bags, Tetris-style: each pass
+ * deals every piece once, freshly shuffled. The front of the queue is the
+ * piece you play this turn; the queue is kept topped up so the next
+ * QUEUE_SHOWN pieces are always known (to both players), even across the
+ * join between two passes.
+ *
+ * A deck is { queue: [{ id, pass }], passes } — `pass` counts from 1.
  */
-export function newDeck(loadout, rand = Math.random) {
-  const bag = shuffled(loadout, rand);
-  return { hand: bag.slice(0, HAND_SIZE), bag: bag.slice(HAND_SIZE) };
+function topUp(deck, loadout, rand) {
+  let { queue, passes } = deck;
+  while (queue.length < QUEUE_SHOWN + 1) {
+    passes += 1;
+    queue = [...queue, ...shuffled(loadout, rand).map((id) => ({ id, pass: passes }))];
+  }
+  return { queue, passes };
 }
 
-/** Removes the played block and draws one, refilling the bag when it empties. */
-export function cycleHand(deck, handIdx, loadout, rand = Math.random) {
-  const hand = deck.hand.filter((_, i) => i !== handIdx);
-  let bag = [...deck.bag];
-  if (!bag.length) bag = shuffled(loadout, rand);
-  const next = bag.shift();
-  if (next !== undefined) hand.push(next);
-  return { hand, bag };
+export function newDeck(loadout, rand = Math.random) {
+  return topUp({ queue: [], passes: 0 }, loadout, rand);
 }
+
+/** Plays (or skips) the current piece and moves the queue on. */
+export function advanceDeck(deck, loadout, rand = Math.random) {
+  return topUp({ queue: deck.queue.slice(1), passes: deck.passes }, loadout, rand);
+}
+
+export const currentPiece = (deck) => deck.queue[0].id;
+export const currentPass = (deck) => deck.queue[0].pass;
+export const upcoming = (deck) => deck.queue.slice(1, QUEUE_SHOWN + 1).map((q) => q.id);
 
 /** Never trust a client-supplied loadout. */
 export function sanitizeLoadout(input) {
