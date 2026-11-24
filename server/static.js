@@ -8,6 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { clientIp } from "./limits.js";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.resolve(DIR, "..", "dist");
@@ -59,6 +60,12 @@ export function staticHandler(req, res) {
   if (urlPath === "/healthz") {
     res.writeHead(200, { "content-type": "text/plain", "cache-control": "no-store" });
     return res.end("ok");
+  }
+  // The address the per-network limits will count you as. Open it on two
+  // devices on different networks: they should differ. Shows only your own.
+  if (urlPath === "/whoami") {
+    res.writeHead(200, { "content-type": "text/plain", "cache-control": "no-store" });
+    return res.end(`${clientIp(req)}\n`);
   }
   if (req.method !== "GET" && req.method !== "HEAD") {
     res.writeHead(405, { allow: "GET, HEAD" });

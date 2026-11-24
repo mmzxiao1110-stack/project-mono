@@ -2,7 +2,7 @@
  * MINO — game server.
  *
  *   in : hello, signup, login, google, verify, resend, resetRequest, resetConfirm,
- *        logout, setName, queue, unqueue, move, discard
+ *        logout, setName, queue, unqueue, move, discard, forfeit
  *   out: needAuth, auth, authError, verified, codeSent, resetSent, needVerify,
  *        welcome, nameError, online, searching, found, matchStart, turn, ack,
  *        clock, oppReady, reveal, matchOver, oppDropped, oppReturned, kicked, error
@@ -225,7 +225,7 @@ async function handle(ws, msg) {
     }
 
     case "signup": {
-      if (!signupLimit.take(ip)) return authError(ws, "Too many new accounts from your network. Try again in an hour.");
+      if (!signupLimit.has(ip)) return authError(ws, "Too many new accounts from your network. Try again in an hour.");
       const username = str(msg.username, 32);
       const email = str(msg.email, 320).trim();
       const err = validateSignup(username, email, msg.password);
@@ -236,6 +236,7 @@ async function handle(ws, msg) {
       const { salt, hash } = await hashPassword(msg.password);
       const acct = createAccount({ username, email, salt, hash });
       if (!acct) return authError(ws, "That username or email was just taken. Try another.");
+      signupLimit.take(ip); // only successful sign-ups count toward the limit
       await issueCode(acct, "verify", ip);
       console.log(`[auth] new account: ${acct.username}`);
       authenticate(ws, acct.userId, createSession(acct.userId));
@@ -411,6 +412,15 @@ async function handle(ws, msg) {
         ? active.match.submitMove(active.side, msg)
         : active.match.submitDiscard(active.side, msg);
       if (err) fail(ws, err);
+      break;
+    }
+
+    case "forfeit": {
+      // Giving up counts as a loss, exactly like leaving and not coming back.
+      const active = inMatch.get(ws.userId);
+      if (!active) return fail(ws, "Not in a match.");
+      console.log(`[match] ${active.match.id}: ${ws.userId} forfeited`);
+      active.match.end(active.side);
       break;
     }
 

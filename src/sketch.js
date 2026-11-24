@@ -141,12 +141,16 @@ export function inkPaths(size, style, dir = 1, seed = 0) {
   };
 
   const small = s < 8;
-  const kind = small && style !== "ghost" && style !== "slot" && style !== "outline" ? "shaded" : style;
+  const kind = small && !["ghost", "slot", "outline", "pending"].includes(style) ? "shaded" : style;
 
   if (kind === "slot") {
     layers.push({ d: roughRect(m, m, s - m, s - m, jit * 0.6, s * 0.03, r), w: ow * 0.7, o: 0.5 });
   } else if (kind === "ghost") {
     layers.push({ d: roughRect(m * 0.6, m * 0.6, s - m * 0.6, s - m * 0.6, jit * 0.5, s * 0.02, r), w: ow * 1.1, o: 0.9, dash: `${f(s * 0.13)} ${f(s * 0.08)}` });
+  } else if (kind === "pending") {
+    // Placed but not yet revealed: the usual hatching inside a dotted outline.
+    layers.push(...pressed(hatchLines(s, m, pitch, dir, jit, r), w, jit, r, [0.6, 0.45, 0.3]));
+    layers.push({ d: roughRect(m * 0.5, m * 0.5, s - m * 0.5, s - m * 0.5, jit * 0.4, 0, r), w: ow * 1.6, o: 1, dash: `${f(s * 0.13)} ${f(s * 0.1)}` });
   } else if (kind === "shaded") {
     // Pressed hard and gone over twice: the closest a pencil gets to solid.
     layers.push(...pressed(hatchLines(s, m, pitch * 0.5, dir, jit, r), w * 1.1, jit, r, [0.8, 0.6, 0.45]));

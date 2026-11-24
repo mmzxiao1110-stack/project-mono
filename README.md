@@ -58,8 +58,8 @@ Things that matter:
 | --- | --- |
 | `RESEND_API_KEY`, `MAIL_FROM` | Sending codes by email. Required when `NODE_ENV=production`. |
 | `DATA_DIR` | Where `data.json` and `backups/` live. |
-| `TRUST_PROXY` | How many proxies add to `X-Forwarded-For`: `1` on Render, `2` with Cloudflare in front. Used for per-IP limits. |
+| `TRUST_PROXY` | Set when behind a proxy (`1` on Render). The visitor's address is then read from `CF-Connecting-IP`, which Render's Cloudflare layer sets. Open `/whoami` to see the address the server counts you as. |
 | `SKIP_EMAIL_VERIFY` | `1` lets unverified accounts play ranked. Local testing only. |
 | `PORT` | Set by Render. |
 
-Abuse limits (in `server/limits.js`): 3 sign-ups an hour per IP, 5 emails an hour per IP and 8 a day per account, login throttling per IP and per username, 8 connections per IP, 16 KB per message, and about 20 messages a second per connection. Words banned from names go in `server/blocklist.txt`.
+Abuse limits (in `server/limits.js`): 10 successful sign-ups an hour per IP, 5 emails an hour per IP and 8 a day per account, login throttling per IP and per username, 8 connections per IP, 16 KB per message, and about 20 messages a second per connection. Words banned from names go in `server/blocklist.txt`.

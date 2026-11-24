@@ -253,6 +253,10 @@ class Net {
     this.send({ t: "move", turn, handIdx, rot, pos });
   }
 
+  forfeit() {
+    this.send({ t: "forfeit" });
+  }
+
   discard({ turn, handIdx }) {
     this.send({ t: "discard", turn, handIdx });
   }
