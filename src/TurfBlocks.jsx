@@ -217,6 +217,7 @@ const subs = {
   auth: (cb) => net.on("auth", cb),
   online: (cb) => net.on("online", cb),
   notice: (cb) => net.on("notice", cb),
+  room: (cb) => net.on("room", cb),
 };
 const useKeys = () => useSyncExternalStore(subscribeKeys, getKeys);
 // Key hints only make sense where there's a keyboard and a mouse, not on phones.
@@ -2825,20 +2826,21 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
           </button>
         )}
 
-        {!authed && (
-          <div className="flex gap-2.5 mb-2.5">
+        <div className="flex gap-2.5 mb-2.5">
+          {!authed && (
             <button onClick={() => setModal("login")} disabled={status !== "online"}
               className="flex-1 rounded flex items-center justify-center disabled:opacity-40"
               style={{ height: 44, ...glass(UI.line) }}>
               <span className="tb-t">LOGIN</span>
             </button>
-            <button onClick={() => setModal("signup")} disabled={status !== "online"}
-              className="flex-1 rounded flex items-center justify-center disabled:opacity-40"
-              style={{ height: 44, ...skFill(UI.text), color: UI.text }}>
-              <span className="tb-t">NEW PLAYER</span>
-            </button>
-          </div>
-        )}
+          )}
+          {/* Private 1v1 with a friend: a room code to share. Guests welcome. */}
+          <button onClick={() => onPick("PRIVATE")} disabled={status !== "online"}
+            className="flex-1 rounded flex items-center justify-center disabled:opacity-40"
+            style={{ height: 44, ...skFill(UI.text), color: UI.text }}>
+            <span className="tb-t">PRIVATE</span>
+          </button>
+        </div>
 
         <div className="flex gap-2.5 mb-2.5">
           <button onClick={() => { onPick("DIFFICULTY"); }} className="flex-1 rounded flex items-center justify-center" style={{ height: 44, ...glass(UI.line) }}>
@@ -3728,9 +3730,151 @@ function EndScreen({ verdict, ink, note, left, right, special = 0, children, act
 }
 
 /* ============================================================
+   PRIVATE ROOM — 1v1 a friend with a code; guests welcome
+   ============================================================ */
+const useRoom = () => useSyncExternalStore(subs.room, () => net.room);
+// Re-render on room errors / guest errors too (they ride the same event).
+const useRoomRev = () => { const [, bump] = useState(0); useEffect(() => net.on("room", () => bump((n) => n + 1)), []); };
+
+/** The link a friend opens to land straight in your room. */
+const roomLink = (code) => `${location.origin}${location.pathname}?room=${code}`;
+
+function PrivateRoom({ status, onBack, pendingCode, clearPending }) {
+  const P = usePx();
+  useRoomRev();
+  const room = useRoom();
+  const auth = useAuth();
+  const profile = useProfile();
+  const [guestName, setGuestName] = useState(() => net.guestInfo?.name || "");
+  const [code, setCode] = useState(pendingCode || "");
+  const [copied, setCopied] = useState(false);
+  const known = auth === "authed" || auth === "guest";
+  const online = status === "online";
+
+  // Opened from an invite link: join as soon as we have a name.
+  useEffect(() => {
+    if (known && online && pendingCode && !room) { net.joinRoom(pendingCode); clearPending(); }
+  }, [known, online, pendingCode, room, clearPending]);
+
+  const field = { height: 46, ...glass(UI.line), color: UI.text, background: "color-mix(in srgb, var(--tb-text) 6%, transparent)", outline: "none" };
+  const big = (main) => ({ height: 46, ...(main ? skFill(UI.text) : glass(UI.line)), color: main ? UI.text : UI.dim });
+  const leave = () => { net.leaveRoom(); onBack(); };
+
+  let body;
+  if (!online) {
+    body = <div className="tb-t text-center py-6" style={{ color: UI.dim }}>Connecting to the server…</div>;
+  } else if (!known) {
+    // Step 1: a name. Guests need nothing else.
+    body = (
+      <form onSubmit={(e) => { e.preventDefault(); if (guestName.trim()) net.playAsGuest(guestName.trim()); }} className="flex flex-col gap-2.5">
+        <div className="tb-t" style={{ color: UI.dim }}>Pick a name to play as a guest.</div>
+        <input value={guestName} onChange={(e) => setGuestName(e.target.value)} maxLength={16} autoFocus
+          placeholder="your name" className="tb-t px-3 w-full" style={field} aria-label="Guest name" />
+        {net.guestError && <div className="tb-t" style={{ color: UI.bad }}>{net.guestError}</div>}
+        <button type="submit" disabled={!guestName.trim()} className="tb-t disabled:opacity-40" style={big(true)}>PLAY AS GUEST</button>
+        <div className="tb-t text-center" style={{ color: UI.dim, opacity: 0.8 }}>Have an account? Log in from the menu instead.</div>
+      </form>
+    );
+  } else if (!room) {
+    // Step 2: make a room, or join one.
+    body = (
+      <div className="flex flex-col gap-2.5">
+        <button onClick={() => net.createRoom()} className="tb-t" style={big(true)}>CREATE ROOM</button>
+        <div className="flex items-center gap-2 tb-t" style={{ color: UI.dim }}>
+          <span className="flex-1" style={{ ...RULE_BELOW, height: P }} /> or join <span className="flex-1" style={{ ...RULE_BELOW, height: P }} />
+        </div>
+        <form onSubmit={(e) => { e.preventDefault(); if (code.trim()) net.joinRoom(code.trim()); }} className="flex gap-2">
+          <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 5))}
+            placeholder="CODE" className="tb-t tb-b px-3 flex-1 min-w-0 text-center" style={{ ...field, letterSpacing: 3 * P }} aria-label="Room code"
+            autoCapitalize="characters" autoComplete="off" spellCheck={false} />
+          <button type="submit" disabled={code.length < 5} className="tb-t px-4 disabled:opacity-40" style={big(false)}>JOIN</button>
+        </form>
+        {net.roomError && <div className="tb-t" style={{ color: UI.bad }}>{net.roomError}</div>}
+      </div>
+    );
+  } else {
+    // Step 3: the room — share the code, wait, or ask for a rematch.
+    const share = async () => {
+      const text = `Play me in MINO — room ${room.code}`;
+      try {
+        if (navigator.share) await navigator.share({ title: "MINO", text, url: roomLink(room.code) });
+        else { await navigator.clipboard.writeText(roomLink(room.code)); setCopied(true); setTimeout(() => setCopied(false), 1600); }
+      } catch { /* cancelled */ }
+    };
+    const copyCode = async () => { try { await navigator.clipboard.writeText(room.code); setCopied(true); setTimeout(() => setCopied(false), 1600); } catch { /* no clipboard */ } };
+    body = (
+      <div className="flex flex-col items-center gap-3 text-center">
+        <div className="tb-t" style={{ color: UI.dim }}>{room.host ? "Your room. Send this code to a friend:" : "In room"}</div>
+        <button onClick={copyCode} title="Copy code" className="tb-t tb-b w-full" aria-label={`Room code ${room.code}, tap to copy`}
+          style={{ ...glass(UI.text), padding: `${4 * P}px 0`, letterSpacing: 4 * P, color: UI.text }}>
+          {room.code.split("").map((ch, i) => <span key={i} style={{ display: "inline-block" }}>{ch}</span>)}
+        </button>
+        <div className="flex gap-2 w-full">
+          <button onClick={copyCode} className="tb-t flex-1" style={big(false)}>{copied ? "COPIED" : "COPY CODE"}</button>
+          <button onClick={share} className="tb-t flex-1" style={big(false)}>SHARE LINK</button>
+        </div>
+        {!room.opponent ? (
+          <div className="tb-t tb-pulse py-2" style={{ color: UI.dim }}>Waiting for your friend…</div>
+        ) : room.playing ? (
+          <div className="tb-t py-2" style={{ color: UI.dim }}>Starting…</div>
+        ) : (
+          <>
+            <div className="tb-t py-1">vs <span style={{ color: "var(--tb-rival)" }}>{room.opponent.name}</span>{room.opponent.guest ? <span style={{ color: UI.dim }}> (guest)</span> : null}</div>
+            <button onClick={() => net.rematch()} disabled={room.rematch.me} className="tb-t w-full disabled:opacity-60" style={big(true)}>
+              {room.rematch.me ? (room.rematch.them ? "STARTING…" : "WAITING FOR THEM…") : room.rematch.them ? "THEY WANT A REMATCH — PLAY" : "REMATCH"}
+            </button>
+          </>
+        )}
+        {net.roomError && <div className="tb-t" style={{ color: UI.bad }}>{net.roomError}</div>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="tb-screen tb-safe w-full flex flex-col items-center justify-center px-5 font-mono" style={{ color: UI.text }}>
+      <Scaled className="w-full" style={{ maxWidth: 340 }}>
+        <div className="flex items-center justify-between mb-4">
+          <button onClick={room ? leave : onBack} className="flex items-center gap-1 tb-t py-2" style={{ color: UI.dim }}>
+            <ChevronLeft size={13} /> {room ? "LEAVE" : "MENU"}
+          </button>
+          <div className="tb-t" style={{ color: UI.dim }}>
+            PRIVATE{profile?.name ? <span> · {profile.name}{auth === "guest" ? " (guest)" : ""}</span> : null}
+          </div>
+        </div>
+        <div style={{ padding: 6 * P, ...glass(UI.line) }}>{body}</div>
+        <div className="tb-t text-center mt-3" style={{ color: UI.dim, opacity: 0.75 }}>Private games are unrated.</div>
+      </Scaled>
+    </div>
+  );
+}
+
+/* ============================================================
    RESULT — ranked
    ============================================================ */
-function Result({ over, colors, onQueue, onMenu }) {
+function Result(props) {
+  return props.over?.rated === false ? <PrivateResult {...props} /> : <RankedResult {...props} />;
+}
+
+/** Private rooms are unrated: the result, and a rematch. */
+function PrivateResult({ over, colors, onQueue, onMenu }) {
+  const { won, drew, forfeit, reason, myScore, oppScore, special, opponent } = over;
+  const note = forfeit ? "opponent forfeited" : reason === "forfeit" ? "you forfeited"
+    : reason === "locked" ? "board locked — no legal moves left"
+    : reason === "overtime" ? (drew ? "still tied at the centre" : "decided in overtime") : "private game · unrated";
+  return (
+    <EndScreen
+      verdict={drew ? "DRAW" : won ? "VICTORY" : "DEFEAT"} ink={drew ? UI.text : won ? colors.you : colors.rival} note={note} special={special}
+      left={{ name: "YOU", score: myScore, ink: colors.you }}
+      right={{ name: opponent.name, score: oppScore, ink: colors.rival }}
+      actions={[
+        { label: "MENU", onClick: onMenu },
+        { label: "REMATCH", onClick: onQueue, main: true },
+      ]}
+    />
+  );
+}
+
+function RankedResult({ over, colors, onQueue, onMenu }) {
   const P = usePx();
   const { won, drew, forfeit, reason, myScore, oppScore, special, opponent, rating } = over;
   const trFrom = Math.round(rating.before.r);
@@ -3859,9 +4003,21 @@ export default function TurfBlocks() {
     return () => { offT(); offM(); };
   }, [setScreen]);
 
+  const guest = useAuth() === "guest";
   useEffect(() => {
-    if (!authed && (screen === "MATCHMAKING" || screen === "RANKED")) setScreen("MENU");
-  }, [authed, screen, setScreen]);
+    if (!authed && screen === "MATCHMAKING") setScreen("MENU");
+    if (!authed && !guest && screen === "RANKED") setScreen("MENU");
+  }, [authed, guest, screen, setScreen]);
+
+  // An invite link (?room=CODE) opens the private screen with that code ready.
+  const [pendingRoom, setPendingRoom] = useState(() => {
+    try { const c = new URLSearchParams(location.search).get("room"); return c ? c.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 5) : null; } catch { return null; }
+  });
+  const clearPendingRoom = useCallback(() => {
+    setPendingRoom(null);
+    try { history.replaceState(null, "", location.pathname); } catch { /* fine */ }
+  }, []);
+  useEffect(() => { if (pendingRoom) setScreen("PRIVATE"); }, [pendingRoom, setScreen]);
 
   const setTheme = (t) => { saveTheme(t); setThemeState(t); };
   const setLoadout = (updater) => setLoadoutState((prev) => {
@@ -3988,6 +4144,7 @@ export default function TurfBlocks() {
         onPick={(t) => {
           if (t === "DIFFICULTY") setScreen("DIFFICULTY");
           else if (t === "MATCHMAKING") setScreen("MATCHMAKING");
+          else if (t === "PRIVATE") setScreen("PRIVATE");
           else { setSeed((s) => s + 1); setScreen("HOTSEAT"); }
         }}
         loadout={loadout} setLoadout={setLoadout}
@@ -4001,6 +4158,11 @@ export default function TurfBlocks() {
       <Difficulty colors={colors}
         onBack={() => setScreen("MENU")}
         onStart={(lv) => { setAiLevel(lv); setSeed((s) => s + 1); setScreen("SOLO"); }} />
+    );
+  else if (screen === "PRIVATE")
+    view = (
+      <PrivateRoom status={status} onBack={() => setScreen("MENU")}
+        pendingCode={pendingRoom} clearPending={clearPendingRoom} />
     );
   else if (screen === "MATCHMAKING")
     view = (
@@ -4016,8 +4178,12 @@ export default function TurfBlocks() {
   else if (screen === "RESULT")
     view = (
       <Result over={over} colors={colors}
-        onMenu={() => { net.clearMatch(); setScreen("MENU"); }}
-        onQueue={() => { net.clearMatch(); setScreen("MATCHMAKING"); }} />
+        onMenu={() => { net.clearMatch(); if (over?.rated === false) net.leaveRoom(); setScreen("MENU"); }}
+        onQueue={() => {
+          net.clearMatch();
+          // Private: back to the room and ask for a rematch. Ranked: queue again.
+          if (over?.rated === false) { net.rematch(); setScreen("PRIVATE"); } else setScreen("MATCHMAKING");
+        }} />
     );
   else
     view = (

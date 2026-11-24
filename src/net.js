@@ -56,6 +56,11 @@ class Net {
     this.queued = false;
     this.lastLoadout = null;
     this.listeners = new Map();
+    // Guests: a name and an id this browser keeps, to come back as the same guest.
+    this.guestInfo = readGuest();
+    this.room = null;       // private room: { code, host, opponent, rematch, playing }
+    this.roomError = null;
+    this.guestError = null;
   }
 
   /* ---------- events ---------- */
@@ -106,7 +111,9 @@ class Net {
 
     ws.onopen = () => {
       this.attempt = 0;
-      this.raw({ t: "hello", token: this.token });
+      // Signed in, or a guest coming back (e.g. after a refresh, mid-room).
+      if (!this.token && this.guestInfo) this.raw({ t: "guest", name: this.guestInfo.name, gid: this.guestInfo.gid });
+      else this.raw({ t: "hello", token: this.token });
       // A dropped socket removes you from the server queue. If we still think
       // we're searching, get back in line rather than waiting on a dead entry.
       if (this.queued && this.lastLoadout) this.raw({ t: "queue", loadout: this.lastLoadout });
@@ -177,6 +184,35 @@ class Net {
     this.send({ t: "unqueue" });
   }
 
+  /* ---------- guests and private rooms ---------- */
+
+  playAsGuest(name) {
+    this.guestError = null;
+    this.emit("room", this.room);
+    this.send({ t: "guest", name, gid: this.guestInfo?.gid });
+  }
+
+  createRoom() {
+    this.roomError = null;
+    this.send({ t: "createRoom" });
+  }
+
+  joinRoom(code) {
+    this.roomError = null;
+    this.emit("room", this.room);
+    this.send({ t: "joinRoom", code });
+  }
+
+  leaveRoom() {
+    this.room = null;
+    this.emit("room", null);
+    this.send({ t: "leaveRoom" });
+  }
+
+  rematch() {
+    this.send({ t: "rematch" });
+  }
+
   setName(name) {
     this.send({ t: "setName", name });
   }
@@ -237,6 +273,9 @@ class Net {
   }
 
   logout() {
+    if (this.auth === "guest") { this.guestInfo = null; writeGuest(null); }
+    this.room = null;
+    this.emit("room", null);
     this.send({ t: "logout", token: this.token });
     this.token = null;
     this.auth = "anon";
@@ -275,6 +314,46 @@ class Net {
 
   handle(m) {
     switch (m.t) {
+      case "guestOk":
+        this.auth = "guest";
+        this.authBusy = false;
+        this.guestError = null;
+        this.profile = { ...m.profile, guest: true };
+        this.guestInfo = { gid: m.gid, name: m.profile.name };
+        writeGuest(this.guestInfo);
+        this.setStatus("online");
+        this.emit("profile", this.profile);
+        this.emit("room", this.room);
+        this.bumpAuth();
+        if (!m.inMatch && this.match && !this.match.over) {
+          this.match = null;
+          this.setNotice("Your last match ended while you were away.");
+          this.emit("match", null);
+        }
+        break;
+
+      case "guestError":
+        this.guestError = m.msg;
+        this.emit("room", this.room);
+        break;
+
+      case "room":
+        this.room = { code: m.code, host: m.host, opponent: m.opponent, rematch: m.rematch, playing: m.playing };
+        this.roomError = null;
+        this.emit("room", this.room);
+        break;
+
+      case "roomError":
+        this.roomError = m.msg;
+        this.emit("room", this.room);
+        break;
+
+      case "roomClosed":
+        this.room = null;
+        this.roomError = m.why || null;
+        this.emit("room", null);
+        break;
+
       case "needAuth":
         this.auth = "anon";
         this.authBusy = false;
@@ -477,3 +556,14 @@ class Net {
 
 export const net = new Net();
 export { SERVER_URL };
+
+/* Guests are remembered per browser: a name and a random id, nothing else. */
+function readGuest() {
+  try {
+    const g = JSON.parse(localStorage.getItem("tb:guest") || "null");
+    return g && typeof g.gid === "string" && typeof g.name === "string" ? g : null;
+  } catch { return null; }
+}
+function writeGuest(g) {
+  try { if (g) localStorage.setItem("tb:guest", JSON.stringify(g)); else localStorage.removeItem("tb:guest"); } catch { /* private mode */ }
+}

@@ -39,6 +39,8 @@ import {
 } from "./limits.js";
 import { Queue } from "./queue.js";
 import { Match } from "./match.js";
+import { newRating } from "../shared/glicko.js";
+import { randomBytes } from "node:crypto";
 
 const PORT = Number(process.env.PORT) || 8787;
 const PROD = process.env.NODE_ENV === "production";
@@ -116,6 +118,117 @@ const queue = new Queue((a, b, gap) => {
   setTimeout(() => match.start(), 1400);
 });
 
+/* ---------- guests ----------
+ * A guest is a name and a random id the browser keeps, nothing more. Guests
+ * live in memory only, can play private rooms, and can't play ranked.
+ */
+const guests = new Map(); // "g:<id>" -> profile-shaped object
+const isGuest = (userId) => typeof userId === "string" && userId.startsWith("g:");
+const profileOf = (userId) => (isGuest(userId) ? guests.get(userId) : getProfile(userId));
+
+/* ---------- private rooms ----------
+ * The host gets a short code to share; whoever joins with it plays them,
+ * unrated. After a match either player can ask for a rematch; both asking
+ * starts it. A room closes when either player leaves it (or drops for more
+ * than ROOM_GRACE_MS outside a match), or after ROOM_IDLE_MS with nobody.
+ */
+const rooms = new Map();   // code -> { code, host, guest, match, rematch: Set, touched, leaveTimer }
+const roomOf = new Map();  // userId -> code
+const ROOM_GRACE_MS = 45_000;
+const ROOM_IDLE_MS = 30 * 60_000;
+const CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no 0/O, 1/I/L
+function newRoomCode() {
+  for (;;) {
+    const bytes = randomBytes(5);
+    const code = Array.from(bytes, (b) => CODE_CHARS[b % CODE_CHARS.length]).join("");
+    if (!rooms.has(code)) return code;
+  }
+}
+const roomView = (room, userId) => {
+  const otherId = room.host === userId ? room.guest : room.host;
+  const other = otherId ? profileOf(otherId) : null;
+  return {
+    t: "room", code: room.code, host: room.host === userId,
+    opponent: other ? { name: other.name, guest: !!other.guest } : null,
+    rematch: { me: room.rematch.has(userId), them: !!otherId && room.rematch.has(otherId) },
+    playing: !!room.match,
+  };
+};
+const tellRoom = (room) => { for (const id of [room.host, room.guest]) if (id) sendTo(id, roomView(room, id)); };
+
+function closeRoom(room, why) {
+  rooms.delete(room.code);
+  clearTimeout(room.leaveTimer);
+  for (const id of [room.host, room.guest]) {
+    if (!id) continue;
+    roomOf.delete(id);
+    sendTo(id, { t: "roomClosed", why });
+  }
+}
+
+function leaveRoom(userId, why = "Your friend left the room.") {
+  const code = roomOf.get(userId);
+  const room = code && rooms.get(code);
+  if (!room) return;
+  if (room.match && !room.match.over) {
+    // Leaving mid-match is a forfeit, same as ranked.
+    const active = inMatch.get(userId);
+    if (active) active.match.end(active.side);
+  }
+  roomOf.delete(userId);
+  if (room.host === userId) closeRoom(room, why);
+  else { room.guest = null; room.rematch.clear(); tellRoom(room); }
+}
+
+function startRoomMatch(room) {
+  const sa = sockets.get(room.host), sb = sockets.get(room.guest);
+  if (!sa || !sb) return;
+  room.rematch.clear();
+  // Take turns being the bottom seat: the joiner starts on the bottom.
+  room.games = (room.games || 0) + 1;
+  const [a, b] = room.games % 2 ? [room.guest, room.host] : [room.host, room.guest];
+  const match = new Match(
+    [
+      { profile: profileOf(a), loadout: sanitizeLoadout(), socket: sockets.get(a) },
+      { profile: profileOf(b), loadout: sanitizeLoadout(), socket: sockets.get(b) },
+    ],
+    (m) => {
+      inMatch.delete(a); inMatch.delete(b);
+      if (rooms.get(room.code) === room) { room.match = null; room.touched = Date.now(); tellRoom(room); }
+      console.log(`[room] ${room.code}: ${m.id} finished`);
+    },
+    { rated: false, room: room.code }
+  );
+  room.match = match;
+  room.touched = Date.now();
+  inMatch.set(a, { match, side: "A" });
+  inMatch.set(b, { match, side: "B" });
+  sendTo(a, { t: "found", matchId: match.id, opponent: match.publicSeat("B"), gap: 0, room: room.code });
+  sendTo(b, { t: "found", matchId: match.id, opponent: match.publicSeat("A"), gap: 0, room: room.code });
+  console.log(`[room] ${room.code}: ${profileOf(a).name} vs ${profileOf(b).name}`);
+  setTimeout(() => match.start(), 1400);
+}
+
+/** After (re)connecting: put a player back in their room, if they had one. */
+function resumeRoom(userId) {
+  const code = roomOf.get(userId);
+  const room = code && rooms.get(code);
+  if (!room) return;
+  clearTimeout(room.leaveTimer);
+  sendTo(userId, roomView(room, userId));
+}
+
+function authenticateGuest(ws, userId, profile, gid) {
+  const existing = sockets.get(userId);
+  if (existing && existing !== ws) { send(existing, { t: "kicked" }); existing.close(); }
+  ws.userId = userId;
+  sockets.set(userId, ws);
+  const active = inMatch.get(userId);
+  send(ws, { t: "guestOk", gid, profile: { playerId: userId, name: profile.name, guest: true }, inMatch: !!active });
+  if (active) active.match.onReconnect(active.side, ws);
+  resumeRoom(userId);
+}
+
 function authenticate(ws, userId, token) {
   const existing = sockets.get(userId);
   if (existing && existing !== ws) {
@@ -134,6 +247,7 @@ function authenticate(ws, userId, token) {
   // that the match is gone, instead of waiting on it forever.
   send(ws, { t: "auth", token, profile: publicProfile(profile, acct), inMatch: !!active });
   if (active) active.match.onReconnect(active.side, ws);
+  resumeRoom(userId);
 }
 
 /**
@@ -206,7 +320,7 @@ httpServer.listen(PORT, HOST || "0.0.0.0", () => {
   }
 });
 
-const PUBLIC = new Set(["hello", "signup", "login", "google", "verify", "resend", "resetRequest", "resetConfirm"]);
+const PUBLIC = new Set(["hello", "signup", "login", "google", "verify", "resend", "resetRequest", "resetConfirm", "guest"]);
 
 async function handle(ws, msg) {
   if (!msg || typeof msg !== "object" || typeof msg.t !== "string") return fail(ws, "Malformed request.");
@@ -360,6 +474,8 @@ async function handle(ws, msg) {
     case "logout": {
       destroySession(str(msg.token, 128));
       queue.remove(ws.userId);
+      leaveRoom(ws.userId);
+      if (isGuest(ws.userId)) guests.delete(ws.userId);
       sockets.delete(ws.userId);
       ws.userId = null;
       send(ws, { t: "needAuth" });
@@ -369,6 +485,7 @@ async function handle(ws, msg) {
     /* ---------- game ---------- */
 
     case "setName": {
+      if (isGuest(ws.userId)) return fail(ws, "Make an account to keep a name.");
       const profile = getProfile(ws.userId);
       const clean = str(msg.name, 64).trim().replace(/\s+/g, " ");
       const err = clean === profile.name ? null : nameProblem(clean, { display: true }) || (nameTaken(clean, ws.userId) ? "Someone already uses that name." : null);
@@ -382,7 +499,68 @@ async function handle(ws, msg) {
       break;
     }
 
+    /* ---------- guests and private rooms ---------- */
+
+    case "guest": {
+      // Play as a guest: just a name. The browser keeps `gid` to come back as the same guest.
+      if (ws.userId && !isGuest(ws.userId)) return fail(ws, "You're already signed in.");
+      const name = str(msg.name, 32).trim().replace(/\s+/g, " ");
+      const problem = nameProblem(name, { display: true }) || (nameTaken(name) ? "A player already has that name — pick another." : null);
+      if (problem) return send(ws, { t: "guestError", msg: problem });
+      let gid = str(msg.gid, 40);
+      if (!/^[a-z0-9]{16,40}$/.test(gid)) gid = randomBytes(12).toString("hex");
+      const userId = `g:${gid}`;
+      const prev = guests.get(userId);
+      // Mid-match, the name stays as the opponent saw it.
+      const profile = prev && inMatch.has(userId) ? prev : { playerId: userId, name, guest: true, rating: newRating(), stats: null };
+      guests.set(userId, profile);
+      authenticateGuest(ws, userId, profile, gid);
+      break;
+    }
+
+    case "createRoom": {
+      if (inMatch.has(ws.userId)) return fail(ws, "Finish your match first.");
+      queue.remove(ws.userId);
+      leaveRoom(ws.userId);
+      const room = { code: newRoomCode(), host: ws.userId, guest: null, match: null, rematch: new Set(), touched: Date.now(), leaveTimer: null };
+      rooms.set(room.code, room);
+      roomOf.set(ws.userId, room.code);
+      tellRoom(room);
+      console.log(`[room] ${room.code} opened by ${profileOf(ws.userId).name}`);
+      break;
+    }
+
+    case "joinRoom": {
+      const code = str(msg.code, 12).toUpperCase().replace(/[^A-Z0-9]/g, "");
+      const room = rooms.get(code);
+      if (!room) return send(ws, { t: "roomError", msg: "No room with that code. Check it and try again." });
+      if (room.host === ws.userId) return tellRoom(room);
+      if (room.guest && room.guest !== ws.userId) return send(ws, { t: "roomError", msg: "That room is already full." });
+      if (inMatch.has(ws.userId)) return fail(ws, "Finish your match first.");
+      queue.remove(ws.userId);
+      if (roomOf.get(ws.userId) !== code) leaveRoom(ws.userId);
+      room.guest = ws.userId;
+      roomOf.set(ws.userId, code);
+      tellRoom(room);
+      startRoomMatch(room);
+      break;
+    }
+
+    case "leaveRoom":
+      leaveRoom(ws.userId);
+      break;
+
+    case "rematch": {
+      const room = rooms.get(roomOf.get(ws.userId));
+      if (!room || room.match || !room.guest) return;
+      room.rematch.add(ws.userId);
+      if (room.rematch.has(room.host) && room.rematch.has(room.guest)) startRoomMatch(room);
+      else tellRoom(room);
+      break;
+    }
+
     case "queue": {
+      if (isGuest(ws.userId)) return fail(ws, "Make an account to play ranked.");
       const acct = getAccount(ws.userId);
       if (!acct || (!acct.emailVerified && !SKIP_VERIFY)) return send(ws, { t: "needVerify" });
       if (inMatch.has(ws.userId)) return fail(ws, "Already in a match.");
@@ -479,6 +657,12 @@ wss.on("connection", (ws, req) => {
     queue.remove(id);
     const active = inMatch.get(id);
     if (active) active.match.onDisconnect(active.side);
+    // Out of a match, a room waits a little for a refresh or a flaky connection.
+    const room = rooms.get(roomOf.get(id));
+    if (room && !active) {
+      clearTimeout(room.leaveTimer);
+      room.leaveTimer = setTimeout(() => { if (!sockets.has(id)) leaveRoom(id); }, ROOM_GRACE_MS);
+    }
   });
 
   ws.on("error", (e) => console.error("[ws]", e.message));
@@ -494,6 +678,17 @@ const heartbeat = setInterval(() => {
 
 // "N online" on the menu, so nobody queues into an empty lobby blind.
 let lastOnline = -1;
+// Rooms nobody is using, and guests nobody is playing as, are let go.
+const roomSweeper = setInterval(() => {
+  const now = Date.now();
+  for (const room of rooms.values()) {
+    if (!room.match && now - room.touched > ROOM_IDLE_MS) closeRoom(room, "The room closed after a while with no games.");
+  }
+  for (const id of guests.keys()) {
+    if (!sockets.has(id) && !inMatch.has(id) && !roomOf.has(id)) guests.delete(id);
+  }
+}, 60_000);
+
 const onlineTicker = setInterval(() => {
   const n = wss.clients.size;
   if (n === lastOnline) return;
@@ -510,6 +705,7 @@ function shutdown(code = 0) {
   stopping = true;
   clearInterval(heartbeat);
   clearInterval(onlineTicker);
+  clearInterval(roomSweeper);
   flush();
   console.log("[server] saved and exiting");
   process.exit(code);
