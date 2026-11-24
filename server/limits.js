@@ -18,12 +18,22 @@ export class Limiter {
     setInterval(() => this.sweep(), 10 * 60_000).unref();
   }
 
-  take(key, cost = 1) {
+  refill(key) {
     const now = Date.now();
     let b = this.buckets.get(key);
     if (!b) { b = { tokens: this.burst, at: now }; this.buckets.set(key, b); }
     b.tokens = Math.min(this.burst, b.tokens + (now - b.at) * this.rate);
     b.at = now;
+    return b;
+  }
+
+  /** Is there a token, without spending it? */
+  has(key, cost = 1) {
+    return this.refill(key).tokens >= cost;
+  }
+
+  take(key, cost = 1) {
+    const b = this.refill(key);
     if (b.tokens < cost) return false;
     b.tokens -= cost;
     return true;
@@ -38,7 +48,9 @@ export class Limiter {
 }
 
 // Per IP. Generous for a household sharing one connection, useless to a script.
-export const signupLimit = new Limiter({ burst: 3, perMinute: 3 / 60 });  // 3, then 3 an hour
+// New accounts per network: 10 at once, then 10 an hour. Only accounts that
+// actually get created count; typos and taken names don't.
+export const signupLimit = new Limiter({ burst: 10, perMinute: 10 / 60 });
 export const mailLimit = new Limiter({ burst: 5, perMinute: 5 / 60 });    // emails sent, any kind
 export const authLimit = new Limiter({ burst: 20, perMinute: 10 });       // login/verify/reset attempts
 // Per socket: a client legitimately sends a few messages a second at most.
@@ -48,22 +60,31 @@ export const MAX_MESSAGE_BYTES = 16 * 1024;
 export const MAX_SOCKETS_PER_IP = 8;
 
 /**
- * The visitor's address. Behind Render the socket address is Render's proxy,
- * so read X-Forwarded-For — but only when told how many proxies to trust,
- * because each proxy APPENDS the address it saw, and everything to the left
- * of those is whatever the client chose to claim.
+ * The visitor's address, for the per-network limits above.
  *
- *   TRUST_PROXY=1  Render alone (Render appends the visitor's address)
- *   TRUST_PROXY=2  Cloudflare in front of Render
- *   unset          no proxy: use the socket address
+ * On Render, every request comes through Cloudflare, then Render's own proxy.
+ * Cloudflare puts the visitor's real address in CF-Connecting-IP and
+ * overwrites any value the visitor sends, so that's the one to trust. The
+ * last X-Forwarded-For entry is a Cloudflare server shared by many visitors:
+ * counting by it put strangers in one bucket, so a few sign-ups anywhere
+ * blocked everyone.
+ *
+ *   TRUST_PROXY set   behind a proxy (Render): CF-Connecting-IP, else the
+ *                     X-Forwarded-For entry TRUST_PROXY hops from the right
+ *   unset             no proxy (local): the socket address; headers ignored,
+ *                     since anyone could write them
  */
 export function clientIp(req) {
   const hops = Number(process.env.TRUST_PROXY) || 0;
-  const xff = req.headers["x-forwarded-for"];
-  if (hops > 0 && typeof xff === "string" && xff) {
-    const parts = xff.split(",").map((s) => s.trim()).filter(Boolean);
-    const ip = parts[parts.length - hops];
-    if (ip) return ip;
+  if (hops > 0) {
+    const cf = req.headers["cf-connecting-ip"];
+    if (typeof cf === "string" && cf.trim()) return cf.trim();
+    const xff = req.headers["x-forwarded-for"];
+    if (typeof xff === "string" && xff) {
+      const parts = xff.split(",").map((s) => s.trim()).filter(Boolean);
+      const ip = parts[parts.length - hops];
+      if (ip) return ip;
+    }
   }
   return req.socket.remoteAddress || "unknown";
 }
