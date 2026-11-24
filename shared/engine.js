@@ -158,9 +158,22 @@ function restoreHomes(nb) {
 
 /** Full rows and columns, as { rows: [r…], cols: [c…] }. */
 export function fullLines(board) {
+  // Only the live zone counts: in overtime the dead rings (and the anchors
+  // on them) are outside every line.
+  let k = 0;
+  while (k < ROWS / 2 && board[k][k] === "X") k++;
   const rows = [], cols = [];
-  if (RULES.clearRows) for (let r = 0; r < ROWS; r++) if (board[r].every((v) => v !== null)) rows.push(r);
-  if (RULES.clearColumns) for (let c = 0; c < COLS; c++) if (board.every((row) => row[c] !== null)) cols.push(c);
+  const lo = k, hi = ROWS - 1 - k;
+  if (RULES.clearRows) for (let r = lo; r <= hi; r++) {
+    let full = true;
+    for (let c = lo; c <= hi; c++) if (board[r][c] === null) { full = false; break; }
+    if (full) rows.push(r);
+  }
+  if (RULES.clearColumns) for (let c = lo; c <= hi; c++) {
+    let full = true;
+    for (let r = lo; r <= hi; r++) if (board[r][c] === null) { full = false; break; }
+    if (full) cols.push(c);
+  }
   return { rows, cols };
 }
 
@@ -274,8 +287,9 @@ export function resolveTurn(board, moveA, moveB, pins = null) {
   const lines = fullLines(nb);
   // Pinned squares survive line clears unless the rules say clears beat pins.
   const wipe = (r, c) => { if (nb[r][c] !== "X" && (!np[r][c] || !RULES.pinsSurviveClears)) { nb[r][c] = null; np[r][c] = false; } };
-  for (const r of lines.rows) for (let c = 0; c < COLS; c++) wipe(r, c);
-  for (const c of lines.cols) for (let r = 0; r < ROWS; r++) wipe(r, c);
+  let lk = 0; while (lk < ROWS / 2 && nb[lk][lk] === "X") lk++; // dead rings: lines stop at the live zone
+  for (const r of lines.rows) for (let c = lk; c < COLS - lk; c++) wipe(r, c);
+  for (const c of lines.cols) for (let r = lk; r < ROWS - lk; r++) wipe(r, c);
 
   if (RULES.restoreHome) restoreHomes(nb);
 
@@ -421,22 +435,51 @@ export function isCheckTurn(t) {
 }
 
 /**
- * Overtime's squeeze: the outermost live ring dies. Its ink and pins are
- * gone; a player left with nothing gets a home pair at the new edge.
- * Mutates board and pins. Returns { cleared, live } — `live` is the side of
- * the board still in play.
+ * Overtime's squeeze: the outermost live ring dies — except each player's
+ * home pair, which stays on that ring as a pinned anchor just outside the
+ * live zone (so it takes no room inside it, and you can still build in from
+ * it). The previous anchors die with the rest. Mutates board and pins.
+ * Returns { cleared, live } — `live` is the side of the board still in play.
  */
 export function shrinkBoard(board, pins) {
   const k = deadRings(board);
   const cleared = [];
-  for (let r = k; r < ROWS - k; r++) for (let c = k; c < COLS - k; c++) {
-    if (r !== k && r !== ROWS - 1 - k && c !== k && c !== COLS - 1 - k) continue;
+  const kill = (r, c) => {
     if (board[r][c] === "A" || board[r][c] === "B") cleared.push([r, c, board[r][c]]);
     board[r][c] = DEAD;
     if (pins) pins[r][c] = false;
+  };
+  // The ring dies, and so do the old anchors one ring out.
+  for (let r = k; r < ROWS - k; r++) for (let c = k; c < COLS - k; c++)
+    if (r === k || r === ROWS - 1 - k || c === k || c === COLS - 1 - k) kill(r, c);
+  if (k > 0) for (const owner of ["A", "B"]) for (const [r, c] of homeAt(owner, k - 1)) kill(r, c);
+  // The anchors, on the ring that just died, touching the live zone.
+  for (const owner of ["A", "B"]) for (const [r, c] of homeAt(owner, k)) {
+    board[r][c] = owner;
+    if (pins) pins[r][c] = true;
+    const i = cleared.findIndex(([a2, b2]) => a2 === r && b2 === c);
+    if (i >= 0) cleared.splice(i, 1);
   }
-  restoreHomes(board);
   return { cleared, live: ROWS - 2 * (k + 1) };
+}
+
+/** A player's home pair on ring k (the real edge for k = 0). */
+function homeAt(owner, k) {
+  const m = Math.floor(COLS / 2) - 1;
+  const r = owner === "A" ? ROWS - 1 - k : k;
+  return [[r, m], [r, m + 1]];
+}
+
+/** Score of the live zone only — overtime's final check at the centre. */
+export function liveScoreOf(board) {
+  const k = deadRings(board);
+  let a = 0, b = 0;
+  for (let r = k; r < ROWS - k; r++) for (let c = k; c < COLS - k; c++) {
+    const v = board[r][c];
+    const pts = isCentre(r, c) ? RULES.centreValue : 1;
+    if (v === "A") a += pts; else if (v === "B") b += pts;
+  }
+  return { a, b, s: 0 };
 }
 
 /** Points: one per square you own, RULES.centreValue for each centre square. Dead squares score nothing. */
