@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef, useSyncExternalStore, createContext, useContext, useLayoutEffect } from "react";
 import {
-  RotateCw, Check, SkipForward, RefreshCw, ChevronLeft, Settings2, X,
-  BarChart3, Wifi, WifiOff, Clock, UserRound, LogOut,
+  RotateCw, Check, SkipForward, ChevronLeft, Settings2, X,
+  BarChart3, Wifi, WifiOff, UserRound, LogOut,
   Palette, Lock, MailCheck, ShieldAlert, BookOpen, ChevronRight,
 } from "./pixelIcons.jsx";
 
@@ -959,13 +959,14 @@ function BoardGrid({
 
 /** Rows of a pixel capsule `w` wide and `h` tall (art pixels): [y, x0, x1). */
 function capsuleRows(w, h, inset = 0) {
-  const W = w - 2 * inset, H = h - 2 * inset, R = W / 2, rows = [];
+  const W = w - 2 * inset, H = h - 2 * inset, R = Math.min(W, H) / 2, rows = [];
   for (let y = 0; y < H; y++) {
     const yc = y + 0.5;
     const dy = yc < R ? R - yc : yc > H - R ? yc - (H - R) : 0;
     if (dy >= R) continue;
     const hw = Math.sqrt(R * R - dy * dy);
-    const x0 = Math.round(R - hw), x1 = Math.round(R + hw);
+    // Works lying down too: the straight run sits between the two end caps.
+    const x0 = Math.round(R - hw), x1 = Math.round(W - R + hw);
     if (x1 > x0) rows.push([y + inset, x0 + inset, x1 + inset]);
   }
   return rows;
@@ -1018,7 +1019,7 @@ function ActionRail({
   const P = usePx();
   const d = useBubble();
   return (
-    <div className="shrink-0 flex flex-col items-center justify-between" style={{ width: d * P, height }}>
+    <div className="shrink-0 flex flex-col items-center justify-between" style={{ width: Math.max(d, 19) * P, height }}>
       <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
         <Bubble w={d} h={d} label="Turn" onClick={onRotate} disabled={!canRotate}><RotateCw /></Bubble>
         <Bubble w={d} h={Math.round(d * 2.2)} label="LOCK IN" tint={canCommit || waiting ? ink : UI.dim} fill={canCommit ? 55 : 18}
@@ -1028,8 +1029,8 @@ function ActionRail({
         </Bubble>
         <Bubble w={d} h={d} label="Pass" tint={UI.dim} onClick={onDiscard} disabled={!canDiscard}><SkipForward /></Bubble>
       </div>
-      <div className="flex flex-col items-center">
-        <span className="tb-t tabular-nums" aria-label={`Turn ${turn}`} style={{ color: UI.dim }}>{turn}</span>
+      <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
+        <NumBox value={turn} color={UI.dim} label={`Turn ${turn}`} />
         {timer}
       </div>
       <ForfeitButton {...forfeit} />
@@ -1061,7 +1062,7 @@ function PiecePane({ id, size, ink, dir, dim = 1, lit = false, ...rest }) {
  * One player's side of the top row: name and score, then the piece they play
  * now and the next four. Mirrored for the player on the right.
  */
-function ForecastSide({ name, score, ink, now, queue, dir = 1, right = false, card = null, busy = false }) {
+function ForecastSide({ name, ink, now, queue, dir = 1, right = false, card = null, busy = false, compact = false }) {
   const P = usePx();
   const [nowW, soonW] = paneSizes();
   const soon = (queue || []).slice(0, QUEUE_SHOWN);
@@ -1070,29 +1071,23 @@ function ForecastSide({ name, score, ink, now, queue, dir = 1, right = false, ca
     ...soon.map((id, i) => <PiecePane key={i} id={id} size={soonW} ink={ink} dir={dir} dim={1 - i * 0.12} />),
   ];
   return (
-    <div className={`flex flex-col min-w-0 ${right ? "items-end" : "items-start"}`} style={{ gap: P }}>
-      <div className={`flex items-baseline gap-2 tb-t min-w-0 ${right ? "flex-row-reverse" : ""} ${busy ? "tb-pulse" : ""}`}>
-        <span className="truncate" style={{ color: ink }}>{name}</span>
-        <span className="tabular-nums" style={{ color: UI.text }}>{score}</span>
-      </div>
+    <div className={`flex flex-col min-w-0 ${right ? "items-end" : "items-start"} ${busy ? "tb-pulse" : ""}`} style={{ gap: P }}>
+      {!compact && (
+        <div className="tb-t truncate max-w-full" style={{ color: ink }}>{name}</div>
+      )}
       <div className={`flex items-end ${right ? "flex-row-reverse" : ""}`} style={{ gap: P }}>{panes}</div>
     </div>
   );
 }
 
-/** The top row: your forecast on the left, theirs on the right, the bag number between. */
-function ForecastRow({ left, right, bag }) {
+/** The top row, sitting on the board: your forecast left, theirs right, the bag number between. */
+function ForecastRow({ left, right, bag, width, compact = false }) {
   const P = usePx();
-  const d = paneSizes()[0];
   return (
-    <div className="shrink-0 flex items-end justify-between pt-2 pb-2" style={{ gap: 2 * P }}>
-      <ForecastSide {...left} />
-      <div className="relative flex items-center justify-center shrink-0 tb-t tabular-nums" aria-label={`Bag ${bag}`} title="Bag"
-        style={{ width: d * P, height: d * P, color: UI.dim }}>
-        <BubbleShape w={d} h={d} tint={UI.dim} fill={10} />
-        <span className="relative">{bag}</span>
-      </div>
-      <ForecastSide {...right} right />
+    <div className="shrink-0 flex items-end justify-between" style={{ width, gap: 2 * P }}>
+      <ForecastSide {...left} compact={compact} />
+      <NumBox value={bag} color={UI.dim} label={`Bag ${bag}`} />
+      <ForecastSide {...right} compact={compact} right />
     </div>
   );
 }
@@ -1134,6 +1129,161 @@ function VMeter({ a, b, inkA, inkB, height }) {
       <div className="absolute" style={{ left: P, right: P, bottom: P, height: hA, ...bar(inkA) }} />
     </div>
   );
+}
+
+/* ---------- Pixel numbers and the glass boxes that hold them ---------- */
+
+// A 3×5 pixel digit font: each string is five rows of three.
+const DIGITS = {
+  0: "111101101101111", 1: "010110010010111", 2: "111001111100111", 3: "111001111001111",
+  4: "101101111001001", 5: "111100111001111", 6: "111100111101111", 7: "111001010010010",
+  8: "111101111101111", 9: "111101111001111", "+": "000010111010000", "-": "000000111000000",
+};
+
+/** A number drawn in big pixels (`dot` UI pixels each), with a one-dot shadow. */
+function PixelNum({ value, dot = 2, color = "currentColor", shadow = true }) {
+  const P = usePx();
+  const chars = String(value).split("").filter((ch) => DIGITS[ch]);
+  const w = Math.max(1, chars.length * 4 - 1), h = 5;
+  const rects = [];
+  chars.forEach((ch, i) => {
+    const bits = DIGITS[ch];
+    for (let y = 0; y < 5; y++) {
+      let x = 0;
+      while (x < 3) {
+        if (bits[y * 3 + x] !== "1") { x++; continue; }
+        const st = x;
+        while (x < 3 && bits[y * 3 + x] === "1") x++;
+        rects.push([i * 4 + st, y, x - st]);
+      }
+    }
+  });
+  const s = dot * P;
+  return (
+    <svg aria-hidden="true" width={(w + (shadow ? 0.5 : 0)) * s} height={(h + (shadow ? 0.5 : 0)) * s}
+      viewBox={`0 0 ${w + (shadow ? 0.5 : 0)} ${h + (shadow ? 0.5 : 0)}`} shapeRendering="crispEdges" style={{ display: "block", overflow: "visible" }}>
+      {shadow && rects.map(([x, y, l], k) => <rect key={`s${k}`} x={x + 0.5} y={y + 0.5} width={l} height={1} fill="rgba(0,0,0,.4)" />)}
+      {rects.map(([x, y, l], k) => <rect key={k} x={x} y={y} width={l} height={1} fill={color} />)}
+    </svg>
+  );
+}
+
+/** Height of a number box, in UI pixels. */
+const NUMBOX_H = 17;
+
+/** A number in a pane of glass, a size up from the board's squares. */
+function NumBox({ value, color = UI.text, label, minW = NUMBOX_H, tint }) {
+  const P = usePx();
+  return (
+    <div role="img" aria-label={label} title={label}
+      className="relative flex items-center justify-center shrink-0"
+      style={{
+        height: NUMBOX_H * P, minWidth: minW * P, padding: `0 ${3 * P}px`, boxSizing: "border-box",
+        ...GLASS, clipPath: CLIP,
+        ...(tint ? { background: `color-mix(in srgb, ${tint} 14%, color-mix(in srgb, var(--tb-text) 6%, transparent))` } : null),
+      }}>
+      <PixelNum value={value} color={color} />
+    </div>
+  );
+}
+
+/** True on phone-sized screens, where the game uses its compact, symbols-only layout. */
+function useCompact() {
+  const get = () => typeof window !== "undefined" && window.innerWidth < 640;
+  const [c, setC] = useState(get);
+  useEffect(() => {
+    const on = () => setC(get());
+    window.addEventListener("resize", on);
+    return () => window.removeEventListener("resize", on);
+  }, []);
+  return c;
+}
+
+/** Width of the desktop meter column (room for a three-digit count), in UI pixels. */
+const METER_COL_W = 27;
+
+/** Desktop: their square count on top, the meter, your count at the bottom. */
+function MeterColumn({ a, b, inkA, inkB, height }) {
+  const P = usePx();
+  const gap = 2 * P;
+  return (
+    <div className="shrink-0 flex flex-col items-center" style={{ width: METER_COL_W * P, height, gap }}>
+      <NumBox value={b} color={inkB} tint={inkB} label={`Their squares: ${b}`} />
+      <VMeter a={a} b={b} inkA={inkA} inkB={inkB} height={height - 2 * (NUMBOX_H * P + gap)} />
+      <NumBox value={a} color={inkA} tint={inkA} label={`Your squares: ${a}`} />
+    </div>
+  );
+}
+
+/** Phone: the meter lies on its side under the forecast — yours fills from the left. */
+function HMeter({ a, b, inkA, inkB, width }) {
+  const P = usePx();
+  const boxW = 22 * P, gap = 2 * P;
+  const inner = Math.max(0, width - 2 * (boxW + gap) - 2 * P);
+  const total = Math.max(1, a + b);
+  const wA = Math.round(((a / total) * inner) / P) * P;
+  const wB = Math.round(((b / total) * inner) / P) * P;
+  const bar = (color) => ({
+    background: tileShades(color).base,
+    boxShadow: `inset 0 ${P}px 0 ${tileShades(color).light}, inset 0 -${P}px 0 ${tileShades(color).dark}`,
+    transition: "width 400ms steps(6)",
+  });
+  return (
+    <div className="flex items-center shrink-0" style={{ width, gap }}>
+      <NumBox value={a} color={inkA} tint={inkA} minW={22} label={`Your squares: ${a}`} />
+      <div aria-label={`Score ${a} to ${b}`} className="relative flex-1"
+        style={{ height: 8 * P, ...sk(UI.dim), background: "color-mix(in srgb, var(--tb-ground) 50%, black)", boxSizing: "border-box" }}>
+        <div className="absolute" style={{ top: P, bottom: P, left: P, width: wA, ...bar(inkA) }} />
+        <div className="absolute" style={{ top: P, bottom: P, right: P, width: wB, ...bar(inkB) }} />
+      </div>
+      <NumBox value={b} color={inkB} tint={inkB} minW={22} label={`Their squares: ${b}`} />
+    </div>
+  );
+}
+
+/** Phone: the buttons in one row under the board — turn, lock in (wide), pass · turn number · forfeit. */
+function ActionRow({
+  width, ink, onRotate, onCommit, onDiscard, canRotate, canCommit, canDiscard, turn, waiting = false, timer = null, forfeit,
+}) {
+  const P = usePx();
+  const d = useBubble();
+  return (
+    <div className="flex items-center justify-between shrink-0" style={{ width }}>
+      <div className="flex items-center" style={{ gap: 2 * P }}>
+        <Bubble w={d} h={d} label="Turn" onClick={onRotate} disabled={!canRotate}><RotateCw /></Bubble>
+        <Bubble w={Math.round(d * 2.2)} h={d} label="LOCK IN" tint={canCommit || waiting ? ink : UI.dim} fill={canCommit ? 55 : 18}
+          onClick={onCommit} disabled={!canCommit} className={waiting ? "tb-pulse" : undefined}
+          style={{ color: canCommit ? UI.text : undefined }}>
+          <Check />
+        </Bubble>
+        <Bubble w={d} h={d} label="Pass" tint={UI.dim} onClick={onDiscard} disabled={!canDiscard}><SkipForward /></Bubble>
+      </div>
+      <div className="flex items-center" style={{ gap: 2 * P }}>
+        {timer}
+        <NumBox value={turn} color={UI.dim} label={`Turn ${turn}`} />
+        <ForfeitButton {...forfeit} />
+      </div>
+    </div>
+  );
+}
+
+/** Space around the board, by layout. Everything is in whole UI pixels. */
+function gameLayout(stage, theme, P, d, compact) {
+  const g = (theme.gap ?? 1) * P;
+  const side = 4 * P;
+  const railW = Math.max(d, 19) * P;
+  const forecastH = compact ? 22 * P : 34 * P;
+  const wRes = compact ? 0 : METER_COL_W * P + railW + 2 * side;
+  const hRes = compact ? forecastH + (NUMBOX_H + 3) * P + (d + 3) * P + 6 * P : forecastH + 3 * P;
+  const cellArt = Math.max(5, Math.floor(Math.min(
+    (stage.w - wRes - g * (COLS - 1)) / COLS,
+    (stage.h - hRes - g * (ROWS - 1)) / ROWS
+  ) / P));
+  const cell = cellArt * P;
+  const boardW = cell * COLS + g * (COLS - 1);
+  const boardH = cell * ROWS + g * (ROWS - 1);
+  const groupW = compact ? boardW : boardW + METER_COL_W * P + railW + 2 * side;
+  return { g, side, railW, cell, boardW, boardH, groupW };
 }
 
 /**
@@ -2863,18 +3013,19 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   const stuck = useMemo(() => (inPlay ? !hasAnyMove(board, hand, player) : false), [board, hand, player, inPlay]);
 
   const P = usePx();
-  const g = (theme.gap ?? 1) * P;
-  // Whole pixels: the square size is a whole number of pixels. Leave room for
-  // the score meter on the left and the button rail on the right.
+  const compact = useCompact();
   const railD = useBubble();
-  const side = 5 * P, sideRoom = (METER_W + railD) * P + 2 * side;
-  const cellArt = Math.max(5, Math.floor(Math.min(
-    (stage.w - sideRoom - g * (COLS - 1)) / COLS,
-    (stage.h - g * (ROWS - 1)) / ROWS
-  ) / P));
-  const cell = cellArt * P;
-  const boardW = cell * COLS + g * (COLS - 1);
-  const boardH = cell * ROWS + g * (ROWS - 1);
+  const { g, side, cell, boardW, boardH, groupW } = gameLayout(stage, theme, P, railD, compact);
+
+  // The match is over: wash to the result screen.
+  const wipe = useContext(WipeCtx);
+  const [showEnd, setShowEnd] = useState(false);
+  useEffect(() => {
+    if (phase !== "DONE") return;
+    const t = setTimeout(() => wipe(() => setShowEnd(true)), forfeitBy ? 0 : 500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
 
   // Played or passed, the current piece is spent and the queue moves on.
   const advance = (side) => setDecks((st) => ({ ...st, [side]: advanceDeck(st[side], loadout) }));
@@ -2939,104 +3090,104 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
     return () => clearTimeout(t);
   }, [phase, board, turn, loadout]);
 
+  if (showEnd) {
+    // A forfeit decides it regardless of the score.
+    const winner = forfeitBy ? (forfeitBy === "A" ? "B" : "A") : score.a > score.b ? "A" : score.b > score.a ? "B" : null;
+    const verdict = !winner ? "DRAW"
+      : winner === "A" ? (solo ? "VICTORY" : "PLAYER 1 WINS")
+      : solo ? "DEFEAT" : "PLAYER 2 WINS";
+    const note = forfeitBy ? (solo ? "you forfeited" : `player ${forfeitBy === "A" ? 1 : 2} forfeited`)
+      : lockedOut ? "board locked — no legal moves left" : null;
+    return (
+      <EndScreen
+        verdict={verdict} ink={winner ? INK[winner] : UI.text} note={note}
+        left={{ name: solo ? "YOU" : "P1", score: score.a, ink: INK.A }}
+        right={{ name: solo ? oppName : "P2", score: score.b, ink: INK.B }}
+        special={score.s}
+        actions={[
+          { label: "MENU", onClick: onExit },
+          { label: "AGAIN", onClick: onRestart, main: true },
+        ]}
+      />
+    );
+  }
+
+  const rail = {
+    ink: INK[player], turn: Math.min(turn, TURNS),
+    onRotate: () => pl.rotate(1), onCommit: commit, onDiscard: discard,
+    canRotate: inPlay && pl.sel.handIdx !== null, canCommit: inPlay && pl.ghostLegal, canDiscard: inPlay,
+    forfeit: {
+      disabled: phase === "DONE",
+      onConfirm: () => { pl.reset(); setForfeitBy(solo ? "A" : player); setPhase("DONE"); },
+    },
+  };
+
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ color: UI.text }}>
       <div className="tb-col relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
-        <ForecastRow
-          bag={currentPass(decks[inPlay ? player : "A"])}
-          left={{
-            name: "P1", score: score.a, ink: INK.A, now: currentPiece(decks.A), queue: upcoming(decks.A),
-            card: inPlay && player === "A" ? (
-              <NowCard key="now" id={piece} ink={INK.A} selected={pl.sel.handIdx === 0}
-                dragging={pl.dragging || pl.holding} onPress={pl.onCardPointerDown} />
-            ) : null,
-          }}
-          right={{
-            name: oppName, score: score.b, ink: INK.B, dir: -1, now: currentPiece(decks.B), queue: upcoming(decks.B),
-            busy: phase === "AI_THINK",
-            card: inPlay && player === "B" ? (
-              <NowCard key="now" id={piece} ink={INK.B} dir={-1} selected={pl.sel.handIdx === 0}
-                dragging={pl.dragging || pl.holding} onPress={pl.onCardPointerDown} />
-            ) : null,
-          }}
-        />
-
-        <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center" style={{ gap: side }}>
-          <VMeter a={score.a} b={score.b} inkA={INK.A} inkB={INK.B} height={boardH} />
-          <div className="relative" style={{ width: boardW, height: boardH }}>
-            <BoardGrid
-              board={board} cell={cell} ink={INK} theme={theme} youSide={player}
-              pendingKeys={phase === "AI_THINK" && pendingA ? new Set(pendingA.cells.map(([r, c]) => key(r, c))) : null}
-              pendingInk={INK.A}
-              ghostKeys={pl.ghostKeys} ghostLegal={pl.ghostLegal}
-              ghostInk={INK[player]}
-              contestedKeys={contestedKeys} boardRef={pl.boardRef} onPointerDown={(e) => pl.onBoardPointerDown(e, commit)}
+        <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center py-2">
+          <div className="flex flex-col items-center" style={{ gap: 3 * P }}>
+            <ForecastRow
+              width={groupW} compact={compact}
+              bag={currentPass(decks[inPlay ? player : "A"])}
+              left={{
+                name: "P1", ink: INK.A, now: currentPiece(decks.A), queue: upcoming(decks.A),
+                card: inPlay && player === "A" ? (
+                  <NowCard key="now" id={piece} ink={INK.A} selected={pl.sel.handIdx === 0}
+                    dragging={pl.dragging || pl.holding} onPress={pl.onCardPointerDown} />
+                ) : null,
+              }}
+              right={{
+                name: oppName, ink: INK.B, dir: -1, now: currentPiece(decks.B), queue: upcoming(decks.B),
+                busy: phase === "AI_THINK",
+                card: inPlay && player === "B" ? (
+                  <NowCard key="now" id={piece} ink={INK.B} dir={-1} selected={pl.sel.handIdx === 0}
+                    dragging={pl.dragging || pl.holding} onPress={pl.onCardPointerDown} />
+                ) : null,
+              }}
             />
+            {compact && <HMeter a={score.a} b={score.b} inkA={INK.A} inkB={INK.B} width={boardW} />}
 
-            {reveal && (
-              <VanishLayer
-                contested={reveal.contested} cleared={reveal.cleared}
-                cell={cell} gap={g} ink={INK}
-              />
-            )}
+            <div className="flex items-center" style={{ gap: side }}>
+              {!compact && <MeterColumn a={score.a} b={score.b} inkA={INK.A} inkB={INK.B} height={boardH} />}
+              <div className="relative" style={{ width: boardW, height: boardH }}>
+                <BoardGrid
+                  board={board} cell={cell} ink={INK} theme={theme} youSide={player}
+                  pendingKeys={phase === "AI_THINK" && pendingA ? new Set(pendingA.cells.map(([r, c]) => key(r, c))) : null}
+                  pendingInk={INK.A}
+                  ghostKeys={pl.ghostKeys} ghostLegal={pl.ghostLegal}
+                  ghostInk={INK[player]}
+                  contestedKeys={contestedKeys} boardRef={pl.boardRef} onPointerDown={(e) => pl.onBoardPointerDown(e, commit)}
+                />
 
-            {pl.drag && pl.rotated && (
-              <FloatingPiece
-                cells={pl.rotated} cell={cell} gap={g}
-                color={INK[player]} legal={pl.ghostLegal}
-                dir={player === "B" ? -1 : 1}
-                x={pl.drag.x} y={pl.drag.y} lift={pl.drag.lift} faint={pl.holding && !!pl.sel.pos}
-              />
-            )}
+                {reveal && (
+                  <VanishLayer contested={reveal.contested} cleared={reveal.cleared} cell={cell} gap={g} ink={INK} />
+                )}
 
-            {phase === "HANDOFF" && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-5 rounded" style={{ background: UI.ground }}>
-                <div className="tb-t mb-2" style={{ color: UI.dim }}>MOVE LOCKED IN</div>
-                <div className="tb-t mb-6">Hand the device to <span style={{ color: INK.B }}>Player 2</span>.</div>
-                <button onClick={() => setPhase("PLAY_B")} className="px-5 rounded tb-t" style={{ height: 44, ...skFill(INK.B), color: UI.text }}>
-                  I'M PLAYER 2
-                </button>
+                {pl.drag && pl.rotated && (
+                  <FloatingPiece
+                    cells={pl.rotated} cell={cell} gap={g}
+                    color={INK[player]} legal={pl.ghostLegal}
+                    dir={player === "B" ? -1 : 1}
+                    x={pl.drag.x} y={pl.drag.y} lift={pl.drag.lift} faint={pl.holding && !!pl.sel.pos}
+                  />
+                )}
+
+                {phase === "HANDOFF" && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-5" style={{ background: UI.ground }}>
+                    <div className="tb-t mb-2" style={{ color: UI.dim }}>MOVE LOCKED IN</div>
+                    <div className="tb-t mb-6">Hand the device to <span style={{ color: INK.B }}>Player 2</span>.</div>
+                    <button onClick={() => setPhase("PLAY_B")} className="px-5 tb-t" style={{ height: 44, ...skFill(INK.B), color: UI.text }}>
+                      I'M PLAYER 2
+                    </button>
+                  </div>
+                )}
               </div>
-            )}
+              {!compact && <ActionRail height={boardH} {...rail} />}
+            </div>
 
-            {phase === "DONE" && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-4 rounded" style={{ background: "color-mix(in srgb, var(--tb-ground) 94%, transparent)" }}>
-                <div className="tb-t mb-3" style={{ color: lockedOut || forfeitBy ? GOLD : UI.dim }}>
-                  {forfeitBy ? (solo ? "YOU FORFEITED" : `PLAYER ${forfeitBy === "A" ? 1 : 2} FORFEITED`) : lockedOut ? "BOARD LOCKED" : "MATCH OVER"}
-                </div>
-                <div className="tb-t mb-1.5">
-                  {(() => {
-                    // A forfeit decides it regardless of the score.
-                    const winner = forfeitBy ? (forfeitBy === "A" ? "B" : "A") : score.a > score.b ? "A" : score.b > score.a ? "B" : null;
-                    if (!winner) return "DRAW";
-                    return (
-                      <span style={{ color: INK[winner] }}>
-                        {winner === "A" ? (solo ? "YOU WIN" : "PLAYER 1 WINS") : solo ? "AI WINS" : "PLAYER 2 WINS"}
-                      </span>
-                    );
-                  })()}
-                </div>
-                <div className="tb-t mb-6" style={{ color: UI.dim }}>
-                  {score.a} — {score.b}{score.s > 0 && <span style={{ color: GOLD }}> · {score.s}◆</span>}
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={onExit} className="px-4 rounded tb-t" style={{ height: 40, ...sk(UI.line), color: UI.dim }}>MENU</button>
-                  <button onClick={onRestart} className="flex items-center gap-1.5 px-4 rounded tb-t" style={{ height: 40, ...skFill(UI.text), color: UI.text }}>
-                    <RefreshCw size={12} /> AGAIN
-                  </button>
-                </div>
-              </div>
-            )}
+            {compact && <ActionRow width={boardW} {...rail} />}
           </div>
-          <ActionRail
-            height={boardH} ink={INK[player]} turn={Math.min(turn, TURNS)}
-            onRotate={() => pl.rotate(1)} onCommit={commit} onDiscard={discard}
-            canRotate={inPlay && pl.sel.handIdx !== null} canCommit={inPlay && pl.ghostLegal} canDiscard={inPlay}
-            forfeit={{
-              disabled: phase === "DONE",
-              onConfirm: () => { pl.reset(); setForfeitBy(solo ? "A" : player); setPhase("DONE"); },
-            }}
-          />
         </div>
       </div>
     </div>
@@ -3101,20 +3252,10 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   const stuck = useMemo(() => (canAct && board ? !hasAnyMove(board, hand, you) : false), [canAct, board, hand, you]);
 
   const P = usePx();
-  const g = (theme.gap ?? 1) * P;
-  // Whole pixels: the square size is a whole number of pixels. Leave room for
-  // the score meter on the left and the button rail on the right.
+  const compact = useCompact();
   const railD = useBubble();
-  const side = 5 * P, sideRoom = (METER_W + railD) * P + 2 * side;
-  const cellArt = Math.max(5, Math.floor(Math.min(
-    (stage.w - sideRoom - g * (COLS - 1)) / COLS,
-    (stage.h - g * (ROWS - 1)) / ROWS
-  ) / P));
-  const cell = cellArt * P;
-  const boardW = cell * COLS + g * (COLS - 1);
-  const boardH = cell * ROWS + g * (ROWS - 1);
+  const { g, side, cell, boardW, boardH, groupW } = gameLayout(stage, theme, P, railD, compact);
 
-  // null until one player locks in; the server then broadcasts a deadline.
   const secsLeft = m?.deadline ? Math.max(0, Math.ceil((m.deadline - now) / 1000)) : null;
   const graceLeft = m?.graceUntil ? Math.max(0, Math.ceil((m.graceUntil - now) / 1000)) : null;
 
@@ -3154,80 +3295,83 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   const myScore = you === "A" ? score.a : score.b;
   const theirScore = you === "A" ? score.b : score.a;
 
+  const rail = {
+    ink: colors.you, turn: Math.min(m.turn, m.turns),
+    onRotate: () => pl.rotate(1), onCommit: commit, onDiscard: discard,
+    canRotate: canAct && pl.sel.handIdx !== null, canCommit: canAct && pl.ghostLegal, canDiscard: canAct,
+    waiting: !!m.submitted && !m.reveal,
+    timer: graceLeft !== null ? (
+      <NumBox value={graceLeft} color={GOLD} label={`Reconnect: ${graceLeft}s`} />
+    ) : theme.showTimer && secsLeft !== null ? (
+      <NumBox value={secsLeft} color={secsLeft <= 5 ? UI.bad : GOLD} label={`${secsLeft}s left`} />
+    ) : null,
+    forfeit: { ranked: true, disabled: !m || !!m.over, onConfirm: () => net.forfeit() },
+  };
+
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ color: UI.text }}>
       <div className="tb-col relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
-        <ForecastRow
-          bag={m.pass || 1}
-          left={{
-            name: "YOU", score: myScore, ink: colors.you, dir: you === "B" ? -1 : 1, queue: m.queue || [],
-            card: (
-              <NowCard key="now" id={piece} ink={colors.you} dir={you === "B" ? -1 : 1}
-                selected={pl.sel.handIdx === 0} dragging={pl.dragging || pl.holding}
-                onPress={pl.onCardPointerDown} disabled={!canAct} spent={!!pending} />
-            ),
-          }}
-          right={{
-            name: err || `${m.opponent.name}${m.oppReady ? " ✓" : ""}`, score: theirScore,
-            ink: err ? UI.bad : colors.rival, dir: them === "B" ? -1 : 1,
-            now: m.opp?.piece, queue: m.opp?.queue || [],
-          }}
-        />
+        <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center py-2">
+          <div className="flex flex-col items-center" style={{ gap: 3 * P }}>
+            <ForecastRow
+              width={groupW} compact={compact}
+              bag={m.pass || 1}
+              left={{
+                name: "YOU", ink: colors.you, dir: you === "B" ? -1 : 1, queue: m.queue || [],
+                card: (
+                  <NowCard key="now" id={piece} ink={colors.you} dir={you === "B" ? -1 : 1}
+                    selected={pl.sel.handIdx === 0} dragging={pl.dragging || pl.holding}
+                    onPress={pl.onCardPointerDown} disabled={!canAct} spent={!!pending} />
+                ),
+              }}
+              right={{
+                name: err || `${m.opponent.name}${m.oppReady ? " ✓" : ""}`,
+                ink: err ? UI.bad : colors.rival, dir: them === "B" ? -1 : 1,
+                now: m.opp?.piece, queue: m.opp?.queue || [], busy: !!m.oppReady,
+              }}
+            />
+            {compact && <HMeter a={myScore} b={theirScore} inkA={colors.you} inkB={colors.rival} width={boardW} />}
 
-        <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center" style={{ gap: side }}>
-          <VMeter a={myScore} b={theirScore} inkA={colors.you} inkB={colors.rival} height={boardH} />
-          <div className="relative" style={{ width: boardW, height: boardH }}>
-            <div className="relative" style={{ transform: flip ? "rotate(180deg)" : "none" }}>
-              <BoardGrid
-                board={board} cell={cell} ink={INK} theme={theme} youSide={you}
-                ghostKeys={pl.ghostKeys} ghostLegal={pl.ghostLegal} ghostInk={colors.you}
-                pendingKeys={pendingKeys} pendingInk={colors.you}
-                contestedKeys={contestedKeys} boardRef={pl.boardRef} onPointerDown={(e) => pl.onBoardPointerDown(e, commit)}
-              />
-              {m.reveal && (
-                <VanishLayer
-                  contested={m.reveal.contested} cleared={m.reveal.cleared}
-                  cell={cell} gap={g} ink={INK}
-                />
-              )}
+            <div className="flex items-center" style={{ gap: side }}>
+              {!compact && <MeterColumn a={myScore} b={theirScore} inkA={colors.you} inkB={colors.rival} height={boardH} />}
+              <div className="relative" style={{ width: boardW, height: boardH }}>
+                <div className="relative" style={{ transform: flip ? "rotate(180deg)" : "none" }}>
+                  <BoardGrid
+                    board={board} cell={cell} ink={INK} theme={theme} youSide={you}
+                    ghostKeys={pl.ghostKeys} ghostLegal={pl.ghostLegal} ghostInk={colors.you}
+                    pendingKeys={pendingKeys} pendingInk={colors.you}
+                    contestedKeys={contestedKeys} boardRef={pl.boardRef} onPointerDown={(e) => pl.onBoardPointerDown(e, commit)}
+                  />
+                  {m.reveal && (
+                    <VanishLayer contested={m.reveal.contested} cleared={m.reveal.cleared} cell={cell} gap={g} ink={INK} />
+                  )}
+                </div>
+
+                {pl.drag && pl.rotated && (
+                  <FloatingPiece
+                    cells={pl.rotated} cell={cell} gap={g}
+                    color={colors.you} legal={pl.ghostLegal} flip={flip}
+                    dir={you === "B" ? -1 : 1}
+                    x={pl.drag.x} y={pl.drag.y} lift={pl.drag.lift} faint={pl.holding && !!pl.sel.pos}
+                  />
+                )}
+
+                {m.oppDropped && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-5"
+                    style={{ background: "color-mix(in srgb, var(--tb-ground) 94%, transparent)" }}>
+                    <div className="tb-t mb-3" style={{ color: GOLD }}>OPPONENT DROPPED</div>
+                    {graceLeft !== null && <div className="mb-3"><PixelNum value={graceLeft} color={GOLD} /></div>}
+                    <div className="tb-t" style={{ color: UI.dim }}>
+                      Holding their seat. If they don't return, you take the win.
+                    </div>
+                  </div>
+                )}
+              </div>
+              {!compact && <ActionRail height={boardH} {...rail} />}
             </div>
 
-            {pl.drag && pl.rotated && (
-              <FloatingPiece
-                cells={pl.rotated} cell={cell} gap={g}
-                color={colors.you} legal={pl.ghostLegal} flip={flip}
-                dir={you === "B" ? -1 : 1}
-                x={pl.drag.x} y={pl.drag.y} lift={pl.drag.lift} faint={pl.holding && !!pl.sel.pos}
-              />
-            )}
-
-            {m.oppDropped && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-5 rounded"
-                style={{ background: "color-mix(in srgb, var(--tb-ground) 94%, transparent)" }}>
-                <div className="tb-t mb-3" style={{ color: GOLD }}>OPPONENT DROPPED</div>
-                {graceLeft !== null && (
-                  <div className="tb-t tabular-nums mb-3" style={{ color: GOLD }}>{graceLeft}</div>
-                )}
-                <div className="tb-t" style={{ color: UI.dim }}>
-                  Holding their seat. If they don't return, you take the win.
-                </div>
-              </div>
-            )}
+            {compact && <ActionRow width={boardW} {...rail} />}
           </div>
-          <ActionRail
-            height={boardH} ink={colors.you} turn={Math.min(m.turn, m.turns)}
-            onRotate={() => pl.rotate(1)} onCommit={commit} onDiscard={discard}
-            canRotate={canAct && pl.sel.handIdx !== null}
-            canCommit={canAct && pl.ghostLegal}
-            canDiscard={canAct}
-            waiting={!!m.submitted && !m.reveal}
-            timer={graceLeft !== null ? (
-              <span className="flex items-center gap-1 tb-t tabular-nums" style={{ color: GOLD }}><Clock /> {graceLeft}</span>
-            ) : theme.showTimer && secsLeft !== null ? (
-              <span className="tb-t tabular-nums" style={{ color: secsLeft <= 5 ? UI.bad : GOLD }}>{secsLeft}</span>
-            ) : null}
-            forfeit={{ ranked: true, disabled: !m || !!m.over, onConfirm: () => net.forfeit() }}
-          />
         </div>
       </div>
     </div>
@@ -3235,9 +3379,153 @@ function NetGame({ colors, theme, onResult, onAbort }) {
 }
 
 /* ============================================================
-   RESULT
+   WIPE — the wave that washes from the match to its result
+   ============================================================ */
+/** `wipe(atMiddle)`: runs the wave, calling `atMiddle` once the screen is covered. */
+const WipeCtx = createContext((fn) => fn());
+
+const WIPE_IN_MS = 1000, WIPE_HOLD_MS = 180, WIPE_OUT_MS = 1100;
+
+/**
+ * A pixel tide: a wavy front of foam rolls down the screen (and a little to
+ * the right), deep water behind it fading from lavender to sea-green to the
+ * dark, with bubbles rising through. Then it rolls on and uncovers what's next.
+ */
+function Wipe({ theme, onMiddle, onDone }) {
+  const ref = useRef(null);
+  const P = usePx() * SKY_SCALE;
+  useEffect(() => {
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (!theme.motion || reduced) { onMiddle(); onDone(); return; }
+    const cv = ref.current;
+    const ctx = cv.getContext("2d");
+    const W = Math.max(1, Math.ceil(window.innerWidth / P)), H = Math.max(1, Math.ceil(window.innerHeight / P));
+    cv.width = W; cv.height = H;
+    cv.style.width = `${W * P}px`; cv.style.height = `${H * P}px`;
+    const img = ctx.createImageData(W, H), d = img.data;
+    const foam = rgbOf(theme.text), lav = rgbOf(theme.you), sea = rgbOf(theme.special);
+    const deep = mixRgb(rgbOf(theme.ground), [0, 0, 0], 0.2), panel = rgbOf(theme.panel);
+    const STOPS = [lav, mixRgb(lav, sea, 0.5), sea, mixRgb(sea, panel, 0.55), mixRgb(panel, deep, 0.4), deep];
+    const bubbles = Array.from({ length: Math.round(W * H / 1800) + 6 }, () => ({ x: Math.random() * W, y: Math.random() * H, v: 5 + Math.random() * 9, p: Math.random() * 6 }));
+    const ease = (k) => k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+    let raf, t0 = performance.now(), mid0 = false, last = t0;
+    const frame = (t) => {
+      const el = t - t0, dt = (t - last) / 1000; last = t;
+      const out = el > WIPE_IN_MS + WIPE_HOLD_MS;
+      if (!mid0 && el >= WIPE_IN_MS) { mid0 = true; onMiddle(); }
+      if (el > WIPE_IN_MS + WIPE_HOLD_MS + WIPE_OUT_MS) { onDone(); return; }
+      const k = out ? ease(Math.min(1, (el - WIPE_IN_MS - WIPE_HOLD_MS) / WIPE_OUT_MS)) : ease(Math.min(1, el / WIPE_IN_MS));
+      const f = -0.2 + k * 1.45; // the front, in "depth" units
+      const s = t / 1000;
+      // Long, rolling swells, worked out once per column.
+      const wave = new Float32Array(W);
+      for (let x = 0; x < W; x++) wave[x] = Math.sin(x * 0.09 + s * 3.2) * 0.035 + Math.sin(x * 0.035 - s * 1.7) * 0.03;
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          // Mostly top to bottom, a little left to right, and wavy.
+          const v = (y / H) * 0.8 + (x / W) * 0.2 + wave[x];
+          const depth = out ? v - f : f - v; // how far behind the front
+          const o = (y * W + x) * 4;
+          if (depth < 0) { d[o + 3] = 0; continue; }
+          const th = BAYER[(y & 3) * 4 + (x & 3)];
+          // Foam at the front, then lavender, sea-green and the deep — a
+          // dithered gradient all the way back.
+          let c;
+          if (depth < 0.025) c = th < 0.75 ? foam : lav;
+          else if (depth < 0.06) c = th < 0.25 ? foam : lav;
+          else {
+            const z = Math.min(STOPS.length - 1.001, (depth - 0.06) / 0.28);
+            const i = Math.floor(z);
+            c = th < z - i ? STOPS[i + 1] : STOPS[i];
+          }
+          d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = 255;
+        }
+      }
+      // Bubbles: soft three-pixel rings drifting up through the water.
+      const blend = (x, y, a) => {
+        if (x < 0 || y < 0 || x >= W || y >= H) return;
+        const o = (y * W + x) * 4;
+        if (!d[o + 3]) return;
+        d[o] += (foam[0] - d[o]) * a; d[o + 1] += (foam[1] - d[o + 1]) * a; d[o + 2] += (foam[2] - d[o + 2]) * a;
+      };
+      for (const b of bubbles) {
+        b.y -= b.v * dt; if (b.y < -2) { b.y = H + 2; b.x = Math.random() * W; }
+        const x = Math.floor(b.x + Math.sin(b.p + s * 2) * 1.2), y = Math.floor(b.y);
+        blend(x, y - 1, 0.35); blend(x - 1, y, 0.3); blend(x + 1, y, 0.2); blend(x, y + 1, 0.2);
+      }
+      ctx.putImageData(img, 0, 0);
+      raf = requestAnimationFrame(frame);
+    };
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (
+    <canvas ref={ref} aria-hidden="true"
+      style={{ position: "fixed", left: 0, top: 0, zIndex: 60, imageRendering: "pixelated", pointerEvents: "all" }} />
+  );
+}
+
+/* ============================================================
+   END SCREEN — shared by ranked results and local matches
+   ============================================================ */
+/** One side of the final score: name over a big pixel number, in a pane of glass. */
+function EndSide({ name, score, ink, won }) {
+  const P = usePx();
+  return (
+    <div className="flex-1 min-w-0 flex flex-col items-center tb-rise" style={{
+      padding: `${4 * P}px ${3 * P}px`, gap: 3 * P, ...GLASS, clipPath: CLIP,
+      background: `color-mix(in srgb, ${ink} ${won ? 22 : 10}%, color-mix(in srgb, var(--tb-text) 6%, transparent))`,
+    }}>
+      <div className="tb-t truncate max-w-full" style={{ color: ink }}>{name}</div>
+      <PixelNum value={score} dot={3} color={ink} />
+    </div>
+  );
+}
+
+function EndScreen({ verdict, ink, note, left, right, special = 0, children, actions }) {
+  const P = usePx();
+  return (
+    <div className="tb-screen tb-safe w-full flex flex-col items-center justify-center px-6 font-mono" style={{ color: UI.text }}>
+      <Scaled className="relative w-full" style={{ maxWidth: 400 }}>
+        <div className="flex flex-col items-center text-center tb-rise" style={{
+          gap: 6 * P, padding: `${10 * P}px ${8 * P}px`,
+          background: "color-mix(in srgb, var(--tb-panel-solid) 55%, transparent)",
+          boxShadow: `inset 0 ${P}px 0 color-mix(in srgb, var(--tb-text) 30%, transparent), inset 0 -${P}px 0 rgba(0,0,0,.3), inset ${P}px 0 0 color-mix(in srgb, var(--tb-text) 12%, transparent), inset -${P}px 0 0 rgba(0,0,0,.2)`,
+          clipPath: CLIP,
+        }}>
+          <div className="tb-t2 tb-bob" style={{ color: ink }}>{verdict}</div>
+          <PixelRule />
+          <div className="flex items-stretch w-full" style={{ gap: 3 * P }}>
+            <EndSide {...left} won={left.score > right.score} />
+            <div className="flex items-center tb-t" style={{ color: UI.dim }}>vs</div>
+            <EndSide {...right} won={right.score > left.score} />
+          </div>
+          {(note || special > 0) && (
+            <div className="tb-t tb-rise" style={{ color: GOLD, animationDelay: "120ms" }}>
+              {note}{note && special > 0 ? " · " : ""}{special > 0 ? `${special} special` : ""}
+            </div>
+          )}
+          {children}
+          <div className="flex w-full tb-rise" style={{ gap: 3 * P, animationDelay: "320ms" }}>
+            {actions.map((a) => (
+              <button key={a.label} onClick={a.onClick} className="tb-t"
+                style={{ height: 48, flex: a.main ? 1.5 : 1, ...(a.main ? skFill(UI.text) : sk(UI.line)), color: a.main ? UI.text : UI.dim }}>
+                {a.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </Scaled>
+    </div>
+  );
+}
+
+/* ============================================================
+   RESULT — ranked
    ============================================================ */
 function Result({ over, colors, onQueue, onMenu }) {
+  const P = usePx();
   const { won, drew, forfeit, reason, myScore, oppScore, special, opponent, rating } = over;
   const trFrom = Math.round(rating.before.r);
   const trTo = Math.round(rating.after.r);
@@ -3245,87 +3533,68 @@ function Result({ over, colors, onQueue, onMenu }) {
   const riFrom = rankIndexFor(trFrom);
   const riTo = rankIndexFor(trTo);
   const rank = RANKS[riTo];
-  // Verdict and rating movement use your own palette, not fixed red/green.
   const verdictInk = drew ? UI.text : won ? colors.you : colors.rival;
-  const deltaInk = delta >= 0 ? colors.you : colors.rival;
+  const deltaInk = delta >= 0 ? UI.good : UI.bad;
 
+  // The rating counts from old to new once the screen has settled.
   const [shown, setShown] = useState(trFrom);
   useEffect(() => {
-    const dur = 950;
-    const t0 = performance.now();
-    let raf;
+    const dur = 1100;
+    let raf, t0;
     const step = (t) => {
+      t0 ??= t;
       const k = Math.min(1, (t - t0) / dur);
       setShown(Math.round(trFrom + (trTo - trFrom) * (1 - Math.pow(1 - k, 3))));
       if (k < 1) raf = requestAnimationFrame(step);
     };
-    const delay = setTimeout(() => { raf = requestAnimationFrame(step); }, 420);
+    const delay = setTimeout(() => { raf = requestAnimationFrame(step); }, 700);
     return () => { clearTimeout(delay); cancelAnimationFrame(raf); };
   }, [trFrom, trTo]);
 
+  const note = forfeit ? "opponent forfeited" : reason === "forfeit" ? "you forfeited"
+    : reason === "locked" ? "board locked — no legal moves left" : null;
+  const progress = rankProgress(shown);
+  const BAR = 40; // pixels
+
   return (
-    <div className="tb-screen tb-safe w-full flex flex-col items-center justify-center px-6 font-mono" style={{ color: UI.text }}>
-      <div
-        aria-hidden="true"
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          background: `radial-gradient(ellipse at 50% 34%, color-mix(in srgb, ${verdictInk} 26%, transparent) 0%, transparent 62%)`,
-        }}
-      />
-      <Scaled className="relative w-full" style={{ maxWidth: 330 }}>
-        <div className="text-center mb-7">
-          <div className="tb-t" style={{ color: verdictInk }}>
-            {drew ? "DRAW" : won ? "VICTORY" : "DEFEAT"}
+    <EndScreen
+      verdict={drew ? "DRAW" : won ? "VICTORY" : "DEFEAT"} ink={verdictInk} note={note} special={special}
+      left={{ name: "YOU", score: myScore, ink: colors.you }}
+      right={{ name: opponent.name, score: oppScore, ink: colors.rival }}
+      actions={[
+        { label: "MENU", onClick: onMenu },
+        { label: "QUEUE AGAIN", onClick: onQueue, main: true },
+      ]}
+    >
+      <div className="w-full tb-rise" style={{ padding: 4 * P, ...GLASS, clipPath: CLIP, animationDelay: "200ms" }}>
+        <div className="flex items-center" style={{ gap: 4 * P }}>
+          <div className="flex flex-col items-center shrink-0" style={{ gap: 2 * P }}>
+            <Ink size={14 * P} color={rank.color} />
+            <span className="tb-t" style={{ color: rank.color }}>{rank.name}</span>
           </div>
-          <div className="tb-t mt-3" style={{ color: UI.dim }}>
-            {myScore} — {oppScore} vs {opponent.name}
-            {special > 0 && <span style={{ color: GOLD }}> · {special}◆</span>}
-          </div>
-          {forfeit ? (
-            <div className="tb-t mt-1.5" style={{ color: GOLD }}>opponent forfeited</div>
-          ) : reason === "forfeit" ? (
-            <div className="tb-t mt-1.5" style={{ color: GOLD }}>you forfeited</div>
-          ) : reason === "locked" ? (
-            <div className="tb-t mt-1.5" style={{ color: GOLD }}>board locked — no legal moves left</div>
-          ) : null}
-        </div>
-
-        <div className="rounded p-4 mb-4" style={{ background: UI.panel, ...sk(UI.line) }}>
-          <div className="flex items-center gap-3.5 mb-4">
-            <div className="rounded flex items-center justify-center shrink-0" style={{ width: 58, height: 58, background: `${rank.color}1F`, ...sk(rank.color) }}>
-              <span className="tb-t" style={{ color: rank.color }}>{rank.name}</span>
+          <div className="flex-1 min-w-0 flex flex-col items-start" style={{ gap: 3 * P }}>
+            <div className="flex items-end" style={{ gap: 4 * P }}>
+              <PixelNum value={shown} dot={3} color={UI.text} />
+              <PixelNum value={`${delta >= 0 ? "+" : "-"}${Math.abs(delta)}`} dot={2} color={deltaInk} />
             </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-baseline gap-2">
-                <span className="tb-t tabular-nums">{shown}</span>
-                <span className="tb-t tabular-nums" style={{ color: deltaInk }}>
-                  {delta >= 0 ? "+" : ""}{delta}
-                </span>
-              </div>
-              <div className="h-1 w-full rounded overflow-hidden mt-3" style={{ background: UI.cell }}>
-                <div style={{ width: `${rankProgress(shown) * 100}%`, height: "100%", background: rank.color, transition: "width 120ms linear" }} />
-              </div>
+            {/* Progress to the next rank, in whole pixels. */}
+            <div aria-label={`${Math.round(progress * 100)}% to next rank`}
+              style={{ width: BAR * P, height: 5 * P, ...sk(UI.dim), background: "color-mix(in srgb, var(--tb-ground) 60%, black)", position: "relative" }}>
+              <div style={{
+                position: "absolute", left: P, top: P, bottom: P, width: Math.round(progress * (BAR - 2)) * P,
+                background: rank.color, boxShadow: `inset 0 ${P}px 0 rgba(255,255,255,.3)`,
+              }} />
             </div>
-          </div>
-          <div className="flex justify-between tb-t" style={{ color: UI.dim }}>
-            <span>DEVIATION ±{Math.round(rating.after.rd)}</span>
-            <span>from ±{Math.round(rating.before.rd)}</span>
+            <div className="tb-t" style={{ color: UI.dim }}>±{Math.round(rating.after.rd)} <span style={{ opacity: 0.6 }}>from ±{Math.round(rating.before.rd)}</span></div>
           </div>
         </div>
-
-        {riTo !== riFrom && (
-          <div className="rounded px-3.5 py-2.5 mb-4 tb-t text-center"
-            style={{ background: `${rank.color}14`, ...sk(rank.color), color: rank.color }}>
-            {riTo > riFrom ? `PROMOTED TO ${rank.name}` : `DEMOTED TO ${rank.name}`}
-          </div>
-        )}
-
-        <div className="flex gap-2.5">
-          <button onClick={onMenu} className="flex-1 rounded tb-t" style={{ height: 48, ...sk(UI.line), color: UI.dim }}>MENU</button>
-          <button onClick={onQueue} className="rounded tb-t" style={{ height: 48, flex: 1.5, ...skFill(UI.text), color: UI.text }}>QUEUE AGAIN</button>
+      </div>
+      {riTo !== riFrom && (
+        <div className="w-full tb-t text-center tb-rise" style={{ padding: 3 * P, ...skFill(rank.color), color: UI.text, animationDelay: "260ms" }}>
+          {riTo > riFrom ? `PROMOTED TO ${rank.name}` : `DEMOTED TO ${rank.name}`}
         </div>
-      </Scaled>
-    </div>
+      )}
+    </EndScreen>
   );
 }
 
@@ -3358,6 +3627,9 @@ export default function TurfBlocks() {
     return () => window.removeEventListener("resize", on);
   }, []);
   const [over, setOver] = useState(null);
+  // The wave between a finished match and its result screen.
+  const [wipeRun, setWipeRun] = useState(null);
+  const wipe = useCallback((atMiddle) => setWipeRun((cur) => cur || { id: Date.now(), atMiddle }), []);
 
   const status = useStatus();
   const profile = useProfile();
@@ -3409,6 +3681,8 @@ export default function TurfBlocks() {
          pixel. All text uses that one size, like a pixel-art game would. */
       .font-mono { font-family: "Bitcount Single", ui-monospace, monospace; font-weight: 400; font-synthesis: none; }
       .tb-t { font-size: calc(var(--p) * 10); line-height: calc(var(--p) * 11); letter-spacing: 0; }
+      /* Twice the size: every dot is exactly two pixels. */
+      .tb-t2 { font-size: calc(var(--p) * 20); line-height: calc(var(--p) * 22); letter-spacing: 0; }
       .font-mono .italic, .font-mono em { font-style: normal; opacity: .8; }
       .tb-display { font-family: "Bitcount Single", ui-monospace, monospace; font-weight: 400; }
       .tb-num { font-weight: 400; }
@@ -3432,6 +3706,9 @@ export default function TurfBlocks() {
       .tb-drop { animation: tbDrop .3s steps(5) both; }
       @keyframes tbFadeIn { from { opacity: 0; transform: scale(.6) } to { opacity: 1; transform: none } }
       .tb-fadein { animation: tbFadeIn 1.6s steps(8) both; }
+      /* The end screen's panels rise into place, four pixels in four steps. */
+      @keyframes tbRise { from { opacity: 0; transform: translateY(calc(var(--p) * 4)) } to { opacity: 1; transform: none } }
+      .tb-rise { animation: tbRise 480ms steps(4) both; }
       /* A collision: the square glitches side to side. */
       @keyframes tbContest {
         0%,100% { transform: none } 25% { transform: translateX(calc(var(--p) * -1)) } 50% { transform: translateX(var(--p)) }
@@ -3461,9 +3738,9 @@ export default function TurfBlocks() {
       /* Popups open like a window on an old screen: a quick stepped scale-in. */
       @keyframes tbPop { from { opacity: 0; transform: scale(.9) } to { opacity: 1; transform: none } }
       .tb-pop { animation: tbPop .2s steps(4) both; }
-      ${theme.motion ? "" : ".tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-bob,.tb-runner,.tb-line,.tb-vanish { animation: none !important }"}
+      ${theme.motion ? "" : ".tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-bob,.tb-runner,.tb-line,.tb-vanish,.tb-rise { animation: none !important }"}
       @media (prefers-reduced-motion: reduce) {
-        .tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-bob,.tb-runner,.tb-line { animation: none }
+        .tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-bob,.tb-runner,.tb-line,.tb-rise { animation: none }
       }
       /* Menus and popups: phone layout at BASE_P, zoomed by P / BASE_P (see Scaled). */
       .tb-scale { --p: ${BASE_P}px; zoom: var(--pz); }
@@ -3524,7 +3801,7 @@ export default function TurfBlocks() {
   else if (screen === "RANKED")
     view = (
       <NetGame colors={colors} theme={theme}
-        onResult={(o) => { setOver(o); setScreen("RESULT"); }}
+        onResult={(o) => wipe(() => { setOver(o); setScreen("RESULT"); })}
         onAbort={() => setScreen("MENU")} />
     );
   else if (screen === "RESULT")
@@ -3543,14 +3820,19 @@ export default function TurfBlocks() {
 
   return (
     <PxContext.Provider value={P}>
+    <WipeCtx.Provider value={wipe}>
     <InkStyle.Provider value={theme.stroke}>
       <PixelSky theme={theme} />{shell}{view}
+      {wipeRun && (
+        <Wipe key={wipeRun.id} theme={theme} onMiddle={wipeRun.atMiddle} onDone={() => setWipeRun(null)} />
+      )}
       <div className="tb-rotate font-mono" aria-live="polite">
         <RotateCw size={26} style={{ color: UI.dim }} />
         <div className="tb-t">Turn your phone upright</div>
         <div className="tb-t" style={{ color: UI.dim }}>The board needs the height. Your game is still here.</div>
       </div>
     </InkStyle.Provider>
+    </WipeCtx.Provider>
     </PxContext.Provider>
   );
 }
