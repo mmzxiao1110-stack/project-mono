@@ -11,7 +11,7 @@ import { RULES } from "./rules.js";
 export const COLS = RULES.size;
 export const ROWS = RULES.size;
 export const TURNS = RULES.turns;
-export const SLOTS = 8;
+export const SLOTS = 7;
 export const QUEUE_SHOWN = RULES.queueShown;
 
 /** The middle 2×2 squares, worth RULES.centreValue each. */
@@ -19,45 +19,20 @@ const MID = Math.floor(RULES.size / 2) - 1;
 export const CENTRE = [[MID, MID], [MID, MID + 1], [MID + 1, MID], [MID + 1, MID + 1]];
 export const isCentre = (r, c) => (r === MID || r === MID + 1) && (c === MID || c === MID + 1);
 
+// The seven tetrominoes, as in Tetris. Rotation gives every orientation;
+// S/Z and J/L are mirror pairs, so all seven are distinct.
 export const BLOCKS = [
-  // SMALL 1–3
-  { name: "DOT", cells: [[0, 0]] },
-  { name: "BAR", cells: [[0, 0], [0, 1]] },
-  { name: "TWIN", cells: [[0, 0], [1, 1]] },
-  { name: "GAP", cells: [[0, 0], [0, 2]] },
-  { name: "RUN", cells: [[0, 0], [0, 1], [0, 2]] },
-  { name: "ELL", cells: [[0, 0], [1, 0], [1, 1]] },
-  { name: "STEP", cells: [[0, 0], [1, 1], [2, 2]] },
-  { name: "WEDGE", cells: [[0, 0], [0, 2], [1, 1]] },
-  { name: "SPUR", cells: [[0, 0], [1, 0], [1, 2]] },
-  { name: "SPRAY", cells: [[0, 0], [1, 2], [2, 0]] },
-  // MEDIUM 4–7
-  { name: "BLOK", cells: [[0, 0], [0, 1], [1, 0], [1, 1]] },
-  { name: "TEE", cells: [[0, 0], [0, 1], [0, 2], [1, 1]] },
-  { name: "ZIG", cells: [[0, 1], [0, 2], [1, 0], [1, 1]] },
-  { name: "LINE", cells: [[0, 0], [0, 1], [0, 2], [0, 3]] },
-  { name: "JAY", cells: [[0, 0], [1, 0], [2, 0], [2, 1]] },
-  { name: "PINS", cells: [[0, 0], [0, 2], [2, 0], [2, 2]] },
-  { name: "CROSS", cells: [[0, 1], [1, 0], [1, 1], [1, 2], [2, 1]] },
-  { name: "LANCE", cells: [[0, 0], [0, 1], [0, 2], [0, 3], [0, 4]] },
-  { name: "PEE", cells: [[0, 0], [0, 1], [1, 0], [1, 1], [2, 0]] },
-  { name: "FORK", cells: [[0, 0], [0, 2], [1, 1], [2, 0], [2, 2]] },
-  { name: "SLAB", cells: [[0, 0], [0, 1], [1, 0], [1, 1], [2, 0], [2, 1]] },
-  { name: "HOOK", cells: [[0, 0], [1, 0], [2, 0], [2, 1], [2, 2], [1, 2]] },
-  { name: "AITCH", cells: [[0, 0], [0, 2], [1, 0], [1, 1], [1, 2], [2, 0], [2, 2]] },
-  { name: "CHAIR", cells: [[0, 0], [0, 1], [1, 0], [1, 1], [2, 0], [2, 1], [2, 2]] },
-  // BIG 8–12
-  { name: "RING", cells: [[0, 0], [0, 1], [0, 2], [1, 0], [1, 2], [2, 0], [2, 1], [2, 2]] },
-  { name: "BRICK", cells: [[0, 0], [0, 1], [0, 2], [0, 3], [1, 0], [1, 1], [1, 2], [1, 3]] },
-  { name: "RAMP", cells: [[0, 0], [1, 0], [1, 1], [2, 0], [2, 1], [2, 2], [3, 0], [3, 1], [3, 2]] },
-  { name: "CORE", cells: [[0, 0], [0, 1], [0, 2], [1, 0], [1, 1], [1, 2], [2, 0], [2, 1], [2, 2]] },
-  { name: "TOWER", cells: [[0, 0], [0, 1], [1, 0], [1, 1], [2, 0], [2, 1], [3, 0], [3, 1], [4, 0], [4, 1]] },
-  { name: "FORT", cells: [[0, 0], [0, 1], [0, 2], [1, 0], [1, 1], [1, 2], [2, 0], [2, 1], [2, 2], [3, 1]] },
-  { name: "VAULT", cells: [[0, 0], [0, 1], [0, 2], [1, 0], [1, 1], [1, 2], [2, 0], [2, 1], [2, 2], [3, 0], [3, 1], [3, 2]] },
+  { name: "I", cells: [[0, 0], [0, 1], [0, 2], [0, 3]] },
+  { name: "O", cells: [[0, 0], [0, 1], [1, 0], [1, 1]] },
+  { name: "T", cells: [[0, 0], [0, 1], [0, 2], [1, 1]] },
+  { name: "S", cells: [[0, 1], [0, 2], [1, 0], [1, 1]] },
+  { name: "Z", cells: [[0, 0], [0, 1], [1, 1], [1, 2]] },
+  { name: "J", cells: [[0, 0], [1, 0], [1, 1], [1, 2]] },
+  { name: "L", cells: [[0, 2], [1, 0], [1, 1], [1, 2]] },
 ];
 
-export const DEFAULT_LOADOUT = ["DOT", "BAR", "RUN", "ELL", "BLOK", "TEE", "CROSS", "SLAB"]
-  .map((n) => BLOCKS.findIndex((b) => b.name === n));
+// Everyone plays all seven: there's no deck to build.
+export const DEFAULT_LOADOUT = BLOCKS.map((_, i) => i);
 
 export const sizeOf = (n) => (n <= 3 ? "SMALL" : n <= 7 ? "MEDIUM" : "BIG");
 
@@ -243,52 +218,49 @@ export function shuffled(arr, rand = Math.random) {
   return out;
 }
 
+/** A small seeded generator (mulberry32): the same seed deals the same pieces. */
+function nextRand(state) {
+  const s = (state + 0x6d2b79f5) | 0;
+  let t = Math.imul(s ^ (s >>> 15), 1 | s);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return [((t ^ (t >>> 14)) >>> 0) / 4294967296, s];
+}
+export const newSeed = () => Math.floor(Math.random() * 4294967296) | 0;
+
 /**
- * The queue. Your 8-piece deck comes round in bags, Tetris-style: each pass
- * deals every piece once, freshly shuffled. The front of the queue is the
- * piece you play this turn; the queue is kept topped up so the next
- * QUEUE_SHOWN pieces are always known (to both players), even across the
- * join between two passes.
+ * The queue: a 7-bag, as in Tetris. Each pass deals all seven pieces once,
+ * freshly shuffled, so nothing floods and nothing goes missing. The front of
+ * the queue is the piece you play this turn; the queue is kept topped up so
+ * the next QUEUE_SHOWN pieces are always known (to both players).
  *
- * A deck is { queue: [{ id, pass }], passes } — `pass` counts from 1.
+ * A deck is { queue: [{ id, pass }], passes, seed } — `pass` counts from 1.
+ * The seed carries the shuffle, so two decks started from the same seed deal
+ * exactly the same sequence (see RULES.sharedSequence).
  */
-function topUp(deck, loadout, rand) {
-  let { queue, passes } = deck;
+function topUp(deck, loadout) {
+  let { queue, passes, seed } = deck;
   while (queue.length < QUEUE_SHOWN + 1) {
     passes += 1;
+    const rand = () => { const [v, s2] = nextRand(seed); seed = s2; return v; };
     queue = [...queue, ...shuffled(loadout, rand).map((id) => ({ id, pass: passes }))];
   }
-  return { queue, passes };
+  return { queue, passes, seed };
 }
 
-export function newDeck(loadout, rand = Math.random) {
-  return topUp({ queue: [], passes: 0 }, loadout, rand);
+export function newDeck(loadout = DEFAULT_LOADOUT, seed = newSeed()) {
+  return topUp({ queue: [], passes: 0, seed }, loadout);
 }
 
 /** Plays (or skips) the current piece and moves the queue on. */
-export function advanceDeck(deck, loadout, rand = Math.random) {
-  return topUp({ queue: deck.queue.slice(1), passes: deck.passes }, loadout, rand);
+export function advanceDeck(deck, loadout = DEFAULT_LOADOUT) {
+  return topUp({ queue: deck.queue.slice(1), passes: deck.passes, seed: deck.seed }, loadout);
 }
 
 export const currentPiece = (deck) => deck.queue[0].id;
 export const currentPass = (deck) => deck.queue[0].pass;
 export const upcoming = (deck) => deck.queue.slice(1, QUEUE_SHOWN + 1).map((q) => q.id);
 
-/** Never trust a client-supplied loadout. */
-export function sanitizeLoadout(input) {
-  if (!Array.isArray(input)) return [...DEFAULT_LOADOUT];
-  const seen = new Set();
-  const out = [];
-  for (const v of input) {
-    const i = typeof v === "number" ? v : NaN;
-    if (!Number.isInteger(i) || i < 0 || i >= BLOCKS.length || seen.has(i)) continue;
-    seen.add(i);
-    out.push(i);
-    if (out.length === SLOTS) break;
-  }
-  for (const d of DEFAULT_LOADOUT) {
-    if (out.length === SLOTS) break;
-    if (!seen.has(d)) { seen.add(d); out.push(d); }
-  }
-  return out;
+/** Every player plays the same seven pieces, whatever a client sends. */
+export function sanitizeLoadout() {
+  return [...DEFAULT_LOADOUT];
 }

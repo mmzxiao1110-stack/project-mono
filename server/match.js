@@ -10,8 +10,9 @@
 import {
   BLOCKS, TURNS, initialBoard, isLegal, rotateN, absCells, boundsOf,
   resolveTurn, scoreOf, newDeck, advanceDeck, currentPiece, currentPass, upcoming,
-  hasAnyMove, ROWS, COLS,
+  hasAnyMove, ROWS, COLS, newSeed,
 } from "../shared/engine.js";
+import { RULES } from "../shared/rules.js";
 import { glickoUpdate, rankIndexFor } from "../shared/glicko.js";
 import { saveProfile } from "./store.js";
 
@@ -48,9 +49,11 @@ export class Match {
     this.timer = null;
     this.graceTimers = { A: null, B: null };
 
+    // One seed for both queues when the rules say so: the same pieces, in the same order.
+    const seed = newSeed();
     this.seats = {
-      A: { ...seats[0], side: "A", connected: true, deck: newDeck(seats[0].loadout) },
-      B: { ...seats[1], side: "B", connected: true, deck: newDeck(seats[1].loadout) },
+      A: { ...seats[0], side: "A", connected: true, deck: newDeck(seats[0].loadout, seed) },
+      B: { ...seats[1], side: "B", connected: true, deck: newDeck(seats[1].loadout, RULES.sharedSequence ? seed : newSeed()) },
     };
 
     // Snapshot ratings at match start — this is what Glicko scores against.
