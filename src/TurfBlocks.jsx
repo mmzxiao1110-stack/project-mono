@@ -10,7 +10,7 @@ import {
   COLS, ROWS, TURNS, BLOCKS, DEFAULT_LOADOUT, isCentre,
   key, rotateN, boundsOf, absCells, initialBoard, isLegal,
   hasAnyMove, resolveTurn, scoreOf, newDeck, advanceDeck, currentPiece, currentPass, upcoming, QUEUE_SHOWN, newSeed,
-  emptyPins, nextMeters, isLegalDelete, isLegalPin,
+  emptyPins, nextMeters, isLegalDelete, isLegalPin, normalizeAction, stampHits,
 } from "../shared/engine.js";
 import { aiPickAction } from "../shared/ai.js";
 import {
@@ -649,7 +649,23 @@ function useActions({ board, pins, owner, meter, enabled, boardRef, flip = false
 
   return { mode, setMode, trace, staged, onPointerDown, deleteValid, pinValid, confirmPins, reset, setStaged };
 }
+const EMPTY_SET = new Set();
 const EMPTY_PINS = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+
+/**
+ * Stamps (RULES.stamp): in delete or pin mode your current piece becomes a
+ * stamp. It moves and turns like a placement, but can go anywhere; what it
+ * covers is what it deletes (any ink, never pinned) or pins (your own).
+ */
+function useStamp({ board, pins, owner, meter, act, pl }) {
+  const on = RULES.stamp && act.mode !== "place";
+  const foot = on && pl.ghost ? pl.ghost : null;
+  const pinsSafe = pins || EMPTY_PINS;
+  const hits = foot && board ? stampHits(board, pinsSafe, foot, act.mode === "delete" ? "delete" : "pin", owner) : [];
+  const ok = !!foot && hits.length > 0 && (act.mode === "delete" || hits.length <= meter);
+  const stagedHits = RULES.stamp && act.staged && board ? stampHits(board, pinsSafe, act.staged, "pin", owner) : act.staged || [];
+  return { on, foot, hits, ok, stagedHits };
+}
 
 /**
  * Keyboard play, shared by the local and ranked games. Movement is relative
@@ -1714,6 +1730,7 @@ function DeckModal({ color, onClose }) {
         </div>
         <div className="tb-t" style={{ color: UI.dim }}>
           The seven tetrominoes, dealt in bags like Tetris: each bag holds all seven, shuffled.
+          {RULES.stamp ? " Your piece is also your delete and pin stamp." : ""}
           {RULES.sharedSequence ? " Both players get the same pieces in the same order." : ""}
         </div>
       </div>
@@ -2594,7 +2611,9 @@ function HowToModal({ colors, loadout, onClose }) {
           <span className="flex items-center gap-1.5 tb-t"><Pin /> 3</span>
         </div>
       ),
-      body: `Instead of placing, you can DELETE up to ${RULES.deleteMax} connected squares — anyone's. Press 2 and drag across them. But every square you delete gives your opponent a pin. ${RULES.pinIsFree ? "Pins ride along with your move:" : "Pinning takes your turn:"} press 3 and drag over your own squares to make them permanent — line clears and deletes can't touch them.`,
+      body: RULES.stamp
+        ? `Instead of placing, you can DELETE: press 2 and your piece becomes a stamp — put it anywhere and everything under it is wiped, yours or theirs. But any delete gives your opponent ${RULES.pinsPerDeleteTurn || "a"} pins. Press 3 to PIN: stamp your piece over your own squares (one pin each), then place as usual. Pinned squares can't be deleted — but a full line still wipes them.`
+        : `Instead of placing, you can DELETE up to ${RULES.deleteMax} connected squares — anyone's. Press 2 and drag across them. But every square you delete gives your opponent a pin. ${RULES.pinIsFree ? "Pins ride along with your move:" : "Pinning takes your turn:"} press 3 and drag over your own squares to make them permanent — deletes can't touch them${RULES.pinsSurviveClears ? ", nor can line clears" : ", though a full line still wipes them"}.`,
     }] : []),
     {
       title: "THE PIECES",
@@ -3072,7 +3091,8 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   const oppName = solo ? `AI ${LEVELS[aiLevel - 1]}` : "PLAYER 2";
 
   const pl = usePlacement({ board, owner: player, hand, enabled: inPlay });
-  const act = useActions({ board, pins, owner: player, meter: meters[player], enabled: inPlay, boardRef: pl.boardRef, onLeavePlace: pl.reset });
+  const act = useActions({ board, pins, owner: player, meter: meters[player], enabled: inPlay, boardRef: pl.boardRef, onLeavePlace: RULES.stamp ? undefined : pl.reset });
+  const stamp = useStamp({ board, pins, owner: player, meter: meters[player], act, pl });
   const contestedKeys = useMemo(() => new Set((reveal ? reveal.contested : []).map(([r, c]) => key(r, c))), [reveal]);
   const stuck = useMemo(() => (inPlay ? !hasAnyMove(board, hand, player) : false), [board, hand, player, inPlay]);
 
@@ -3107,14 +3127,23 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
 
   // Pins riding along with this move (when pinning is free).
   const extra = act.staged && RULES.pinIsFree ? { pins: act.staged } : null;
-  const canCommit = inPlay && (act.mode === "delete" ? act.deleteValid : act.mode === "pin" ? act.pinValid : pl.ghostLegal);
-  const send = (move) => {
+  const canCommit = inPlay && (stamp.on ? stamp.ok : act.mode === "delete" ? act.deleteValid : act.mode === "pin" ? act.pinValid : pl.ghostLegal);
+  const send = (raw) => {
+    // Stamps arrive as footprints; the engine turns them into what they hit.
+    const { move, error } = normalizeAction(board, pins, meters[player], player, piece, raw);
+    if (error) return;
     advance(player);
     if (player === "A") handOver(move); else finish(pendingA, move);
     pl.reset();
     act.reset();
   };
   const commit = () => {
+    if (stamp.on) {
+      if (!stamp.ok) return;
+      if (act.mode === "delete") send({ type: "delete", cells: stamp.foot, ...extra });
+      else { act.setStaged(stamp.foot); act.setMode("place"); }
+      return;
+    }
     if (act.mode === "delete") {
       if (act.deleteValid) send({ type: "delete", cells: act.trace, ...extra });
       return;
@@ -3131,7 +3160,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   // Passing spends the current piece without placing it (free pins still land).
   const discard = () => send(extra ? { type: "pass", ...extra } : null);
 
-  const onMode = (m) => { act.setMode(m); if (m === "place" || m === act.mode) setTimeout(() => pl.select(0), 0); };
+  const onMode = (m) => { act.setMode(m); if (RULES.stamp || m === "place" || m === act.mode) setTimeout(() => pl.select(0), 0); };
   useGameKeys(pl, { enabled: inPlay, onCommit: commit, onDiscard: discard, onMode, mode: act.mode });
 
   // Each turn starts with the piece already in hand: under the cursor with a
@@ -3192,8 +3221,8 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
     );
   }
 
-  const traceKeys = new Set(act.trace.map(([r, c]) => key(r, c)));
-  const stagedKeys = new Set((act.staged || []).map(([r, c]) => key(r, c)));
+  const traceKeys = new Set((stamp.on ? stamp.foot || [] : act.trace).map(([r, c]) => key(r, c)));
+  const stagedKeys = new Set(stamp.stagedHits.map(([r, c]) => key(r, c)));
   const rail = {
     ink: INK[player], turn: Math.min(turn, TURNS),
     onRotate: () => pl.rotate(1), onCommit: commit, onDiscard: discard,
@@ -3239,11 +3268,11 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
                   board={board} cell={cell} ink={INK} theme={theme} youSide={player}
                   pendingKeys={phase === "AI_THINK" && pendingA ? new Set(pendingA.cells.map(([r, c]) => key(r, c))) : null}
                   pendingInk={INK.A}
-                  ghostKeys={pl.ghostKeys} ghostLegal={pl.ghostLegal}
+                  ghostKeys={stamp.on ? EMPTY_SET : pl.ghostKeys} ghostLegal={pl.ghostLegal}
                   ghostInk={INK[player]}
                   contestedKeys={contestedKeys} boardRef={pl.boardRef}
-                  onPointerDown={(e) => (act.mode === "place" ? pl.onBoardPointerDown(e, commit) : act.onPointerDown(e))}
-                  pins={pins} traceKeys={traceKeys} traceKind={act.mode} traceOk={act.deleteValid || act.pinValid} stagedKeys={stagedKeys}
+                  onPointerDown={(e) => (act.mode === "place" || RULES.stamp ? pl.onBoardPointerDown(e, commit) : act.onPointerDown(e))}
+                  pins={pins} traceKeys={traceKeys} traceKind={act.mode} traceOk={stamp.on ? stamp.ok : act.deleteValid || act.pinValid} stagedKeys={stagedKeys}
                 />
 
                 {reveal && (
@@ -3253,7 +3282,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
                 {pl.drag && pl.rotated && (
                   <FloatingPiece
                     cells={pl.rotated} cell={cell} gap={g}
-                    color={INK[player]} legal={pl.ghostLegal}
+                    color={stamp.on ? (act.mode === "delete" ? UI.bad : UI.text) : INK[player]} legal={stamp.on ? stamp.ok : pl.ghostLegal}
                     dir={player === "B" ? -1 : 1}
                     x={pl.drag.x} y={pl.drag.y} lift={pl.drag.lift} faint={pl.holding && !!pl.sel.pos}
                   />
@@ -3330,7 +3359,8 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   const pl = usePlacement({ board, owner: you, hand, enabled: canAct, flip });
   const pins = m?.pins || EMPTY_PINS;
   const meter = m?.meters?.me ?? 0;
-  const act = useActions({ board, pins, owner: you, meter, enabled: canAct, boardRef: pl.boardRef, flip, onLeavePlace: pl.reset });
+  const act = useActions({ board, pins, owner: you, meter, enabled: canAct, boardRef: pl.boardRef, flip, onLeavePlace: RULES.stamp ? undefined : pl.reset });
+  const stamp = useStamp({ board, pins, owner: you, meter, act, pl });
   const contestedKeys = useMemo(
     () => new Set((m?.reveal ? m.reveal.contested : []).map(([r, c]) => key(r, c))),
     [m?.reveal]
@@ -3350,9 +3380,17 @@ function NetGame({ colors, theme, onResult, onAbort }) {
 
   // Pins riding along with this move (when pinning is free).
   const pinsOut = act.staged && RULES.pinIsFree ? act.staged : undefined;
-  const canCommit = canAct && (act.mode === "delete" ? act.deleteValid : act.mode === "pin" ? act.pinValid : pl.ghostLegal);
+  const canCommit = canAct && (stamp.on ? stamp.ok : act.mode === "delete" ? act.deleteValid : act.mode === "pin" ? act.pinValid : pl.ghostLegal);
   const commit = () => {
     if (!canAct) return;
+    if (stamp.on) {
+      if (!stamp.ok) return;
+      if (act.mode === "pin") { act.setStaged(stamp.foot); act.setMode("place"); return; }
+      setPlaced({ turn: m.turn, cells: [], handIdx: 0 });
+      net.erase({ turn: m.turn, cells: stamp.foot, pins: pinsOut });
+      pl.reset(); act.reset();
+      return;
+    }
     if (act.mode === "delete") {
       if (!act.deleteValid) return;
       setPlaced({ turn: m.turn, cells: [], handIdx: 0 });
@@ -3382,7 +3420,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
     act.reset();
   };
 
-  const onMode = (md) => { act.setMode(md); if (md === "place" || md === act.mode) setTimeout(() => pl.select(0), 0); };
+  const onMode = (md) => { act.setMode(md); if (RULES.stamp || md === "place" || md === act.mode) setTimeout(() => pl.select(0), 0); };
   useGameKeys(pl, { enabled: canAct, onCommit: commit, onDiscard: discard, onMode, mode: act.mode });
 
   // Each turn starts with the piece already in hand (see LocalGame).
@@ -3447,12 +3485,12 @@ function NetGame({ colors, theme, onResult, onAbort }) {
                 <div className="relative" style={{ transform: flip ? "rotate(180deg)" : "none" }}>
                   <BoardGrid
                     board={board} cell={cell} ink={INK} theme={theme} youSide={you}
-                    ghostKeys={pl.ghostKeys} ghostLegal={pl.ghostLegal} ghostInk={colors.you}
+                    ghostKeys={stamp.on ? EMPTY_SET : pl.ghostKeys} ghostLegal={pl.ghostLegal} ghostInk={colors.you}
                     pendingKeys={pendingKeys} pendingInk={colors.you}
                     contestedKeys={contestedKeys} boardRef={pl.boardRef}
-                    onPointerDown={(e) => (act.mode === "place" ? pl.onBoardPointerDown(e, commit) : act.onPointerDown(e))}
-                    pins={pins} traceKeys={new Set(act.trace.map(([r, c]) => key(r, c)))} traceKind={act.mode}
-                    traceOk={act.deleteValid || act.pinValid} stagedKeys={new Set((act.staged || []).map(([r, c]) => key(r, c)))}
+                    onPointerDown={(e) => (act.mode === "place" || RULES.stamp ? pl.onBoardPointerDown(e, commit) : act.onPointerDown(e))}
+                    pins={pins} traceKeys={new Set((stamp.on ? stamp.foot || [] : act.trace).map(([r, c]) => key(r, c)))} traceKind={act.mode}
+                    traceOk={stamp.on ? stamp.ok : act.deleteValid || act.pinValid} stagedKeys={new Set(stamp.stagedHits.map(([r, c]) => key(r, c)))}
                   />
                   {m.reveal && (
                     <VanishLayer contested={m.reveal.contested} cleared={m.reveal.cleared} cell={cell} gap={g} ink={INK} />
@@ -3462,7 +3500,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
                 {pl.drag && pl.rotated && (
                   <FloatingPiece
                     cells={pl.rotated} cell={cell} gap={g}
-                    color={colors.you} legal={pl.ghostLegal} flip={flip}
+                    color={stamp.on ? (act.mode === "delete" ? UI.bad : UI.text) : colors.you} legal={stamp.on ? stamp.ok : pl.ghostLegal} flip={flip}
                     dir={you === "B" ? -1 : 1}
                     x={pl.drag.x} y={pl.drag.y} lift={pl.drag.lift} faint={pl.holding && !!pl.sel.pos}
                   />

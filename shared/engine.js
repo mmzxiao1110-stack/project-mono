@@ -327,6 +327,44 @@ export function stampOptions(board, pins, blockId, kind, owner) {
 }
 
 /**
+ * Checks an action and turns stamps into what they hit. Returns
+ * { move } (ready for resolveTurn) or { error }.
+ *   With RULES.stamp on, a delete's `cells` and a move's `pins` are the
+ *   FOOTPRINT of the current piece (`blockId`), placed anywhere; they become
+ *   the squares it actually deletes / pins.
+ */
+export function normalizeAction(board, pins, meter, side, blockId, move) {
+  if (!move || !RULES.stamp) {
+    const error = checkAction(board, pins, meter, side, move);
+    return error ? { error } : { move };
+  }
+  let out = { ...move };
+  if (move.type === "delete") {
+    if (!isPieceFootprint(move.cells, blockId)) return { error: "a delete must be your piece's shape" };
+    const hits = stampHits(board, pins, move.cells, "delete", side);
+    if (!hits.length) return { error: "nothing to delete there" };
+    out.cells = hits;
+  } else if (move.type === "pin") {
+    return { error: "pins ride along with a move" };
+  } else if (move.type !== "place" && move.type !== "pass") return { error: "unknown action" };
+  if (move.pins) {
+    if (!RULES.pinIsFree) return { error: "pinning takes your turn" };
+    if (!isPieceFootprint(move.pins, blockId)) return { error: "a pin must be your piece's shape" };
+    let hits = stampHits(board, pins, move.pins, "pin", side);
+    if (out.type === "delete") hits = hits.filter(([r, c]) => !out.cells.some(([a, b]) => a === r && b === c));
+    if (!hits.length) return { error: "nothing of yours to pin there" };
+    if (hits.length > meter) return { error: "not enough pins" };
+    if (Number.isFinite(RULES.pinHoldMax)) {
+      let held = 0;
+      for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (isPinned(pins, r, c) && board[r][c] === side) held++;
+      if (held + hits.length > RULES.pinHoldMax) return { error: "too many pinned squares" };
+    }
+    out.pins = hits;
+  }
+  return { move: out };
+}
+
+/**
  * Checks a whole action against the board. Returns an error string, or null.
  * move: { type: "place"|"delete"|"pin"|"pass", cells, pins? }. Placements
  * are checked by the caller (they come as rotation + position); here they

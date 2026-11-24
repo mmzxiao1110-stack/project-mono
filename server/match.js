@@ -10,7 +10,7 @@
 import {
   BLOCKS, TURNS, initialBoard, isLegal, rotateN, absCells, boundsOf,
   resolveTurn, scoreOf, newDeck, advanceDeck, currentPiece, currentPass, upcoming,
-  hasAnyMove, ROWS, COLS, newSeed, emptyPins, checkAction, nextMeters,
+  hasAnyMove, ROWS, COLS, newSeed, emptyPins, normalizeAction, nextMeters,
 } from "../shared/engine.js";
 import { RULES } from "../shared/rules.js";
 import { glickoUpdate, rankIndexFor } from "../shared/glicko.js";
@@ -214,9 +214,11 @@ export class Match {
       if (!pins) return "bad squares";
       move = { ...move, pins };
     }
-    const err = checkAction(this.board, this.pins, this.meters[side], side, move);
-    if (err) return err;
-    this.pending[side] = move;
+    // Stamps arrive as the piece's footprint and are stored as what they hit.
+    const blockId = currentPiece(this.seats[side].deck);
+    const { move: ok, error } = normalizeAction(this.board, this.pins, this.meters[side], side, blockId, move);
+    if (error) return error;
+    this.pending[side] = ok;
     this.send(side, { t: "ack", turn: this.turn });
     this.send(this.other(side), { t: "oppReady", turn: this.turn });
     this.startShotClock();
