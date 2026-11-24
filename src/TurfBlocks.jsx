@@ -889,9 +889,9 @@ function ScoreBar({ score, turn, turns, inkA, inkB, specialHex, labelA, labelB }
  * prefers spots near the middle, so the shape grows like a game of MINO
  * with no board. Once enough is covered it fades out and starts over.
  */
-const FIELD_CELL = 36;       // px per square
-const FIELD_TICK_MS = 380;   // two new blocks per tick
-const FIELD_FILL = 0.6;      // fraction of the visible screen covered before it fades and restarts
+const FIELD_CELL = 60;       // px per square. HIGHER = more zoomed in
+const FIELD_TICK_MS = 650;   // one new block per tick, sometimes two
+const FIELD_FILL = 0.7;      // fraction of the visible screen covered before it fades and restarts
 // The field is wider than the 8-column game board, so it keys its own squares.
 const fk = (r, c) => r * 100 + c;
 
@@ -947,7 +947,9 @@ function AmbientField({ colors, theme, paused }) {
     const h = typeof window === "undefined" ? 800 : window.innerHeight;
     const n = Math.min(99, Math.ceil((Math.max(w, h) * 1.45) / FIELD_CELL));
     // Restart once roughly FIELD_FILL of what's on screen is covered.
-    const limit = Math.min(900, Math.round(((w * h) / (FIELD_CELL * FIELD_CELL)) * FIELD_FILL));
+    // Small screens hold few squares at this zoom, so give them a floor or
+    // the field resets every few seconds.
+    const limit = Math.min(900, Math.max(120, Math.round(((w * h) / (FIELD_CELL * FIELD_CELL)) * FIELD_FILL)));
     return { cols: n, rows: n, limit };
   });
   const [field, setField] = useState(() => seedField(dims.cols, dims.rows));
@@ -959,7 +961,8 @@ function AmbientField({ colors, theme, paused }) {
         // Fading out: wait for the fade to finish, then start again from the centre.
         if (prev.fading) return prev.fading >= 3 ? seedField(dims.cols, dims.rows) : { ...prev, fading: prev.fading + 1 };
         const next = { cells: new Map(prev.cells), gen: prev.gen + 1, fading: 0, misses: prev.misses };
-        const grew = growField(next, dims.cols, dims.rows) + growField(next, dims.cols, dims.rows);
+        const grew = growField(next, dims.cols, dims.rows);
+        if (grew && Math.random() < 0.35) growField(next, dims.cols, dims.rows);
         // A crowded spot can refuse a block; only give up after a run of refusals.
         next.misses = grew ? 0 : prev.misses + 1;
         if (next.misses >= 6 || next.cells.size >= dims.limit) return { ...prev, fading: 1 };
@@ -979,12 +982,13 @@ function AmbientField({ colors, theme, paused }) {
         width: dims.cols * FIELD_CELL, height: dims.rows * FIELD_CELL,
         transform: "translate(-50%, -50%) rotate(-14deg)",
         opacity: field.fading ? 0 : 0.34,
-        transition: "opacity 900ms ease",
+        transition: "opacity 1400ms ease",
       }}>
         {[...field.cells].map(([k, v]) => {
           const r = Math.floor(k / 100), c = k % 100;
           return (
-            <div key={k} className={v.born === field.gen && animate ? "tb-boot" : undefined}
+            // Every square fades in once, when it first appears, at its own pace.
+            <div key={k} className={animate ? "tb-fadein" : undefined}
               style={{ position: "absolute", left: c * FIELD_CELL + 3, top: r * FIELD_CELL + 3, width: size, height: size }}>
               <Ink size={size} color={ink[v.owner]} {...inkOf(v.owner)} seed={r * 7 + c} />
             </div>
@@ -3127,12 +3131,12 @@ export default function TurfBlocks() {
       }
       .tb-scroll { -webkit-overflow-scrolling: touch; scrollbar-width: none; }
       .tb-scroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
-      /* Type: Fuzzy Bubbles, a soft hand-lettered face, everywhere. The class name
-         is historical. It has no italic, so "italic" text stays upright rather
-         than being slanted by the browser. */
-      .font-mono { font-family: "Fuzzy Bubbles", "Comic Neue", "Chalkboard SE", system-ui, sans-serif; }
+      /* Type: Indie Flower, a handwritten face, everywhere. The class name is
+         historical. It has one weight and no italic, so the browser is told not
+         to fake bold or slanted versions, which smear handwriting. */
+      .font-mono { font-family: "Indie Flower", "Comic Neue", "Chalkboard SE", cursive; font-synthesis: none; }
       .font-mono .italic, .font-mono em { font-style: normal; opacity: .85; }
-      .tb-display { font-family: "Fuzzy Bubbles", system-ui, sans-serif; font-weight: 700; }
+      .tb-display { font-family: "Indie Flower", cursive; font-weight: 400; }
       .lucide { stroke-width: 1.6; }
 
       /* Paper: grain and a vignette over everything, drawn once, never animated. */
@@ -3149,6 +3153,8 @@ export default function TurfBlocks() {
       /* Ink going down: the strokes are wiped on left to right, like a pen pass. */
       @keyframes tbDrop { from { clip-path: inset(0 100% 0 0) } to { clip-path: inset(0 0 0 0) } }
       .tb-drop { animation: tbDrop .24s cubic-bezier(.3,.7,.4,1) both; }
+      @keyframes tbFadeIn { from { opacity: 0; transform: scale(.94) } to { opacity: 1; transform: none } }
+      .tb-fadein { animation: tbFadeIn 1.8s ease-out both; }
       @keyframes tbBoot { from { clip-path: inset(0 100% 0 0); opacity: 0 } to { clip-path: inset(0 0 0 0); opacity: 1 } }
       .tb-boot { animation: tbBoot 900ms ease-out both; }
       /* A collision: the square shudders. */
@@ -3179,9 +3185,9 @@ export default function TurfBlocks() {
       /* Cards land like a sheet of paper dropped on a desk. */
       @keyframes tbPop { from { opacity: 0; transform: rotate(-1.4deg) translateY(10px) } to { opacity: 1; transform: none } }
       .tb-pop { animation: tbPop .22s cubic-bezier(.2,.9,.3,1) both; }
-      ${theme.motion ? "" : ".tb-contest,.tb-drop,.tb-boot,.tb-pulse,.tb-fade,.tb-pop,.tb-boil { animation: none !important }"}
+      ${theme.motion ? "" : ".tb-contest,.tb-drop,.tb-boot,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-boil { animation: none !important }"}
       @media (prefers-reduced-motion: reduce) {
-        .tb-contest,.tb-drop,.tb-boot,.tb-pulse,.tb-fade,.tb-pop,.tb-boil { animation: none }
+        .tb-contest,.tb-drop,.tb-boot,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-boil { animation: none }
       }
       button { cursor: pointer; }
       /* A phone held sideways leaves the 8×16 board too short to aim at. */
