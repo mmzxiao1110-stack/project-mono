@@ -23,7 +23,7 @@ import {
   PRESETS, INKS, STROKES, GRID_GAPS,
   loadTheme, saveTheme, applyPreset, editTheme, themeVars, frameUrl, frameImage,
 } from "./theme.js";
-import { inkPaths, gridPath } from "./sketch.js";
+import { inkPaths, gridPath, shadeUrl, pencilFilter, GRAINS } from "./sketch.js";
 
 /* ============================================================
    PRESENTATION CONSTANTS
@@ -64,18 +64,23 @@ const SK_VAR = {
   [UI.line]: "line", [UI.dim]: "dim", [UI.text]: "text",
   [GOLD]: "special", [GOLD_SOFT]: "special-soft", [UI.badSoft]: "bad",
 };
-const FILL_VAR = { [UI.text]: "fill-text", [UI.panel]: "fill-panel", [UI.dim]: "fill-dim" };
+const SHADE_VAR = { [UI.text]: "text", [UI.dim]: "dim" };
 
 function sk(color = UI.line) {
   const name = SK_VAR[color];
   const src = name ? `var(--tb-sk-${name})` : frameUrl(color);
   return { borderWidth: 1, borderStyle: "solid", borderColor: "transparent", borderImage: frameImage(src), borderRadius: 0 };
 }
-/** A solid, rough-edged chalk block — the "pressed" or primary state. */
-function skFill(color = UI.text) {
-  const name = FILL_VAR[color];
-  const src = name ? `var(--tb-sk-${name})` : frameUrl(color, { fill: true });
-  return { borderWidth: 1, borderStyle: "solid", borderColor: "transparent", borderImage: frameImage(src, true), borderRadius: 0, background: "transparent" };
+/**
+ * A pencil-shaded surface: the "pressed" or primary state. Light enough to
+ * write over, so text on it stays in the normal text colour. `dense` goes
+ * over it twice, for swatches and small solid marks.
+ */
+function skFill(color = UI.text, { dense = false } = {}) {
+  const name = SHADE_VAR[color];
+  const shade = name ? `var(--tb-shade-${name}${dense ? "-dense" : ""})` : shadeUrl(color, { dense });
+  // Shading runs a touch past the drawn frame, the way it does on paper.
+  return { ...sk(color), background: `${shade} 0 0 / 36px 36px`, backgroundClip: "padding-box" };
 }
 /** A drawn rule under (or over) a block, in place of a 1px border. */
 const RULE_BELOW = { backgroundImage: "var(--tb-rule)", backgroundRepeat: "no-repeat", backgroundPosition: "bottom", backgroundSize: "100% 8px" };
@@ -355,7 +360,23 @@ const InkStyle = createContext("hatch");
 const inkOf = (owner) => (owner === "S" ? { stroke: "cross", dir: 1 } : { stroke: undefined, dir: owner === "B" ? -1 : 1 });
 
 /**
- * One hand-drawn square. Paths come from sketch.js, seeded, so the same
+ * The pencil grain filters, mounted once per page. Ink picks one by seed so
+ * neighbouring squares don't share a grain pattern.
+ */
+function PencilDefs() {
+  const markup = useMemo(
+    () => Array.from({ length: GRAINS }, (_, i) => pencilFilter(`tb-pencil-${i}`, i * 17 + 3)).join(""),
+    []
+  );
+  return (
+    <svg aria-hidden="true" width="0" height="0" style={{ position: "absolute" }}>
+      <defs dangerouslySetInnerHTML={{ __html: markup }} />
+    </svg>
+  );
+}
+
+/**
+ * One pencil-drawn square. Paths come from sketch.js, seeded, so the same
  * square always gets the same strokes. `fluid` stretches it to its box.
  */
 function Ink({ size, color, stroke, dir = 1, seed = 0, fluid = false, className, style }) {
@@ -368,15 +389,13 @@ function Ink({ size, color, stroke, dir = 1, seed = 0, fluid = false, className,
       viewBox={`0 0 ${size} ${size}`} preserveAspectRatio={fluid ? "none" : undefined}
       style={{ display: "block", overflow: "visible", pointerEvents: "none", ...style }}
     >
-      {p.fill && <path d={p.fill} style={{ fill: color }} opacity={0.86} />}
-      {p.hatch && (
-        <path d={p.hatch} fill="none" style={{ stroke: color }} strokeWidth={p.w}
-          strokeLinecap="round" strokeLinejoin="round" />
-      )}
-      {p.outline && (
-        <path d={p.outline} fill="none" style={{ stroke: color }} strokeWidth={p.ow}
-          strokeLinecap="round" strokeDasharray={p.dash} />
-      )}
+      <g filter={`url(#tb-pencil-${p.grain})`}>
+        {p.layers.map((l, i) => l.fill
+          ? <path key={i} d={l.d} style={{ fill: color }} opacity={l.o} />
+          : <path key={i} d={l.d} fill="none" style={{ stroke: color }} strokeWidth={l.w} opacity={l.o}
+              strokeLinecap="round" strokeLinejoin="round" strokeDasharray={l.dash} />
+        )}
+      </g>
     </svg>
   );
 }
@@ -491,10 +510,10 @@ function BoardGrid({
     >
       <svg aria-hidden="true" width={grid.W} height={grid.H}
         style={{ position: "absolute", left: 0, top: 0, overflow: "visible", pointerEvents: "none" }}>
-        <path d={grid.inner} fill="none" style={{ stroke: UI.line }} strokeWidth={1}
-          opacity={FX.sketch.gridOpacity} strokeLinecap="round" />
-        <path d={grid.edge} fill="none" style={{ stroke: UI.dim }} strokeWidth={1.3}
-          opacity={0.85} strokeLinecap="round" />
+        <g filter="url(#tb-pencil-0)" fill="none" strokeLinecap="round">
+          <path d={grid.inner} style={{ stroke: UI.line }} strokeWidth={0.9} opacity={FX.sketch.gridOpacity} />
+          <path d={grid.edge} style={{ stroke: UI.dim }} strokeWidth={1.1} opacity={0.8} />
+        </g>
       </svg>
       {board.map((row, r) =>
         row.map((v, c) => {
@@ -590,7 +609,7 @@ function ActionBar({ onRotate, onCommit, onDiscard, canRotate, canCommit, canDis
       </button>
       <button onClick={onCommit} disabled={!canCommit}
         className="flex items-center justify-center gap-1.5 text-[12px] tracking-widest disabled:opacity-40"
-        style={{ height: 42, flex: 1.4, ...(canCommit ? skFill(ink) : sk(UI.line)), color: canCommit ? UI.ground : UI.dim }}>
+        style={{ height: 42, flex: 1.4, ...(canCommit ? skFill(ink) : sk(UI.line)), color: canCommit ? UI.text : UI.dim }}>
         <Check size={13} /> LOCK IN
       </button>
       <button onClick={onDiscard} disabled={!canDiscard}
@@ -602,11 +621,10 @@ function ActionBar({ onRotate, onCommit, onDiscard, canRotate, canCommit, canDis
   );
 }
 
-/** Territory as three hatched strips over a drawn baseline. */
-const hatchBg = (color, dir = 1) =>
-  `repeating-linear-gradient(${dir > 0 ? -45 : 45}deg, ${color} 0 1.4px, transparent 1.4px 4px)`;
+/** Territory as three pencil-shaded strips over a drawn baseline. */
+const shadeBg = (color, dir = 1, dense = false) => `${shadeUrl(color, { dir, dense })} 0 0 / 36px 36px`;
 
-function ScoreBar({ score, turn, turns, inkA, inkB, labelA, labelB }) {
+function ScoreBar({ score, turn, turns, inkA, inkB, specialHex, labelA, labelB }) {
   const pct = (n) => (n / (ROWS * COLS)) * 100;
   return (
     <div className="shrink-0 pb-2">
@@ -625,9 +643,9 @@ function ScoreBar({ score, turn, turns, inkA, inkB, labelA, labelB }) {
         </span>
       </div>
       <div className="flex w-full" style={{ height: 7 }}>
-        <div style={{ width: `${pct(score.a)}%`, background: hatchBg(inkA, 1), transition: "width 300ms ease-out" }} />
-        <div style={{ width: `${pct(score.s)}%`, background: hatchBg(GOLD, 1) + "," + hatchBg(GOLD, -1) }} />
-        <div style={{ marginLeft: "auto", width: `${pct(score.b)}%`, background: hatchBg(inkB, -1), transition: "width 300ms ease-out" }} />
+        <div style={{ width: `${pct(score.a)}%`, background: shadeBg(inkA, 1, true), transition: "width 300ms ease-out" }} />
+        <div style={{ width: `${pct(score.s)}%`, background: shadeBg(specialHex, 1, true) }} />
+        <div style={{ marginLeft: "auto", width: `${pct(score.b)}%`, background: shadeBg(inkB, -1, true), transition: "width 300ms ease-out" }} />
       </div>
       <div style={{ height: 8, ...RULE_BELOW, backgroundPosition: "top" }} />
     </div>
@@ -749,7 +767,7 @@ function SettingsModal({ volume, setVolume, musicVol, setMusicVol, name, rename,
               <button key={i} aria-label={`Volume ${(i + 1) * 10}`}
                 onClick={() => { const v = (i + 1) / steps; setVolume(v); blip("ui", v); }}
                 className="flex-1 rounded"
-                style={{ height: 40, ...(on ? skFill(UI.text) : sk(UI.line)) }} />
+                style={{ height: 40, ...(on ? skFill(UI.text, { dense: true }) : sk(UI.line)) }} />
             );
           })}
         </div>
@@ -770,7 +788,7 @@ function SettingsModal({ volume, setVolume, musicVol, setMusicVol, name, rename,
               <button key={i} aria-label={`Music ${(i + 1) * 10}`}
                 onClick={() => setMusicVol(i === 0 && mcur === 1 ? 0 : (i + 1) / steps)}
                 className="flex-1 rounded"
-                style={{ height: 40, ...(on ? skFill(UI.text) : sk(UI.line)) }} />
+                style={{ height: 40, ...(on ? skFill(UI.text, { dense: true }) : sk(UI.line)) }} />
             );
           })}
         </div>
@@ -1167,7 +1185,7 @@ function Swatch({ color, on, onClick, size = 24 }) {
   return (
     <button onClick={onClick} aria-label={color}
       style={{
-        width: size, height: size, ...skFill(color),
+        width: size, height: size, ...skFill(color, { dense: true }),
         outline: on ? `2px solid ${UI.text}` : `1px solid ${UI.line}`,
         outlineOffset: on ? 2 : 0,
       }} />
@@ -1191,7 +1209,7 @@ function Toggle({ on, onClick }) {
         width: 46, height: 26, ...sk(on ? UI.text : UI.line), padding: 4,
         display: "flex", justifyContent: on ? "flex-end" : "flex-start",
       }}>
-      <span style={{ width: 16, height: "100%", display: "block", ...skFill(on ? UI.text : UI.dim), opacity: on ? 1 : 0.6 }} />
+      <span style={{ width: 16, height: "100%", display: "block", ...skFill(on ? UI.text : UI.dim, { dense: true }), opacity: on ? 1 : 0.6 }} />
     </button>
   );
 }
@@ -1229,7 +1247,7 @@ function ThemeModal({ theme, setTheme, onClose }) {
             className="flex-1 rounded text-[11px] tracking-[0.2em]"
             style={{
               height: 34,
-              color: tab === k ? UI.ground : UI.dim,
+              color: tab === k ? UI.text : UI.dim,
               ...(tab === k ? skFill(UI.text) : sk(UI.line)),
             }}>{label}</button>
         ))}
@@ -1310,7 +1328,7 @@ function ThemeModal({ theme, setTheme, onClose }) {
                 style={{
                   width: 34, height: 30,
 
-                  color: theme.gap === g ? UI.ground : UI.dim,
+                  color: theme.gap === g ? UI.text : UI.dim,
                   ...(theme.gap === g ? skFill(UI.text) : sk(UI.line)),
                 }}>{g}</button>
             ))}
@@ -1452,7 +1470,7 @@ function AuthModal({ mode, onClose, onSwitch }) {
 
         <button onClick={submit} disabled={net.authBusy}
           className="w-full rounded text-[12px] tracking-[0.3em] disabled:opacity-40"
-          style={{ height: 48, ...skFill(UI.text), color: UI.ground }}>
+          style={{ height: 48, ...skFill(UI.text), color: UI.text }}>
           {net.authBusy ? "…" : signup ? "CREATE ACCOUNT" : "LOG IN"}
         </button>
 
@@ -1520,7 +1538,7 @@ function VerifyModal({ profile, onClose }) {
 
         <button onClick={() => submit(digits)} disabled={digits.length !== 5 || net.authBusy}
           className="w-full rounded text-[12px] tracking-[0.3em] disabled:opacity-40 mb-3"
-          style={{ height: 48, ...skFill(UI.text), color: UI.ground }}>VERIFY</button>
+          style={{ height: 48, ...skFill(UI.text), color: UI.text }}>VERIFY</button>
 
         <button onClick={() => { net.resend(); setCooldown(60); }} disabled={cooldown > 0}
           className="w-full text-[12px] tracking-[0.2em] py-2 disabled:opacity-40" style={{ color: UI.dim }}>
@@ -1747,7 +1765,7 @@ function HowToModal({ colors, loadout, onClose }) {
           <button
             onClick={() => (last ? onClose() : setPage((n) => n + 1))}
             className="rounded text-[12px] tracking-[0.25em]"
-            style={{ height: 46, flex: 1.6, ...skFill(UI.text), color: UI.ground }}
+            style={{ height: 46, flex: 1.6, ...skFill(UI.text), color: UI.text }}
           >
             {last ? "GOT IT" : "NEXT"}
           </button>
@@ -1825,7 +1843,7 @@ function Menu({ onPick, loadout, setLoadout, volume, setVolume, musicVol, setMus
             </button>
             <button onClick={() => setModal("signup")} disabled={status !== "online"}
               className="flex-1 rounded flex items-center justify-center disabled:opacity-40"
-              style={{ height: 44, ...skFill(UI.text), color: UI.ground }}>
+              style={{ height: 44, ...skFill(UI.text), color: UI.text }}>
               <span className="text-[13px] tracking-[0.24em]">NEW PLAYER</span>
             </button>
           </div>
@@ -1845,7 +1863,7 @@ function Menu({ onPick, loadout, setLoadout, volume, setVolume, musicVol, setMus
             <button onClick={() => setModal("DECK")} aria-label="Your blocks" className="flex items-center justify-center" style={{ width: 44, height: 44, ...skFill(color) }}>
               <div style={{ display: "grid", gridTemplateColumns: "8px 8px", gap: 2 }}>
                 {[0, 1, 2, 3].map((i) => (
-                  <div key={i} style={{ background: i === 1 ? "transparent" : UI.ground, borderRadius: 1, height: 8 }} />
+                  <div key={i} style={{ background: i === 1 ? "transparent" : color, opacity: 0.85, height: 8 }} />
                 ))}
               </div>
             </button>
@@ -1912,7 +1930,7 @@ function Difficulty({ onStart, onBack, colors, volume }) {
                 className="rounded flex items-center justify-center text-sm"
                 style={{
                   height: 44,
-                  color: on ? UI.ground : UI.text,
+                  color: UI.text,
                   ...(on ? skFill(colors.rival) : sk(UI.line)),
                   opacity: on ? 1 : 0.45 + (n / 10) * 0.5,
                 }}>{n}</button>
@@ -1923,7 +1941,7 @@ function Difficulty({ onStart, onBack, colors, volume }) {
           <div className="text-sm tracking-[0.22em] mb-1" style={{ color: colors.rival }}>{LEVELS[lv - 1]}</div>
           <div className="text-[13px] leading-relaxed" style={{ color: UI.dim }}>{levelBlurb(lv)}</div>
         </div>
-        <button onClick={() => onStart(lv)} className="w-full rounded text-[13px] tracking-[0.3em]" style={{ height: 50, ...skFill(UI.text), color: UI.ground }}>
+        <button onClick={() => onStart(lv)} className="w-full rounded text-[13px] tracking-[0.3em]" style={{ height: 50, ...skFill(UI.text), color: UI.text }}>
           START MATCH
         </button>
       </div>
@@ -2153,7 +2171,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
           <div className="text-[12px] tracking-[0.2em]" style={{ color: UI.dim }}>{solo ? oppName : "TAKE TURNS"}</div>
         </div>
 
-        <ScoreBar score={score} turn={turn} turns={TURNS} inkA={INK.A} inkB={INK.B} labelA="P1" labelB={solo ? "AI" : "P2"} />
+        <ScoreBar score={score} turn={turn} turns={TURNS} inkA={INK.A} inkB={INK.B} specialHex={INK.S} labelA="P1" labelB={solo ? "AI" : "P2"} />
 
         <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center">
           <div className="relative" style={{ width: cell * COLS + g * (COLS + 1), height: boardH }}>
@@ -2184,7 +2202,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
               <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-5 rounded" style={{ background: UI.ground }}>
                 <div className="text-[12px] tracking-[0.3em] mb-2" style={{ color: UI.dim }}>MOVE LOCKED IN</div>
                 <div className="text-sm mb-6 leading-relaxed">Hand the device to <span style={{ color: INK.B }}>Player 2</span>.</div>
-                <button onClick={() => setPhase("PLAY_B")} className="px-5 rounded text-[13px] tracking-widest" style={{ height: 44, ...skFill(INK.B), color: UI.ground }}>
+                <button onClick={() => setPhase("PLAY_B")} className="px-5 rounded text-[13px] tracking-widest" style={{ height: 44, ...skFill(INK.B), color: UI.text }}>
                   I'M PLAYER 2
                 </button>
               </div>
@@ -2207,7 +2225,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
                 </div>
                 <div className="flex gap-2">
                   <button onClick={onExit} className="px-4 rounded text-[12px] tracking-widest" style={{ height: 40, ...sk(UI.line), color: UI.dim }}>MENU</button>
-                  <button onClick={onRestart} className="flex items-center gap-1.5 px-4 rounded text-[12px] tracking-widest" style={{ height: 40, ...skFill(UI.text), color: UI.ground }}>
+                  <button onClick={onRestart} className="flex items-center gap-1.5 px-4 rounded text-[12px] tracking-widest" style={{ height: 40, ...skFill(UI.text), color: UI.text }}>
                     <RefreshCw size={12} /> AGAIN
                   </button>
                 </div>
@@ -2369,7 +2387,7 @@ function NetGame({ colors, volume, theme, onResult }) {
         <ScoreBar
           score={{ a: myScore, b: theirScore, s: score.s }}
           turn={m.turn} turns={m.turns}
-          inkA={colors.you} inkB={colors.rival} labelA="YOU" labelB="OPP"
+          inkA={colors.you} inkB={colors.rival} specialHex={colors.special} labelA="YOU" labelB="OPP"
         />
 
         <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center">
@@ -2535,7 +2553,7 @@ function Result({ over, colors, onQueue, onMenu }) {
 
         <div className="flex gap-2.5">
           <button onClick={onMenu} className="flex-1 rounded text-[12px] tracking-[0.25em]" style={{ height: 48, ...sk(UI.line), color: UI.dim }}>MENU</button>
-          <button onClick={onQueue} className="rounded text-[12px] tracking-[0.25em]" style={{ height: 48, flex: 1.5, ...skFill(UI.text), color: UI.ground }}>QUEUE AGAIN</button>
+          <button onClick={onQueue} className="rounded text-[12px] tracking-[0.25em]" style={{ height: 48, flex: 1.5, ...skFill(UI.text), color: UI.text }}>QUEUE AGAIN</button>
         </div>
       </div>
     </div>
@@ -2631,7 +2649,8 @@ export default function TurfBlocks() {
          by the browser, which mangles handwriting. */
       .font-mono { font-family: "Agrave Pro", "Segoe Print", "Bradley Hand", cursive; }
       .font-mono .italic, .font-mono em { font-style: normal; font-weight: 300; }
-      .tb-display { font-family: "Agrave Pro", cursive; font-weight: 500; }
+      /* The title is the one piece of text big enough to show the paper's tooth. */
+      .tb-display { font-family: "Agrave Pro", cursive; font-weight: 500; filter: url(#tb-pencil-1); }
       .lucide { stroke-width: 1.6; }
 
       /* Paper: grain and a vignette over everything, drawn once, never animated. */
@@ -2737,5 +2756,5 @@ export default function TurfBlocks() {
         onRestart={() => setSeed((s) => s + 1)} />
     );
 
-  return (<InkStyle.Provider value={theme.stroke}>{shell}{view}</InkStyle.Provider>);
+  return (<InkStyle.Provider value={theme.stroke}><PencilDefs />{shell}{view}</InkStyle.Provider>);
 }

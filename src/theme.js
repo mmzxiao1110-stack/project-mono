@@ -7,27 +7,36 @@
  * the UI does alpha maths on them (`${ink}22`), which CSS vars can't do.
  */
 
-import { frameUrl, frameImage, ruleUrl, withAlpha, GRAIN_URL } from "./sketch.js";
+import { frameUrl, frameImage, ruleUrl, shadeUrl, withAlpha, GRAIN_URL } from "./sketch.js";
 import { FX } from "./tuning.js";
 
 export const PRESETS = {
-  charcoal: {
-    label: "CHARCOAL",
-    ground: "#13110F", panel: "#1A1714", line: "#4A443C", cell: "#1E1B17",
-    text: "#E8E1D3", dim: "#8C8476",
-    you: "#E8E1D3", rival: "#C0473B", special: "#CFA54A",
+  // Default: soft graphite and coloured pencil on black paper.
+  graphite: {
+    label: "GRAPHITE",
+    ground: "#161514", panel: "#1C1B19", line: "#4B4843", cell: "#1F1E1B",
+    text: "#D6D2CA", dim: "#8B8780",
+    you: "#CFCAC0", rival: "#C65A4D", special: "#C99B48",
   },
+  // Pencil the way it usually is: grey lead on cream paper.
   sketchbook: {
     label: "SKETCHBOOK",
-    ground: "#ECE6D9", panel: "#F3EEE4", line: "#A79E8F", cell: "#E2DBCC",
-    text: "#2A2520", dim: "#7A7062",
-    you: "#2A2520", rival: "#A3322B", special: "#A57A1E",
+    ground: "#ECE7DC", panel: "#F2EEE5", line: "#B5AEA1", cell: "#E3DDD0",
+    text: "#383632", dim: "#7D776C",
+    you: "#3D3B37", rival: "#B4463D", special: "#A97A22",
   },
   sepia: {
     label: "SEPIA",
     ground: "#1A130D", panel: "#22190F", line: "#5A4632", cell: "#251B12",
-    text: "#EBD8B8", dim: "#9C8466",
-    you: "#EBD8B8", rival: "#6FA3B5", special: "#D9A441",
+    text: "#E4D2B2", dim: "#9C8466",
+    you: "#E0CBA6", rival: "#6FA3B5", special: "#D9A441",
+  },
+  // Blue lead and red pencil on drafting paper.
+  blueprint: {
+    label: "DRAFTING",
+    ground: "#E9ECEA", panel: "#F1F3F1", line: "#AEB9C0", cell: "#DFE4E3",
+    text: "#2F3A44", dim: "#6E7C88",
+    you: "#2F5D8A", rival: "#B4463D", special: "#B0872D",
   },
   slate: {
     label: "SLATE",
@@ -75,7 +84,7 @@ export const PRESETS = {
 
 /** Ink swatches offered in the customiser. */
 export const INKS = [
-  "#E8E1D3", "#2A2520", "#C0473B", "#CFA54A", "#6FA3B5",
+  "#CFCAC0", "#3D3B37", "#C65A4D", "#C99B48", "#2F5D8A", "#6FA3B5",
   "#22D3EE", "#4ADE80", "#A78BFA", "#F472B6", "#FB923C",
   "#F87171", "#60A5FA", "#FDE047", "#2DD4BF", "#E2E8F0",
   "#0F766E", "#B91C1C",
@@ -89,15 +98,15 @@ export const STROKES = {
   hatch: { label: "HATCH" },
   cross: { label: "CROSS" },
   scribble: { label: "SCRIBBLE" },
-  solid: { label: "CHARCOAL" },
+  shaded: { label: "SHADED" },
   outline: { label: "OUTLINE" },
 };
 
 export const GRID_GAPS = [0, 1, 2, 3, 5];
 
 export const defaultTheme = () => ({
-  preset: "charcoal",
-  ...stripLabel(PRESETS.charcoal),
+  preset: "graphite",
+  ...stripLabel(PRESETS.graphite),
   stroke: "hatch",
   gap: 2,
   colorblind: false,
@@ -118,8 +127,8 @@ export function applyPreset(theme, key) {
 /** Any manual colour edit drops the preset label — it isn't that preset any more. */
 export const editTheme = (theme, patch) => ({ ...theme, ...patch, preset: "custom" });
 
-// v2: the hand-drawn rework. Older saves were for a look that no longer exists.
-const KEY = "tb:theme:v2";
+// v3: pencil. Older saves were for looks that no longer exist.
+const KEY = "tb:theme:v3";
 
 export function loadTheme() {
   try {
@@ -166,13 +175,14 @@ export function themeVars(t) {
     --tb-special: ${t.special};
     ${frame("line", t.line)}
     ${frame("dim", t.dim)}
-    ${frame("text", t.text, { weight: 1.8 })}
-    ${frame("special", t.special, { weight: 1.8 })}
+    ${frame("text", t.text, { weight: 1.6 })}
+    ${frame("special", t.special, { weight: 1.6 })}
     ${frame("special-soft", withAlpha(t.special, 0.55))}
     ${frame("bad", withAlpha("#D9574B", 0.7))}
-    ${frame("fill-text", t.text, { fill: true })}
-    ${frame("fill-panel", t.panel, { fill: true })}
-    ${frame("fill-dim", t.dim, { fill: true })}
+    --tb-shade-text: ${shadeUrl(t.text)};
+    --tb-shade-dim: ${shadeUrl(t.dim, { light: true })};
+    --tb-shade-text-dense: ${shadeUrl(t.text, { dense: true })};
+    --tb-shade-dim-dense: ${shadeUrl(t.dim, { dense: true })};
     --tb-rule: ${ruleUrl(t.line)};
     --tb-grain: ${GRAIN_URL};
     --tb-grain-o: ${S.grain};

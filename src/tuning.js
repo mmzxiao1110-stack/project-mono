@@ -13,14 +13,20 @@ export const FX = {
      ---------------------------------------------------------- */
   sketch: {
     inset: 0.1,          // gap between a square's edge and its drawn outline
-    jitter: 0.045,       // how far strokes wander off true. 0 = ruler-straight
-    hatchPitch: 0.15,    // spacing between hatch lines. LOWER = denser ink
-    hatchWidth: 0.05,    // hatch stroke thickness
-    outlineWidth: 0.05,  // outline stroke thickness
-    gridOpacity: 0.55,   // the pencil grid under the board
-    grain: 0.09,         // paper grain over the whole screen. 0 = off
-    vignette: 0.5,       // darkening toward the screen edges. 0 = off
+    jitter: 0.05,        // how far strokes wander off true. 0 = ruler-straight
+    hatchPitch: 0.11,    // spacing between hatch strokes. LOWER = denser shading
+    hatchWidth: 0.06,    // hatch stroke thickness at the heavy end
+    outlineWidth: 0.038, // outline stroke thickness (each pass)
+
+    // --- the pencil itself ---
+    grainSize: 0.7,      // paper tooth. HIGHER = finer grain, LOWER = coarse blotches
+    grainBite: 2.1,      // how much the tooth breaks the line. 0 = clean ink, 4 = very broken
+
+    gridOpacity: 0.6,    // the pencil grid under the board
+    grain: 0.12,         // paper grain over the whole screen. 0 = off
+    vignette: 0.45,      // darkening toward the screen edges. 0 = off
   },
+
 
   /* ----------------------------------------------------------
      GAME BOARD
