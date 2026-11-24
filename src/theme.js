@@ -7,7 +7,28 @@
  * the UI does alpha maths on them (`${ink}22`), which CSS vars can't do.
  */
 
+import { frameUrl, frameImage, ruleUrl, withAlpha, GRAIN_URL } from "./sketch.js";
+import { FX } from "./tuning.js";
+
 export const PRESETS = {
+  charcoal: {
+    label: "CHARCOAL",
+    ground: "#13110F", panel: "#1A1714", line: "#4A443C", cell: "#1E1B17",
+    text: "#E8E1D3", dim: "#8C8476",
+    you: "#E8E1D3", rival: "#C0473B", special: "#CFA54A",
+  },
+  sketchbook: {
+    label: "SKETCHBOOK",
+    ground: "#ECE6D9", panel: "#F3EEE4", line: "#A79E8F", cell: "#E2DBCC",
+    text: "#2A2520", dim: "#7A7062",
+    you: "#2A2520", rival: "#A3322B", special: "#A57A1E",
+  },
+  sepia: {
+    label: "SEPIA",
+    ground: "#1A130D", panel: "#22190F", line: "#5A4632", cell: "#251B12",
+    text: "#EBD8B8", dim: "#9C8466",
+    you: "#EBD8B8", rival: "#6FA3B5", special: "#D9A441",
+  },
   slate: {
     label: "SLATE",
     ground: "#0E1216", panel: "#151B21", line: "#222C35", cell: "#171E25",
@@ -54,41 +75,35 @@ export const PRESETS = {
 
 /** Ink swatches offered in the customiser. */
 export const INKS = [
+  "#E8E1D3", "#2A2520", "#C0473B", "#CFA54A", "#6FA3B5",
   "#22D3EE", "#4ADE80", "#A78BFA", "#F472B6", "#FB923C",
   "#F87171", "#60A5FA", "#FDE047", "#2DD4BF", "#E2E8F0",
   "#0F766E", "#B91C1C",
 ];
 
 /**
- * How a claimed square is drawn.
- *
- * `ratio` is corner radius as a fraction of the tile, not pixels — so a block
- * looks equally rounded whether it's a 30px board square or an 8px preview in
- * the deck editor. It ships to CSS as --tb-block-r and gets multiplied by
- * whatever size the tile happens to be.
+ * How a claimed square is inked. The two players always stroke in opposite
+ * directions, so the board reads by texture as well as by colour.
  */
-export const SHAPES = {
-  square: { label: "SQUARE", ratio: 0, inset: 0, hollow: false },
-  soft: { label: "SOFT", ratio: 0.09, inset: 0, hollow: false },
-  round: { label: "ROUND", ratio: 0.2, inset: 0, hollow: false },
-  pill: { label: "PILL", ratio: 0.5, inset: 0, hollow: false },
-  inset: { label: "INSET", ratio: 0.14, inset: 2, hollow: false },
-  outline: { label: "OUTLINE", ratio: 0.09, inset: 0, hollow: true },
+export const STROKES = {
+  hatch: { label: "HATCH" },
+  cross: { label: "CROSS" },
+  scribble: { label: "SCRIBBLE" },
+  solid: { label: "CHARCOAL" },
+  outline: { label: "OUTLINE" },
 };
 
 export const GRID_GAPS = [0, 1, 2, 3, 5];
 
 export const defaultTheme = () => ({
-  preset: "slate",
-  ...stripLabel(PRESETS.slate),
-  shape: "round",
+  preset: "charcoal",
+  ...stripLabel(PRESETS.charcoal),
+  stroke: "hatch",
   gap: 2,
-  frame: false,       // false = only the slots, no board behind them
   colorblind: false,
   motion: true,
   haptics: true,
   showTimer: true,
-  boardGlow: false,
 });
 
 function stripLabel(p) {
@@ -103,7 +118,8 @@ export function applyPreset(theme, key) {
 /** Any manual colour edit drops the preset label — it isn't that preset any more. */
 export const editTheme = (theme, patch) => ({ ...theme, ...patch, preset: "custom" });
 
-const KEY = "tb:theme";
+// v2: the hand-drawn rework. Older saves were for a look that no longer exists.
+const KEY = "tb:theme:v2";
 
 export function loadTheme() {
   try {
@@ -129,19 +145,39 @@ export function isLight(hex) {
   return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.6;
 }
 
-/** The CSS the app injects. Chrome only — inks stay in JS. */
+/**
+ * The CSS the app injects. Chrome only — inks stay in JS.
+ *
+ * Sketched frames can't take var() inside their SVG, so each one is baked here
+ * from the theme's hex values and handed to CSS as a ready-made image.
+ */
 export function themeVars(t) {
-  const shape = SHAPES[t.shape] || SHAPES.round;
+  const S = FX.sketch;
+  const frame = (name, color, opts) => `--tb-sk-${name}: ${frameUrl(color, opts)};`;
   return `
-    --tb-block-r: ${shape.ratio};
     --tb-ground: ${t.ground};
     --tb-panel: ${t.panel};
     --tb-line: ${t.line};
     --tb-cell: ${t.cell};
     --tb-text: ${t.text};
     --tb-dim: ${t.dim};
-    --tb-bad: #EF6B6B;
-    --tb-good: #5CAF83;
+    --tb-bad: #D9574B;
+    --tb-good: #7FA77A;
     --tb-special: ${t.special};
+    ${frame("line", t.line)}
+    ${frame("dim", t.dim)}
+    ${frame("text", t.text, { weight: 1.8 })}
+    ${frame("special", t.special, { weight: 1.8 })}
+    ${frame("special-soft", withAlpha(t.special, 0.55))}
+    ${frame("bad", withAlpha("#D9574B", 0.7))}
+    ${frame("fill-text", t.text, { fill: true })}
+    ${frame("fill-panel", t.panel, { fill: true })}
+    ${frame("fill-dim", t.dim, { fill: true })}
+    --tb-rule: ${ruleUrl(t.line)};
+    --tb-grain: ${GRAIN_URL};
+    --tb-grain-o: ${S.grain};
+    --tb-vignette: ${S.vignette};
   `;
 }
+
+export { frameUrl, frameImage };
