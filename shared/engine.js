@@ -261,14 +261,19 @@ export function resolveTurn(board, moveA, moveB, pins = null) {
     if (m && m.pins) for (const [r, c] of m.pins) np[r][c] = true;
   }
 
+  // Both deletes are judged against the board as it stood: if both players
+  // delete the same square it goes once, and BOTH deletes count (each
+  // player's opponent still gets their pins).
   const deleted = { A: 0, B: 0 };
   const gone = [];
+  const start = board;
   [["A", moveA], ["B", moveB]].forEach(([side, m]) => {
     if (kind(m) !== "delete") return;
     for (const [r, c] of m.cells) {
-      if (np[r][c] || nb[r][c] === null || nb[r][c] === "X") continue; // pinned (even this very turn) holds; nothing to delete
+      const v = start[r][c];
+      if (np[r][c] || v === null || v === "X") continue; // pinned (even this very turn) holds; nothing to delete
       deleted[side]++;
-      gone.push([r, c, nb[r][c]]); nb[r][c] = null;
+      if (nb[r][c] !== null) { gone.push([r, c, nb[r][c]]); nb[r][c] = null; }
     }
   });
 

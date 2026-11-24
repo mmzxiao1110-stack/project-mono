@@ -49,9 +49,11 @@ export class Match {
    * @param seats [{ profile, loadout, socket }, ...] — index 0 is seat A.
    * @param onEnd called with this match once it's finished, for cleanup.
    */
-  constructor(seats, onEnd) {
+  constructor(seats, onEnd, { rated = true, room = null } = {}) {
     this.id = `m${nextId++}`;
     this.onEnd = onEnd;
+    this.rated = rated;   // private rooms are unrated: no ratings or stats change
+    this.room = room;     // the room code, for private matches
     this.over = false;
     this.startedAt = Date.now();
     this.turn = 1;
@@ -99,6 +101,7 @@ export class Match {
       name: p.name,
       rating: Math.round(p.rating.r),
       rd: Math.round(p.rating.rd),
+      guest: !!p.guest,
       loadout: this.seats[side].loadout,
     };
   }
@@ -339,6 +342,32 @@ export class Match {
     if (forfeitBy === "A") sA = 0;
     else if (forfeitBy === "B") sA = 1;
     else sA = score.a > score.b ? 1 : score.a < score.b ? 0 : 0.5;
+
+    // Private rooms: just the result. Nobody's rating or stats move.
+    if (!this.rated) {
+      for (const side of ["A", "B"]) {
+        const mine = side === "A" ? score.a : score.b;
+        const theirs = side === "A" ? score.b : score.a;
+        this.send(side, {
+          t: "matchOver",
+          matchId: this.id,
+          rated: false,
+          room: this.room,
+          won: side === "A" ? sA === 1 : sA === 0,
+          drew: sA === 0.5,
+          forfeit: forfeitBy ? forfeitBy !== side : false,
+          reason: this.endReason || "turns",
+          myScore: mine,
+          oppScore: theirs,
+          special: score.s,
+          seconds,
+          opponent: this.publicSeat(this.other(side)),
+          rating: null,
+        });
+      }
+      this.onEnd(this);
+      return;
+    }
 
     const nextRating = {
       A: glickoUpdate(this.ratingAtStart.A, [{ ...this.ratingAtStart.B, s: sA }]),
