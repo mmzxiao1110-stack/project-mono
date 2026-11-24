@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef, useSyncExternalStore, createContext, useContext } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef, useSyncExternalStore, createContext, useContext, useLayoutEffect } from "react";
 import {
   RotateCw, Check, SkipForward, RefreshCw, ChevronLeft, Settings2, X,
   VolumeX, BarChart3, Wifi, WifiOff, Clock, UserRound, LogOut,
@@ -24,6 +24,7 @@ import {
   loadTheme, saveTheme, applyPreset, editTheme, themeVars, frameUrl, frameImage,
 } from "./theme.js";
 import { inkPaths, gridPath, shadeUrl, pencilFilter, GRAINS } from "./sketch.js";
+import { ACTIONS, getKeys, subscribeKeys, setKey, resetKeys, actionFor, keyLabel, canBind } from "./keys.js";
 
 /* ============================================================
    PRESENTATION CONSTANTS
@@ -202,6 +203,9 @@ const subs = {
   online: (cb) => net.on("online", cb),
   notice: (cb) => net.on("notice", cb),
 };
+const useKeys = () => useSyncExternalStore(subscribeKeys, getKeys);
+// Key hints only make sense where there's a keyboard and a mouse, not on phones.
+const HAS_KEYBOARD = typeof window !== "undefined" && !!window.matchMedia?.("(hover: hover) and (pointer: fine)").matches;
 const useOnline = () => useSyncExternalStore(subs.online, () => net.online);
 const useNotice = () => useSyncExternalStore(subs.notice, () => net.notice);
 const useMatch = () => useSyncExternalStore(subs.match, () => net.match);
@@ -295,16 +299,24 @@ function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId
   const beginDrag = useCallback((e, cells) => {
     dragRef.current = { cells, lift: e.pointerType === "touch" ? TOUCH_LIFT : 0 };
     const onMove = (ev) => { ev.preventDefault(); updateFromPoint(ev.clientX, ev.clientY); };
+    // Pointer events can't stop the browser reading a finger drag as a scroll.
+    // If it does, a fast drag leaves a "fling" running after release, and the
+    // next tap — LOCK IN, usually — only stops the fling instead of clicking.
+    // Cancelling the touch moves themselves keeps the drag out of the
+    // browser's gesture handling entirely.
+    const noScroll = (ev) => { if (ev.cancelable) ev.preventDefault(); };
     const onUp = () => {
       // Release is the moment the piece drops onto its shadow.
       setDrag(null);
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
+      window.removeEventListener("touchmove", noScroll);
     };
     window.addEventListener("pointermove", onMove, { passive: false });
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onUp);
+    window.addEventListener("touchmove", noScroll, { passive: false });
     updateFromPoint(e.clientX, e.clientY);
   }, [updateFromPoint]);
 
@@ -321,19 +333,60 @@ function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId
     beginDrag(e, rotated);
   };
 
-  const rotate = useCallback(() => {
+  /** dir 1 = clockwise, -1 = counter-clockwise. */
+  const rotate = useCallback((dir = 1) => {
+    const step = dir === -1 ? -1 : 1;
     setSel((s) => {
       if (s.handIdx === null) return s;
       const id = hand[s.handIdx];
       if (id === undefined) return s;
-      const { h, w } = boundsOf(rotateN(BLOCKS[id].cells, s.rot + 1));
+      const { h, w } = boundsOf(rotateN(BLOCKS[id].cells, s.rot + step));
       return {
         ...s,
-        rot: s.rot + 1,
+        rot: s.rot + step,
         pos: s.pos ? [Math.max(0, Math.min(ROWS - h, s.pos[0])), Math.max(0, Math.min(COLS - w, s.pos[1]))] : null,
       };
     });
   }, [hand]);
+
+  /**
+   * Where a block lands when picked by keyboard: the legal spot nearest the
+   * previous shadow, or nearest your home row if there wasn't one. Keyboard
+   * players start on a valid square instead of hunting for one.
+   */
+  const spawnPos = useCallback((blockId, near) => {
+    const cells = BLOCKS[blockId].cells;
+    const { h, w } = boundsOf(cells);
+    const golden = goldenBlockId !== null && blockId === goldenBlockId;
+    const target = near || [owner === "A" ? ROWS - 1 : 0, Math.floor(COLS / 2) - 1];
+    let best = null, bestD = Infinity;
+    if (board) {
+      for (let r = 0; r <= ROWS - h; r++)
+        for (let c = 0; c <= COLS - w; c++) {
+          if (!isLegal(board, absCells(cells, [r, c]), owner, { golden })) continue;
+          const d = Math.hypot(r + h / 2 - target[0], c + w / 2 - target[1]);
+          if (d < bestD) { bestD = d; best = [r, c]; }
+        }
+    }
+    return best || [Math.max(0, Math.min(ROWS - h, target[0])), Math.max(0, Math.min(COLS - w, target[1]))];
+  }, [board, owner, goldenBlockId]);
+
+  /** Pick hand slot `i` from the keyboard. */
+  const select = useCallback((i) => {
+    if (!enabled || hand[i] === undefined) return;
+    // Re-picking the selected block keeps it where it is, unless it has no position yet.
+    setSel((s) => (s.handIdx === i && s.pos ? s : { handIdx: i, rot: 0, pos: spawnPos(hand[i], s.pos) }));
+  }, [enabled, hand, spawnPos]);
+
+  /** ← / →: step to the previous or next block in hand, wrapping. */
+  const cycle = useCallback((dir) => {
+    if (!enabled) return;
+    const filled = hand.map((id, i) => (id === undefined ? -1 : i)).filter((i) => i >= 0);
+    if (!filled.length) return;
+    const at = filled.indexOf(sel.handIdx);
+    const next = at < 0 ? (dir > 0 ? filled[0] : filled[filled.length - 1]) : filled[(at + dir + filled.length) % filled.length];
+    select(next);
+  }, [enabled, hand, sel.handIdx, select]);
 
   const nudge = useCallback((dr, dc) => {
     setSel((s) => {
@@ -351,7 +404,52 @@ function usePlacement({ board, owner, hand, enabled, flip = false, goldenBlockId
     });
   }, [hand]);
 
-  return { sel, setSel, reset, rotated, ghost, ghostLegal, ghostKeys, goldenSel, dragging, drag, boardRef, onBoardPointerDown, onCardPointerDown, rotate, nudge };
+  return { sel, setSel, reset, rotated, ghost, ghostLegal, ghostKeys, goldenSel, dragging, drag, boardRef, onBoardPointerDown, onCardPointerDown, rotate, nudge, select, cycle, flip };
+}
+
+/**
+ * Keyboard play, shared by the local and ranked games. Movement is relative
+ * to the screen, so on a board rotated for seat B, "up" still means up.
+ */
+function useGameKeys(pl, { enabled, onCommit, onDiscard }) {
+  // Handlers change every render; the listener reads the latest through a ref
+  // instead of re-binding on every keystroke.
+  const ref = useRef(null);
+  useLayoutEffect(() => { ref.current = { pl, enabled, onCommit, onDiscard }; });
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const t = e.target;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      const action = actionFor(e.key);
+      if (!action) return;
+      if (!ref.current) return;
+      const { pl, enabled, onCommit, onDiscard } = ref.current;
+      e.preventDefault();
+      if (!enabled || pl.dragging) return;
+
+      const slot = { slot1: 0, slot2: 1, slot3: 2, slot4: 3 }[action];
+      if (slot !== undefined) return pl.select(slot);
+      if (action === "prev") return pl.cycle(-1);
+      if (action === "next") return pl.cycle(1);
+      if (pl.sel.handIdx === null) return;
+
+      const f = pl.flip ? -1 : 1;
+      const move = { up: [-f, 0], down: [f, 0], left: [0, -f], right: [0, f] }[action];
+      if (move) {
+        // A block picked by tapping its card has no position yet; start it on a legal square.
+        if (!pl.sel.pos) return pl.select(pl.sel.handIdx);
+        return pl.nudge(move[0], move[1]);
+      }
+      if (action === "cw") return pl.rotate(1);
+      if (action === "ccw") return pl.rotate(-1);
+      if (action === "commit") return onCommit();
+      if (action === "discard") return onDiscard();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 }
 
 /* ============================================================
@@ -568,6 +666,7 @@ function BoardGrid({
 }
 
 function HandRow({ hand, selIdx, dragging, ink, onPress, disabled, goldenBlockId = null, dir = 1 }) {
+  const keys = useKeys();
   return (
     <div className="grid grid-cols-4 gap-1.5 mb-1.5">
       {Array.from({ length: HAND_SIZE }).map((_, i) => {
@@ -581,7 +680,7 @@ function HandRow({ hand, selIdx, dragging, ink, onPress, disabled, goldenBlockId
           <div
             key={i}
             onPointerDown={(e) => !disabled && onPress(e, i)}
-            className="flex flex-col items-center justify-center gap-1 select-none"
+            className="relative flex flex-col items-center justify-center gap-1 select-none"
             style={{
               height: 66,
               ...sk(charged ? GOLD : active ? ink : UI.line),
@@ -592,6 +691,11 @@ function HandRow({ hand, selIdx, dragging, ink, onPress, disabled, goldenBlockId
               opacity: disabled ? 0.35 : active && dragging ? 0.25 : 1,
             }}
           >
+            {HAS_KEYBOARD && (
+              <span className="absolute text-[10px]" style={{ top: 5, left: 8, color: UI.dim, opacity: 0.8 }}>
+                {keyLabel(keys[`slot${i + 1}`])}
+              </span>
+            )}
             <BlockGlyph blockId={blockId} box={32} color={charged ? GOLD : ink} glow={charged} dir={dir} />
             <div className="text-[11px] tracking-wider" style={{ color: charged ? GOLD : UI.dim }}>
               {charged ? "GOLDEN" : `${BLOCKS[blockId].name} · ${BLOCKS[blockId].cells.length}`}
@@ -688,7 +792,12 @@ function AmbientField({ loadout, colors, theme, paused }) {
   // A game drawing itself in the margins: faint, slow, no light effects.
   return (
     <div aria-hidden="true" className="absolute inset-0 overflow-hidden pointer-events-none">
-      <div style={{ position: "absolute", inset: "-2%", opacity: 0.22, transform: "rotate(-2deg)" }}>
+      {/* The board lies tilted in perspective, like a sheet left on a desk. */}
+      <div style={{
+        position: "absolute", left: "50%", top: "50%",
+        width: "min(118vw, 60vh)", aspectRatio: "1 / 2", opacity: 0.3,
+        transform: "translate(-50%, -50%) perspective(1100px) rotateX(38deg) rotateZ(-24deg) scale(1.25)",
+      }}>
         <div style={{ display: "grid", gridTemplateColumns: `repeat(${COLS}, 1fr)`, gridTemplateRows: `repeat(${ROWS}, 1fr)`, gap: 6, width: "100%", height: "100%" }}>
           {field.board.map((row, r) =>
             row.map((v, c) => {
@@ -802,6 +911,8 @@ function SettingsModal({ volume, setVolume, musicVol, setMusicVol, name, rename,
             );
           })}
         </div>
+
+        {HAS_KEYBOARD && <ControlsSection />}
 
         <div className="text-[11px] tracking-[0.24em] mb-1" style={{ color: UI.dim }}>ACCESSIBILITY</div>
         <Row label="COLOURBLIND MARKS">
@@ -1200,6 +1311,58 @@ function Swatch({ color, on, onClick, size = 24 }) {
         outline: on ? `2px solid ${UI.text}` : `1px solid ${UI.line}`,
         outlineOffset: on ? 2 : 0,
       }} />
+  );
+}
+
+/** Settings → Controls: click a key, press the new one. Escape cancels. */
+function ControlsSection() {
+  const keys = useKeys();
+  const [listening, setListening] = useState(null);
+  const [warn, setWarn] = useState(null);
+
+  useEffect(() => {
+    if (!listening) return;
+    const onKey = (e) => {
+      // Capture phase + stop: this press is a binding, not a game or form action.
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "Escape") { setListening(null); return; }
+      if (!canBind(e.key)) { setWarn(`${keyLabel(e.key)} can't be bound.`); return; }
+      setKey(listening, e.key);
+      setWarn(null);
+      setListening(null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [listening]);
+
+  return (
+    <div className="mb-7">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[13px] tracking-[0.2em]">CONTROLS</span>
+        <button onClick={() => { resetKeys(); setListening(null); setWarn(null); }}
+          className="text-[11px] tracking-[0.2em] py-1" style={{ color: UI.dim }}>RESET</button>
+      </div>
+      <div className="text-[11px] leading-relaxed mb-2" style={{ color: UI.dim }}>
+        Click a key, then press the new one. Esc cancels. ← → always cycle through your blocks.
+      </div>
+      <div className="grid grid-cols-2 gap-x-4">
+        {ACTIONS.map((a) => {
+          const on = listening === a.id;
+          return (
+            <div key={a.id} className="flex items-center justify-between py-1.5" style={RULE_BELOW}>
+              <span className="text-[12px]" style={{ color: UI.dim }}>{a.label}</span>
+              <button onClick={() => { setWarn(null); setListening(on ? null : a.id); }}
+                className={`text-[12px] ${on ? "tb-pulse" : ""}`}
+                style={{ minWidth: 52, height: 30, padding: "0 8px", ...(on ? skFill(UI.text) : sk(UI.line)), color: UI.text }}>
+                {on ? "…" : keyLabel(keys[a.id])}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      {warn && <div className="text-[12px] mt-2" style={{ color: UI.bad }}>{warn}</div>}
+    </div>
   );
 }
 
@@ -2275,6 +2438,8 @@ function LocalGame({ mode, aiLevel, loadout, colors, volume, theme, onExit, onRe
     pl.reset();
   };
 
+  useGameKeys(pl, { enabled: inPlay, onCommit: commit, onDiscard: discard });
+
   useEffect(() => {
     if (phase !== "AI_THINK") return;
     const t = setTimeout(() => {
@@ -2507,6 +2672,8 @@ function NetGame({ colors, volume, theme, onResult, onAbort }) {
     net.discard({ turn: m.turn, handIdx: pl.sel.handIdx });
     pl.reset();
   };
+
+  useGameKeys(pl, { enabled: canAct, onCommit: commit, onDiscard: discard });
 
   useEffect(() => {
     if (m?.reveal?.contested?.length) blip("special", volume);
@@ -2863,6 +3030,15 @@ export default function TurfBlocks() {
         .tb-contest,.tb-drop,.tb-boot,.tb-pulse,.tb-fade,.tb-pop,.tb-boil { animation: none }
       }
       button { cursor: pointer; }
+      /* A phone held sideways leaves the 8×16 board too short to aim at. */
+      .tb-rotate { display: none; }
+      @media (orientation: landscape) and (max-height: 500px) and (pointer: coarse) {
+        .tb-rotate {
+          display: flex; position: fixed; inset: 0; z-index: 70;
+          align-items: center; justify-content: center; flex-direction: column; gap: 10px;
+          background: var(--tb-ground); color: var(--tb-text); text-align: center; padding: 24px;
+        }
+      }
       button { -webkit-tap-highlight-color: transparent; }
       button:focus-visible { outline: 2px solid var(--tb-text); outline-offset: 2px; }
       input:focus { border-color: var(--tb-dim) !important; }
@@ -2921,5 +3097,14 @@ export default function TurfBlocks() {
         onRestart={() => setSeed((s) => s + 1)} />
     );
 
-  return (<InkStyle.Provider value={theme.stroke}><PencilDefs />{shell}{view}</InkStyle.Provider>);
+  return (
+    <InkStyle.Provider value={theme.stroke}>
+      <PencilDefs />{shell}{view}
+      <div className="tb-rotate font-mono" aria-live="polite">
+        <RotateCw size={26} style={{ color: UI.dim }} />
+        <div className="text-[16px]">Turn your phone upright</div>
+        <div className="text-[12px]" style={{ color: UI.dim }}>The board needs the height. Your game is still here.</div>
+      </div>
+    </InkStyle.Provider>
+  );
 }
