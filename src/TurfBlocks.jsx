@@ -1620,7 +1620,7 @@ function InlineFrame({ title, aside, onClose, maxW = 430, pinned, children, labe
   const { leaving } = useContext(InlineCtx);
   return (
     <div className="absolute inset-x-0 bottom-0 z-40 flex justify-center" role="dialog" aria-label={label || title}
-      style={{ top: "var(--menu-top, 0px)", padding: "0 14px", paddingBottom: "max(14px, env(safe-area-inset-bottom, 0px))" }}
+      style={{ top: "var(--menu-top, 0px)", padding: "0 clamp(16px, 5vw, 96px)", paddingBottom: "max(14px, env(safe-area-inset-bottom, 0px))" }}
       onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <PxContext.Provider value={BASE_P}>
         <div className="tb-scale tb-calm relative w-full flex flex-col" style={{ maxWidth: maxW, maxHeight: "100%", color: UI.text }}>
@@ -1883,8 +1883,8 @@ function SettingsModal({ name, rename, status, theme, setTheme, onClose }) {
         <Toggle on={theme.showTimer} onClick={() => set({ showTimer: !theme.showTimer })} />
       </Row>
       <div className={`tb-t mt-2 ${wide ? "mb-4" : "mb-7"}`} style={{ color: UI.dim }}>
-        Marks put ○ on your squares
-        and ✕ on your opponent's, so the board reads without colour.
+        Marks put O on your squares
+        and X on your opponent's, so the board reads without colour.
       </div>
     </>
   );
@@ -2160,7 +2160,7 @@ function StatsModal({ profile, status, onClose, onLogout }) {
   );
 
   return (
-    <Popup title="ACCOUNT" onClose={onClose} wideW={1120}>
+    <Popup title="ACCOUNT" onClose={onClose} wideW={980}>
       {wide ? (
         // A computer: who you are, how you play, who you played; side by side.
         <div className="tb-cols grid gap-6 pt-3 items-start" style={{ gridTemplateColumns: "1fr 1.4fr 1fr" }}>
@@ -2482,7 +2482,7 @@ function ThemeModal({ theme, setTheme, onClose }) {
           </Row>
           <Row label="COLOURBLIND MARKS"><Toggle on={theme.colorblind} onClick={() => set({ colorblind: !theme.colorblind })} /></Row>
           <div className="tb-t pt-3" style={{ color: UI.dim }}>
-            Marks put ○ on your squares, ✕ on your opponent's and ◆ on contested ones,
+            Marks put O on your squares, X on your opponent's and a diamond on contested ones,
             so the board reads without relying on colour.
           </div>
         </div>
