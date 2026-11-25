@@ -551,6 +551,14 @@ export const sfx = {
     });
   },
 
+  /** A chat line from your opponent: two soft bubbles. */
+  chat() {
+    play("chat", 250, (c, t) => {
+      bubble(c, t, 900, 0.06, 0.3);
+      bubble(c, t + 0.07, 1250, 0.05, 0.3);
+    });
+  },
+
   /** An opponent found: three pings rising out of the deep, then a chord. */
   matchFound() {
     play("matchFound", 500, (c, t) => {

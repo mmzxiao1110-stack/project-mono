@@ -72,6 +72,9 @@ export function staticHandler(req, res) {
     return res.end();
   }
   try { urlPath = decodeURIComponent(urlPath); } catch { /* keep raw */ }
+  // terminal.tesella.io (or any terminal.* host) opens T-Terminal at its root.
+  const host = String(req.headers.host || "").toLowerCase();
+  if (urlPath === "/" && host.startsWith("terminal.")) urlPath = "/terminal.html";
   if (urlPath.endsWith("/")) urlPath += "index.html";
 
   const target = path.normalize(path.join(DIST, urlPath));

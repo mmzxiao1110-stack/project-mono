@@ -43,6 +43,27 @@ const BLOCKLIST = (() => {
   }
 })();
 
+/**
+ * Chat text, made safe to relay: plain characters only (no control or
+ * zero-width characters), whitespace collapsed, at most CHAT_MAX long, and
+ * any blocklisted word masked with asterisks. Returns "" if nothing's left.
+ */
+export const CHAT_MAX = 120;
+// Control and zero-width / direction-flipping characters.
+// eslint-disable-next-line no-control-regex -- stripping control characters is the point
+const INVISIBLE = /[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/g;
+export function cleanChat(text) {
+  let t = String(text ?? "").normalize("NFKC")
+    .replace(INVISIBLE, "")
+    .replace(/\s+/g, " ").trim().slice(0, CHAT_MAX);
+  for (const w of BLOCKLIST) {
+    if (!w) continue;
+    const re = new RegExp(w.split("").map((ch) => ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[^a-z0-9]*"), "gi");
+    t = t.replace(re, (m) => "*".repeat(m.length));
+  }
+  return t;
+}
+
 /** Returns an error message if `name` can't be used as a username or display name. */
 export function nameProblem(name, { display = false } = {}) {
   const n = str(name, 64);

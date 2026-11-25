@@ -51,6 +51,23 @@ Things that matter:
 - **Every deploy restarts the server.** Ranked matches in progress at that moment are abandoned without affecting ratings, and players are told so. Deploy at quiet times.
 - **Fill in the privacy and terms pages** (`public/privacy.html`, `public/terms.html`): replace every `[BRACKETED]` item before launch.
 
+## Site, T-Terminal and the API
+
+One build serves the game and the site around it, all in the same pixel theme:
+
+| Path | What |
+| --- | --- |
+| `/` | the game |
+| `/terminal` | **T-Terminal** (blue): player search, rankings, player records. Also served at the root of any `terminal.*` host, e.g. `terminal.tesella.io`. |
+| `/about`, `/news`, `/download`, `/help` | site pages, each in its own colour (`src/site/`) |
+| `/privacy`, `/terms` | legal pages |
+
+T-Terminal and the in-game profile popups read a public, read-only JSON API (`server/api.js`): `/api/overview`, `/api/leaderboard?page=N`, `/api/search?q=…`, `/api/player/NAME`. It never returns emails or account details, and lists only players with a verified email.
+
+The version shown beside every title comes from `package.json`. Bump it there with each release, and add a note to `NEWS` in `src/site/pages.jsx`.
+
+Chat in online matches is relayed by the server and never stored. It is cleaned, limited to 120 characters and rate-limited; words in `server/blocklist.txt` are masked.
+
 ## Server settings
 
 | Variable | Purpose |

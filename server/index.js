@@ -18,6 +18,7 @@ import { createServer as createHttp } from "node:http";
 import { createServer as createHttps } from "node:https";
 import { WebSocketServer } from "ws";
 import { staticHandler, hasBuild } from "./static.js";
+import { apiHandler, setOnlineCounter } from "./api.js";
 import { sanitizeLoadout } from "../shared/engine.js";
 import {
   getProfile, saveProfile, flush, countAccounts, dataFile,
@@ -30,11 +31,11 @@ import {
   newCode, hashCode, codeMatches, newSalt,
   verifyGoogle, googleEnabled,
   CODE_TTL_MS, CODE_RESEND_MS, CODE_MAX_TRIES, CODES_PER_DAY,
-  throttled, noteFailure, clearFailures,
+  throttled, noteFailure, clearFailures, cleanChat,
 } from "./auth.js";
 import { sendCode, mailConfigured } from "./mail.js";
 import {
-  signupLimit, mailLimit, authLimit, messageLimit,
+  signupLimit, mailLimit, authLimit, messageLimit, chatLimit,
   MAX_MESSAGE_BYTES, MAX_SOCKETS_PER_IP, clientIp,
 } from "./limits.js";
 import { Queue } from "./queue.js";
@@ -304,9 +305,11 @@ function checkCode(acct, record, code) {
 const { TLS_CERT, TLS_KEY, HOST } = process.env;
 const useTls = !!(TLS_CERT && TLS_KEY);
 
+// The read-only API (T-Terminal, profile popups) first, then the built site.
+const handleHttp = (req, res) => { if (!apiHandler(req, res)) staticHandler(req, res); };
 const httpServer = useTls
-  ? createHttps({ cert: fs.readFileSync(TLS_CERT), key: fs.readFileSync(TLS_KEY) }, staticHandler)
-  : createHttp(staticHandler);
+  ? createHttps({ cert: fs.readFileSync(TLS_CERT), key: fs.readFileSync(TLS_KEY) }, handleHttp)
+  : createHttp(handleHttp);
 
 // maxPayload: the ws default is 100 MB per message. Nothing legitimate is
 // bigger than a couple of KB.
@@ -614,6 +617,17 @@ async function handle(ws, msg) {
       break;
     }
 
+    case "chat": {
+      // In-match chat: relayed to both players, never stored.
+      const active = inMatch.get(ws.userId);
+      if (!active || active.match.over) return;
+      const text = cleanChat(msg.text);
+      if (!text) return;
+      if (!chatLimit.take(ws.userId)) return send(ws, { t: "chatError", msg: "Slow down a little." });
+      active.match.chat(active.side, text);
+      break;
+    }
+
     case "forfeit": {
       // Giving up counts as a loss, exactly like leaving and not coming back.
       const active = inMatch.get(ws.userId);
@@ -706,6 +720,7 @@ const roomSweeper = setInterval(() => {
   }
 }, 60_000);
 
+setOnlineCounter(() => wss.clients.size);
 const onlineTicker = setInterval(() => {
   const n = wss.clients.size;
   if (n === lastOnline) return;
