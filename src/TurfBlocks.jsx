@@ -3,7 +3,7 @@ import {
   RotateCw, Check, SkipForward, ChevronLeft, Settings2, X,
   Wifi, WifiOff, UserRound, LogOut,
   Palette, Lock, MailCheck, ShieldAlert, BookOpen, ChevronRight, Eraser, Pin, Film, Play, Pause, First,
-  Chat, Terminal as TerminalIcon, Info, News as NewsIcon, Download as DownloadIcon, Help as HelpIcon,
+  Chat, Terminal as TerminalIcon,
   Trophy, Stack, People, Robot,
 } from "./pixelIcons.jsx";
 import { PlayerRecord } from "./site/terminal.jsx";
@@ -3261,7 +3261,7 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
         {/* One big way in: PLAY opens the modes. */}
         <button onClick={() => setModal("PLAY")}
           className="w-full rounded flex flex-col items-center justify-center gap-1.5 mb-2"
-          style={{ height: 76, paddingTop: 3, ...skFill("var(--tb-you)") }}>
+          style={{ height: 86, paddingTop: 4, ...skFill("var(--tb-you)") }}>
           <PixelWord text="PLAY" from="var(--tb-text)" to="var(--tb-you)" />
           {status === "online" && online !== null ? (
             <span className="tb-t" style={{ color: UI.dim }}>{online === 1 ? "just you online right now" : `${online} people online`}</span>
@@ -3305,10 +3305,9 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
 
         {/* The site: each page in its own colour. */}
         <div className="grid grid-cols-4 gap-2 mt-2">
-          {[["about", "ABOUT", Info], ["news", "NEWS", NewsIcon], ["download", "APP", DownloadIcon], ["help", "HELP", HelpIcon]].map(([k, label, Icon]) => (
-            <a key={k} href={`/${k}`} className="rounded flex flex-col items-center justify-center gap-1 no-underline"
-              style={{ height: 44, ...glass(`color-mix(in srgb, ${ACCENTS[k]} 55%, transparent)`), color: ACCENTS[k] }}>
-              <Icon />
+          {[["about", "ABOUT"], ["news", "NEWS"], ["download", "APP"], ["help", "HELP"]].map(([k, label]) => (
+            <a key={k} href={`/${k}`} className="rounded flex items-center justify-center no-underline"
+              style={{ height: 38, ...glass(`color-mix(in srgb, ${ACCENTS[k]} 55%, transparent)`), color: ACCENTS[k] }}>
               <span className="tb-t">{label}</span>
             </a>
           ))}
@@ -3744,13 +3743,16 @@ function MarathonGame({ theme, onExit }) {
     const move = (e) => {
       const rect = boardRef.current?.getBoundingClientRect() || null;
       // It's a drag only while the button (or finger) is still down after picking up.
-      setPtr((p) => ({ ...p, x: e.clientX, y: e.clientY, rect, touch: e.pointerType !== "mouse", drag: p?.drag || (!!p?.down && Math.hypot(e.clientX - p.sx, e.clientY - p.sy) > 6), sx: p?.sx ?? e.clientX, sy: p?.sy ?? e.clientY }));
+      // Only the finger holding the piece moves it: a second finger (turning) doesn't.
+      setPtr((p) => (p && p.id != null && p.down !== false && p.touch && e.pointerId !== p.id ? p : { ...p, x: e.clientX, y: e.clientY, rect, touch: e.pointerType !== "mouse", drag: p?.drag || (!!p?.down && Math.hypot(e.clientX - p.sx, e.clientY - p.sy) > 6), sx: p?.sx ?? e.clientX, sy: p?.sy ?? e.clientY }));
     };
     window.addEventListener("pointermove", move);
     return () => window.removeEventListener("pointermove", move);
   }, [sel]);
-  const release = () => {
+  const release = (e) => {
     if (sel === null || !ptr) return;
+    // Lifting the turning finger mustn't drop the piece the other one holds.
+    if (ptr.touch && ptr.id != null && e && e.pointerId !== ptr.id) return;
     if (ptr.drag && ghost) { if (!place(sel, ghost.r, ghost.c)) { if (ptr.touch) { setSel(null); setPtr(null); } else setPtr((p) => ({ ...p, down: false, drag: false })); } }
     else if (ptr.drag) { if (ptr.touch) { setSel(null); setPtr(null); } else setPtr((p) => ({ ...p, down: false, drag: false })); }
     else setPtr((p) => (p ? { ...p, down: false } : p));
@@ -3761,7 +3763,10 @@ function MarathonGame({ theme, onExit }) {
     return () => window.removeEventListener("pointerup", release);
   });
 
-  // Turning: R, the turn button, or tapping the piece you already picked.
+  // Turning: R / Q / E, the turn button, or (with a mouse) clicking the piece
+  // you already picked. On a touch screen only the turn button turns: a
+  // second tap on a piece is usually the start of a drag, not a request.
+  const lastSlot = useRef(0); // the piece the turn button turns when none is held
   const turn = (slot, dir = 1) => {
     if (slot === null || slot === undefined) return;
     setRots((rs) => rs.map((x, i) => (i === slot ? (x + dir + 4) % 4 : x)));
@@ -3773,7 +3778,7 @@ function MarathonGame({ theme, onExit }) {
     const onKey = (e) => {
       const t = e.target;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
-      if (["1", "2", "3"].includes(e.key) && st && !over) { const i = Number(e.key) - 1; setSel(i); sfx.pick(); setPtr((p) => p || null); }
+      if (["1", "2", "3"].includes(e.key) && st && !over) { const i = Number(e.key) - 1; lastSlot.current = i; setSel(i); sfx.pick(); setPtr((p) => p || null); }
       const a = actionFor(e.key);
       const dir = a === "ccw" ? -1 : a === "cw" || e.key === "r" || e.key === "R" ? 1 : 0;
       if (dir && st && !over) { e.preventDefault(); turn(sel ?? 0, dir); if (sel === null) setSel(0); }
@@ -3787,10 +3792,11 @@ function MarathonGame({ theme, onExit }) {
   const pickUp = (slot, e) => {
     if (!st || over) return;
     e.preventDefault();
-    if (sel === slot && !(ptr && ptr.drag)) { turn(slot); setPtr({ x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, rect: boardRef.current?.getBoundingClientRect() || null, touch: e.pointerType !== "mouse", drag: false }); return; }
+    lastSlot.current = slot;
+    if (sel === slot && e.pointerType === "mouse" && !(ptr && ptr.drag)) { turn(slot); setPtr({ id: e.pointerId, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, rect: boardRef.current?.getBoundingClientRect() || null, touch: false, drag: false }); return; }
     setSel(slot);
     sfx.pick();
-    setPtr({ x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, rect: boardRef.current?.getBoundingClientRect() || null, touch: e.pointerType !== "mouse", drag: false, down: true });
+    setPtr({ id: e.pointerId, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, rect: boardRef.current?.getBoundingClientRect() || null, touch: e.pointerType !== "mouse", drag: false, down: true });
   };
   // Leave: signed in, the game is kept on the server to come back to;
   // otherwise it's gone, so ask first.
@@ -3824,8 +3830,8 @@ function MarathonGame({ theme, onExit }) {
   // Only squares actually on the board: one off the edge mustn't reappear on the far side.
   const ghostKeys = new Set((ghost?.cells || []).filter(([r, c]) => r >= 0 && c >= 0 && r < M_SIZE && c < M_SIZE).map(([r, c]) => r * M_SIZE + c));
   const hint = st && !over ? (sel === null
-    ? (compact ? "tap a piece to turn it, drag it onto the board" : "pick a piece: click or drag, or press 1–3")
-    : (compact ? "tap it again to turn it" : "Q / E or click it again to turn it · Space drops it")) : "";
+    ? (compact ? "drag a piece onto the board · TURN turns it, even mid-drag" : "pick a piece: click or drag, or press 1–3")
+    : (compact ? "TURN turns it, even while you drag" : "Q / E or click it again to turn it · Space drops it")) : "";
   const slotPx = slotArt * P;
   const tray = st && (
     <div className={`flex ${compact ? "flex-row" : "flex-col"} items-center`} style={{ gap: 3 * P, ...(compact ? { width: boardW, justifyContent: "center" } : null) }}>
@@ -3836,7 +3842,7 @@ function MarathonGame({ theme, onExit }) {
           return (
             <button key={i} aria-label={`Piece ${i + 1}${can ? "" : " (doesn't fit)"}`} onPointerDown={(e) => pickUp(i, e)}
               className="relative flex items-center justify-center" style={{ width: slotPx, height: slotPx, touchAction: "none", ...glass(held ? UI.text : UI.line), opacity: over ? 0.5 : 1 }}>
-              {!(held && ptr?.drag) && <MPiece id={id} rot={rots[i]} cell={trayCellArt * P} gap={P} ink={M_INK[id]} faint={!can} />}
+              <span style={{ opacity: held && ptr?.drag ? 0.45 : 1, display: "flex" }}><MPiece id={id} rot={rots[i]} cell={trayCellArt * P} gap={P} ink={M_INK[id]} faint={!can} /></span>
               {!compact && <span className="absolute tb-t" style={{ left: 2 * P, top: P, color: UI.dim, opacity: 0.6 }}>{i + 1}</span>}
             </button>
           );
@@ -3844,17 +3850,34 @@ function MarathonGame({ theme, onExit }) {
       </div>
     </div>
   );
+  // The turn button acts the moment it's pressed (not on release), so a
+  // second finger can turn the piece the first one is dragging.
+  const onTurnPress = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    if (over || !st) return;
+    const slot = sel ?? lastSlot.current;
+    if (sel === null) setSel(slot);
+    turn(slot);
+  };
+  // Phone: a big TURN pad across the bottom, for the thumb that isn't dragging.
+  const turnPad = st && compact && (
+    <button aria-label="Turn piece" onPointerDown={onTurnPress} disabled={over}
+      className="tb-t flex items-center justify-center gap-2 select-none disabled:opacity-35"
+      style={{ flex: 1, height: railD * P * 1.5, touchAction: "none", ...skFill(UI.text), color: UI.text }}>
+      <RotateCw /> TURN
+    </button>
+  );
   // Turn, leave and forfeit: a row at the bottom right, under the board.
   const controls = st && (
     <div className="flex items-center shrink-0" style={{ gap: 3 * P }}>
-      <Bubble w={railD} h={railD} label="Turn piece (R)" onClick={() => { if (sel === null) setSel(0); turn(sel ?? 0); }} disabled={over}><RotateCw /></Bubble>
+      {!compact && <Bubble w={railD} h={railD} label="Turn piece (R)" onPointerDown={onTurnPress} disabled={over}><RotateCw /></Bubble>}
       <Bubble w={railD} h={railD} label={game?.official ? "Leave (saved)" : "Leave"} onClick={leave} disabled={over}><LogOut /></Bubble>
       <ForfeitButton compact={compact} disabled={over} onConfirm={() => { sfx.forfeit(); finish("forfeit", st); }} />
     </div>
   );
 
   return (
-    <div className="tb-screen tb-safe w-full flex flex-col font-mono select-none" style={{ color: UI.text }}>
+    <div className="tb-screen tb-safe w-full flex flex-col font-mono select-none" style={{ color: UI.text, ...(compact ? { touchAction: "none" } : null) }}>
       <div className="tb-col relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
         <div ref={stageRef} className="flex-1 min-h-0 flex flex-col items-center">
           <div style={{ flex: 1, minHeight: 4 * P }} />
@@ -3909,10 +3932,17 @@ function MarathonGame({ theme, onExit }) {
                 {tray}
               </div>
               <BoardLine width={compact ? boardW : boardW + (slotArt + 4) * P} />
-              <div className="flex items-start justify-between" style={{ width: compact ? boardW : boardW + (slotArt + 4) * P, gap: 4 * P }}>
-                <div className="tb-t min-w-0" style={{ color: UI.dim, opacity: 0.6 }}>{over ? "NO ROOM LEFT" : hint}</div>
-                {controls}
-              </div>
+              {compact ? (
+                <div className="flex flex-col" style={{ width: boardW, gap: 3 * P }}>
+                  <div className="tb-t min-w-0" style={{ color: UI.dim, opacity: 0.6 }}>{over ? "NO ROOM LEFT" : hint}</div>
+                  <div className="flex items-center" style={{ gap: 3 * P }}>{turnPad}{controls}</div>
+                </div>
+              ) : (
+                <div className="flex items-start justify-between" style={{ width: boardW + (slotArt + 4) * P, gap: 4 * P }}>
+                  <div className="tb-t min-w-0" style={{ color: UI.dim, opacity: 0.6 }}>{over ? "NO ROOM LEFT" : hint}</div>
+                  {controls}
+                </div>
+              )}
             </div>
           )}
           <div style={{ flex: 2, minHeight: 4 * P }} />
