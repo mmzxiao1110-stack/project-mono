@@ -19,7 +19,6 @@ import {
   isCheckTurn, shrinkBoard,
 } from "../shared/engine.js";
 import { aiPickAction } from "../shared/ai.js";
-import { setBoard as setBoardSize } from "../shared/engine.js";
 import {
   SIZE as M_SIZE, PIECES as M_PIECES, newMarathon, newMarathonSeed, placePiece as mPlace, fits as mFits,
   fitsAnywhere as mFitsAnywhere, levelOf as mLevelOf, encodeMoves,
@@ -48,7 +47,6 @@ import { ACTIONS, getKeys, subscribeKeys, setKey, resetKeys, actionFor, keyLabel
    ============================================================ */
 const PHONE_W = 440;
 const REVEAL_MS = 1100;
-const HALF_REVEAL_MS = 650; // turn based: each move's own short reveal
 const AI_THINK_MS = 550;
 const TOUCH_LIFT = 2;
 // Google sign-in is built and verified server-side, but parked until launch.
@@ -3062,7 +3060,7 @@ function PlayModal({ status, authed, verified, placed, rank, tr, onPick, onClose
     { key: "UNRANKED", title: "UNRANKED", needs: true, sub: "anyone, guests too · no rating" },
     { key: "PRIVATE", title: "PRIVATE", needs: true, sub: "a room code for a friend" },
     { key: "MARATHON", title: "MARATHON", tint: GOLD, sub: best ? `solo high score · best ${best.toLocaleString("en-US")}` : "solo high score · how far can you go?" },
-    { key: "TURNBASED", title: "TURN BASED", sub: "7×7 · two players, one device · take turns" },
+    { key: "TURNBASED", title: "TURN BASED", sub: "two players, one device · pass it between turns" },
   ];
   return (
     <Popup title="PLAY" onClose={onClose} maxW={400}>
@@ -3500,28 +3498,6 @@ function MarathonGame({ theme, onExit }) {
 }
 
 /* ============================================================
-   TURN BASED — two players, one device, a 7×7 board, alternating moves.
-   Simulated (900 games, every strength): every game ends, the longest at
-   turn 40; overtime makes turn 50 the hard limit (7×7 → 5 → 3 → 1).
-   ============================================================ */
-const TURN_BASED = { size: 7, turns: 20, overtimeEvery: 10 };
-function useVariantBoard(v) {
-  // Before the first render (the game's first board is built then), and again
-  // on every mount; put back when leaving.
-  useState(() => { setBoardSize(v); });
-  useLayoutEffect(() => {
-    setBoardSize(v);
-    const oldOt = RULES.overtimeEvery;
-    RULES.overtimeEvery = v.overtimeEvery;
-    return () => { setBoardSize({}); RULES.overtimeEvery = oldOt; }; // back to the standard board
-  }, [v]);
-}
-function TurnBased(props) {
-  useVariantBoard(TURN_BASED);
-  return <LocalGame mode="TURNBASED" {...props} />;
-}
-
-/* ============================================================
    GAME SOUNDS — what the hands do (turn, slide, pick up, switch modes)
    and what the board does when a turn resolves.
    ============================================================ */
@@ -3573,9 +3549,8 @@ const lockKind = (raw) => (!raw || raw.type === "pass" ? "pass" : raw.type === "
 function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart }) {
   useEffect(() => { sky.slow = true; return () => { sky.slow = false; }; }, []);
   const solo = mode === "SOLO";
-  // TURN BASED: players alternate, each move landing before the other chooses
-  // (who goes first swaps every turn). Played on the board TurnBased sets up.
-  const alt = mode === "TURNBASED";
+  // TURN BASED is pass-and-play under the normal rules: both choose, then reveal.
+  const turnBased = mode === "TURNBASED";
   const INK = useMemo(() => ({ A: colors.you, B: colors.rival, S: colors.special }), [colors]);
 
   const [board, setBoard] = useState(initialBoard);
@@ -3631,7 +3606,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
 
   // The match is over: keep it as a replay.
   useEffect(() => {
-    if (phase !== "DONE" || !logRef.current.length || alt) return;
+    if (phase !== "DONE" || !logRef.current.length) return;
     const sc = scoreOf(board);
     replays.save({
       v: REPLAY_VERSION, date: Date.now(), mode: solo ? "solo" : "hotseat", you: solo ? "A" : null,
@@ -3680,18 +3655,6 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
     setPhase("REVEAL");
   };
 
-  // Turn based: the first move of a turn lands on its own; then it's the other player's go.
-  const half = (mA, mB, next) => {
-    const res = resolveTurn(board, mA, mB, pins);
-    setDecided(false);
-    setOtFlash(null);
-    setBoard(res.board);
-    setPins(res.pins);
-    setMeters((m) => nextMeters(m, mA, mB, res.deleted));
-    setReveal({ contested: res.contested, cleared: res.cleared, lines: res.lines, a: mA, b: mB, next });
-    setPhase("REVEAL");
-  };
-
   const handOver = (move) => { setPendingA(move); setPhase(solo ? "AI_THINK" : "HANDOFF"); };
 
   // Pins riding along with this move (when pinning is free).
@@ -3702,15 +3665,6 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
     const { move, error } = normalizeAction(board, pins, meters[player], player, piece, raw);
     if (error) { sfx.illegal(); return; }
     sfx.lockIn(lockKind(raw));
-    if (alt) {
-      advance(player);
-      const first = turn % 2 === 1 ? "A" : "B";
-      const mA = player === "A" ? move : null, mB = player === "B" ? move : null;
-      if (player === first) half(mA, mB, player === "A" ? "PLAY_B" : "PLAY_A");
-      else finish(mA, mB);
-      pl.reset(); act.reset(); setPinOn(false);
-      return;
-    }
     if (player === "A") rawARef.current = { raw, piece };
     else logRef.current.push(encodeTurn(encodeAction(rawARef.current?.raw, rawARef.current?.piece), encodeAction(raw, piece)));
     advance(player);
@@ -3783,11 +3737,6 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
 
   useEffect(() => {
     if (phase !== "REVEAL") return;
-    if (reveal?.next) {
-      // Half a turn (turn based): a short beat, then the other player.
-      const t = setTimeout(() => { setReveal(null); setPhase(reveal.next); }, HALF_REVEAL_MS);
-      return () => clearTimeout(t);
-    }
     const t = setTimeout(() => {
       setReveal(null);
       setPendingA(null);
@@ -3800,10 +3749,10 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
         setLockedOut(locked);
         setPhase("DONE");
       }
-      else { setTurn((t2) => t2 + 1); setPhase(alt && turn % 2 === 1 ? "PLAY_B" : "PLAY_A"); }
-    }, alt ? HALF_REVEAL_MS : REVEAL_MS);
+      else { setTurn((t2) => t2 + 1); setPhase("PLAY_A"); }
+    }, REVEAL_MS);
     return () => clearTimeout(t);
-  }, [phase, board, pins, turn, loadout, decided, reveal, alt]);
+  }, [phase, board, pins, turn, loadout, decided]);
 
   if (showEnd) {
     // A forfeit decides it regardless of the score.
@@ -3847,7 +3796,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
       <div className="tb-col relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
         <div ref={stageRef} className="flex-1 min-h-0 flex flex-col items-center">
           <div style={{ flex: 1, minHeight: 4 * P }} />
-          <GameTitle mode={alt ? "TURN BASED" : solo ? "AI" : "LAN"} />
+          <GameTitle mode={turnBased ? "TURN BASED" : solo ? "AI" : "LAN"} />
           <div style={{ flex: 2, minHeight: 4 * P }} />
           <div className="flex flex-col items-center" style={{ gap: 3 * P }}>
             {/* One forecast: both players are dealt the same pieces. It follows whoever is to move. */}
@@ -5070,11 +5019,6 @@ export default function TurfBlocks() {
     );
   else if (screen === "MARATHON")
     view = <MarathonGame key={seed} theme={theme} onExit={(again) => (again ? setSeed((s) => s + 1) : setScreen("MENU"))} />;
-  else if (screen === "TURNBASED")
-    view = (
-      <TurnBased key={seed} aiLevel={aiLevel} loadout={loadout} colors={colors} theme={theme}
-        onExit={() => setScreen("MENU")} onRestart={() => setSeed((s) => s + 1)} />
-    );
   else
     view = (
       <LocalGame key={seed} mode={screen} aiLevel={aiLevel} loadout={loadout}
