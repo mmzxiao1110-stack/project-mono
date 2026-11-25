@@ -1273,7 +1273,7 @@ function ModeButtons({ d, mode, onMode, meter, enabled }) {
  */
 function ActionRail({
   height, ink, onRotate, onCommit, onDiscard, canRotate, canCommit, canDiscard,
-  turn, waiting = false, timer = null, forfeit, mode = "place", onMode, meter = 0, canMode = false, ot = false,
+  turn, waiting = false, timer = null, forfeit, mode = "place", onMode, meter = 0, canMode = false, ot = false, bag = null,
 }) {
   const P = usePx();
   const d = useBubble();
@@ -1291,7 +1291,7 @@ function ActionRail({
       </div>
       <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
         {ot && <span className="tb-t tb-b" style={{ color: GOLD }}>OT</span>}
-        <NumBox value={turn} color={ot ? GOLD : LAVENDER} label={ot ? `Overtime, turn ${turn}` : `Turn ${turn}`} />
+        <NumBox value={bag ? `${turn}/${bag}` : turn} color={ot ? GOLD : LAVENDER} label={ot ? `Overtime, turn ${turn}` : `Turn ${turn}`} />
         {timer}
       </div>
       <ForfeitButton {...forfeit} />
@@ -1315,45 +1315,66 @@ function PiecePane({ id, size, ink, dir, dim = 1, lit = false, ...rest }) {
 }
 
 /**
- * One player's side of the top row: name and score, then the piece they play
- * now and the next four. Mirrored for the player on the right.
+ * One side's tag beside the forecast: name, rank and rating (when they have
+ * one), and pins. Phones get just the rating and pins.
  */
-function ForecastSide({ name, ink, now, queue, dir = 1, right = false, card = null, busy = false, compact = false, pane, meter }) {
+function PlayerTag({ name, ink, meter, rating, right = false, compact = false, busy = false }) {
   const P = usePx();
-  const nowW = pane, soonW = pane;
-  const soon = (queue || []).slice(0, QUEUE_SHOWN);
-  const panes = [
-    card || <PiecePane key="now" id={now} size={nowW} ink={ink} dir={dir} />,
-    ...soon.map((id, i) => <PiecePane key={i} id={id} size={soonW} ink={ink} dir={dir} dim={1 - i * 0.12} />),
-  ];
+  const tr = rating ? Math.round(rating) : null;
+  const rank = tr !== null ? RANKS[rankIndexFor(tr)] : null;
   return (
-    <div className={`flex flex-col min-w-0 ${right ? "items-end" : "items-start"} ${busy ? "tb-pulse" : ""}`} style={{ gap: P }}>
-      {!compact && (
-        <div className={`flex items-center max-w-full ${right ? "flex-row-reverse" : ""}`} style={{ gap: 3 * P }}>
-          <div className="tb-t truncate" style={{ color: ink }}>{name}</div>
-          {RULES.actions && meter !== undefined && (
-            <span className="flex items-center tb-t tabular-nums" title={`${meter} pins`} style={{ gap: P, color: meter ? GOLD : UI.dim }}>
-              <Pin />{meter}
-            </span>
-          )}
+    <div className={`flex flex-col min-w-0 flex-1 ${right ? "items-end text-right" : "items-start"} ${busy ? "tb-pulse" : ""}`} style={{ gap: P }}>
+      {!compact && <div className="tb-t truncate max-w-full" style={{ color: ink }}>{name}</div>}
+      {rank && (
+        <div className={`flex items-center tb-t tabular-nums ${right ? "flex-row-reverse" : ""}`} style={{ gap: 2 * P, color: UI.dim }}>
+          <span className="tb-b" style={{ color: rank.color }}>{rank.name}</span>{compact ? null : <span>{tr}</span>}
         </div>
       )}
-      <div className={`flex items-end ${right ? "flex-row-reverse" : ""}`} style={{ gap: P }}>{panes}</div>
+      {RULES.actions && (
+        <span className={`flex items-center tb-t tabular-nums ${right ? "flex-row-reverse" : ""}`} title={`${meter} pins`} style={{ gap: P, color: meter ? GOLD : UI.dim }}>
+          <Pin />{meter}
+        </span>
+      )}
     </div>
   );
 }
 
-/** The top row, sitting on the board: your forecast left, theirs right, the bag number between. */
-function ForecastRow({ left, right, bag, width, compact = false, pane }) {
+/** The top row: one shared forecast in the middle, each player's tag beside it. */
+function TopBar({ width, pane, compact = false, ink, dir = 1, now, queue, card = null, left, right }) {
+  const P = usePx();
+  const soon = (queue || []).slice(0, QUEUE_SHOWN);
+  return (
+    <div className="shrink-0 flex items-center justify-between" style={{ width, gap: 3 * P }}>
+      <PlayerTag {...left} compact={compact} />
+      <div aria-label="Next pieces" className="flex items-end shrink-0" style={{ gap: P }}>
+        {card || <PiecePane id={now} size={pane} ink={ink} dir={dir} />}
+        {soon.map((id, i) => <PiecePane key={i} id={id} size={pane} ink={ink} dir={dir} dim={1 - i * 0.12} />)}
+      </div>
+      <PlayerTag {...right} compact={compact} right />
+    </div>
+  );
+}
+
+/** The title block: the logo a third of the way down, the mode under it, faint. */
+function GameTitle({ mode }) {
   const P = usePx();
   return (
-    <div className="shrink-0 flex items-end justify-between" style={{ width, gap: 2 * P }}>
-      <ForecastSide {...left} compact={compact} pane={pane} />
-      <div className="flex items-center justify-center" style={{ height: pane * P }}>
-        <NumBox value={bag} color={UI.dim} label={`Bag ${bag}`} />
-      </div>
-      <ForecastSide {...right} compact={compact} right pane={pane} />
+    <div className="flex flex-col items-center shrink-0" style={{ gap: 2 * P }}>
+      <PixelLogo small />
+      <div className="tb-t" style={{ color: UI.text, opacity: 0.35, letterSpacing: 2 * P }}>({mode})</div>
     </div>
+  );
+}
+
+/** A thin line of light under the board. */
+function BoardLine({ width }) {
+  const P = usePx();
+  return (
+    <div aria-hidden="true" style={{
+      width, height: P, flexShrink: 0,
+      background: "linear-gradient(90deg, transparent, rgba(255,255,255,.75) 18%, rgba(255,255,255,.9) 50%, rgba(255,255,255,.75) 82%, transparent)",
+      boxShadow: `0 0 ${3 * P}px rgba(255,255,255,.35)`,
+    }} />
   );
 }
 
@@ -1473,15 +1494,15 @@ function HMeter({ a, b, inkA, inkB, width }) {
 /** Phone: the buttons in one row under the board — turn, lock in (wide), pass · turn number · forfeit. */
 function ActionRow({
   width, ink, onRotate, onCommit, onDiscard, canRotate, canCommit, canDiscard, turn, waiting = false, timer = null, forfeit,
-  mode = "place", onMode, meter = 0, canMode = false, ot = false,
+  mode = "place", onMode, meter = 0, canMode = false, ot = false, bag = null,
 }) {
   const P = usePx();
   const d = useBubble(true);
   return (
     <div className="flex items-center justify-between shrink-0" style={{ width }}>
-      <div className="flex items-center" style={{ gap: 2 * P }}>
+      <div className="flex items-center" style={{ gap: P }}>
         <Bubble w={d} h={d} label="Turn" onClick={onRotate} disabled={!canRotate}><RotateCw /></Bubble>
-        <Bubble w={d + 8} h={d} label="LOCK IN" tint={canCommit || waiting ? ink : UI.dim} fill={canCommit ? 40 : 10}
+        <Bubble w={d + 4} h={d} label="LOCK IN" tint={canCommit || waiting ? ink : UI.dim} fill={canCommit ? 40 : 10}
           onClick={onCommit} disabled={!canCommit} className={waiting ? "tb-pulse" : undefined}
           style={{ color: canCommit ? UI.text : undefined }}>
           <Check />
@@ -1489,14 +1510,19 @@ function ActionRow({
         <ModeButtons d={d} mode={mode} onMode={onMode} meter={meter} enabled={canMode} />
         <Bubble w={d} h={d} label="Pass" tint={UI.dim} onClick={onDiscard} disabled={!canDiscard}><SkipForward /></Bubble>
       </div>
-      <div className="flex items-center" style={{ gap: 2 * P }}>
+      <div className="flex items-center" style={{ gap: P }}>
         {timer}
-        <NumBox value={turn} color={ot ? GOLD : LAVENDER} label={ot ? `Overtime, turn ${turn}` : `Turn ${turn}`} />
+        <NumBox value={bag ? `${turn}/${bag}` : turn} color={ot ? GOLD : LAVENDER} label={ot ? `Overtime, turn ${turn}` : `Turn ${turn}`} />
         <ForfeitButton {...forfeit} compact />
       </div>
     </div>
   );
 }
+
+/** The title block above the game (logo, mode label, spacing), in pixels. */
+const TITLE_H = 40;
+/** Room for each player tag beside the forecast, in pixels. */
+const TAG_W = 36, TAG_W_COMPACT = 20;
 
 /** Space around the board, by layout. Everything is in whole UI pixels. */
 function gameLayout(stage, theme, P, d, compact) {
@@ -1506,9 +1532,9 @@ function gameLayout(stage, theme, P, d, compact) {
   const wRes = compact ? 0 : METER_COL_W * P + railW + 2 * side;
   // The forecast row counts as one more row of squares (its panes are a
   // square plus two pixels), plus its name line on desktop.
-  const fixedH = compact
-    ? 2 * P + 3 * P + (NUMBOX_H + 3) * P + (d + 3) * P + 4 * P
-    : 2 * P + (NUMBOX_H + 1) * P + 3 * P;
+  // Reserved: the title block above, the gaps, the glow line under the board,
+  // and on phones the meter and the button row.
+  const fixedH = TITLE_H * P + 2 * P + 3 * P + 5 * P + (compact ? (NUMBOX_H + 3) * P + (d + 3) * P + 4 * P : 0);
   // Capped, so a big window gets a comfortable board rather than a huge one.
   const cellArt = Math.max(5, Math.min(15, Math.floor(Math.min(
     (stage.w - wRes - g * (COLS - 1)) / COLS,
@@ -1520,7 +1546,9 @@ function gameLayout(stage, theme, P, d, compact) {
   const groupW = compact ? boardW : boardW + METER_COL_W * P + railW + 2 * side;
   // Forecast panes: one size for all ten, a touch bigger than a board square,
   // as long as both rows and the bag number fit across the board's width.
-  const fit = Math.floor((groupW / P - 12 - 4 - 8) / 10);
+  // One forecast (both players share the sequence) between the two player tags.
+  const tagW = compact ? TAG_W_COMPACT : TAG_W;
+  const fit = Math.floor((groupW / P - 2 * tagW - 4 * 2 - 4) / (QUEUE_SHOWN + 1));
   const pane = Math.max(6, Math.min(cellArt + 2, fit));
   return { g, side, railW, cell, boardW, boardH, groupW, pane };
 }
@@ -3281,8 +3309,9 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
 
   const traceKeys = new Set((stamp.on ? stamp.foot || [] : act.trace).map(([r, c]) => key(r, c)));
   const stagedKeys = new Set(stamp.stagedHits.map(([r, c]) => key(r, c)));
+  const cur = inPlay ? player : "A"; // whose pieces the forecast shows
   const rail = {
-    ink: INK[player], turn, ot,
+    ink: INK[player], turn, ot, bag: currentPass(decks[cur]),
     onRotate: () => pl.rotate(1), onCommit: commit, onDiscard: discard,
     canRotate: inPlay && act.mode === "place" && pl.sel.handIdx !== null, canCommit, canDiscard: inPlay,
     mode: act.mode, onMode, meter: meters[player], canMode: inPlay,
@@ -3295,27 +3324,21 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ color: UI.text }}>
       <div className="tb-col relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
-        <div className="shrink-0" style={{ paddingTop: "calc(var(--p) * 10)", paddingBottom: "calc(var(--p) * 2)" }}><PixelLogo small /></div>
-        <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center py-2">
+        <div ref={stageRef} className="flex-1 min-h-0 flex flex-col items-center">
+          <div style={{ flex: 1, minHeight: 4 * P }} />
+          <GameTitle mode={solo ? "AI" : "LAN"} />
+          <div style={{ flex: 2, minHeight: 4 * P }} />
           <div className="flex flex-col items-center" style={{ gap: 3 * P }}>
-            <ForecastRow
+            {/* One forecast: both players are dealt the same pieces. It follows whoever is to move. */}
+            <TopBar
               width={groupW} compact={compact} pane={pane}
-              bag={currentPass(decks[inPlay ? player : "A"])}
-              left={{
-                name: "P1", ink: INK.A, now: currentPiece(decks.A), queue: upcoming(decks.A), meter: meters.A,
-                card: inPlay && player === "A" ? (
-                  <NowCard key="now" pane={pane} id={piece} ink={INK.A} selected={pl.sel.handIdx === 0}
-                    dragging={pl.dragging || pl.holding} onPress={pl.onCardPointerDown} />
-                ) : null,
-              }}
-              right={{
-                name: oppName, ink: INK.B, dir: -1, now: currentPiece(decks.B), queue: upcoming(decks.B), meter: meters.B,
-                busy: phase === "AI_THINK",
-                card: inPlay && player === "B" ? (
-                  <NowCard key="now" pane={pane} id={piece} ink={INK.B} dir={-1} selected={pl.sel.handIdx === 0}
-                    dragging={pl.dragging || pl.holding} onPress={pl.onCardPointerDown} />
-                ) : null,
-              }}
+              ink={INK[cur]} dir={cur === "B" ? -1 : 1} now={currentPiece(decks[cur])} queue={upcoming(decks[cur])}
+              card={inPlay ? (
+                <NowCard pane={pane} id={piece} ink={INK[player]} dir={player === "B" ? -1 : 1} selected={pl.sel.handIdx === 0}
+                  dragging={pl.dragging || pl.holding} onPress={pl.onCardPointerDown} />
+              ) : null}
+              left={{ name: solo ? "YOU" : "P1", ink: INK.A, meter: meters.A, rating: solo ? net.profile?.rating?.r : null }}
+              right={{ name: oppName, ink: INK.B, meter: meters.B, busy: phase === "AI_THINK" }}
             />
             {compact && <HMeter a={score.a} b={score.b} inkA={INK.A} inkB={INK.B} width={boardW} />}
 
@@ -3348,7 +3371,8 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
                 )}
 
                 {phase === "HANDOFF" && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-5" style={{ background: UI.ground }}>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-5"
+                    style={{ background: "repeating-conic-gradient(rgba(10,9,16,.62) 0 25%, rgba(10,9,16,.42) 0 50%) 0 0 / calc(var(--p) * 2) calc(var(--p) * 2)", zIndex: 4 }}>
                     <div className="tb-t mb-2" style={{ color: UI.dim }}>MOVE LOCKED IN</div>
                     <div className="tb-t mb-6">Hand the device to <span style={{ color: INK.B }}>Player 2</span>.</div>
                     <button onClick={() => setPhase("PLAY_B")} className="px-5 tb-t" style={{ height: 44, ...skFill(INK.B), color: UI.text }}>
@@ -3360,8 +3384,10 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
               {!compact && <ActionRail height={boardH} {...rail} />}
             </div>
 
+            <BoardLine width={boardW} />
             {compact && <ActionRow width={boardW} {...rail} />}
           </div>
+          <div style={{ flex: 3, minHeight: 4 * P }} />
         </div>
       </div>
     </div>
@@ -3500,7 +3526,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   const theirScore = you === "A" ? score.b : score.a;
 
   const rail = {
-    ink: colors.you, turn: m.turn, ot: !!m.ot,
+    ink: colors.you, turn: m.turn, ot: !!m.ot, bag: m.pass || 1,
     onRotate: () => pl.rotate(1), onCommit: commit, onDiscard: discard,
     canRotate: canAct && act.mode === "place" && pl.sel.handIdx !== null, canCommit, canDiscard: canAct,
     mode: act.mode, onMode, meter, canMode: canAct,
@@ -3516,24 +3542,24 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ color: UI.text }}>
       <div className="tb-col relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
-        <div className="shrink-0" style={{ paddingTop: "calc(var(--p) * 10)", paddingBottom: "calc(var(--p) * 2)" }}><PixelLogo small /></div>
-        <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center py-2">
+        <div ref={stageRef} className="flex-1 min-h-0 flex flex-col items-center">
+          <div style={{ flex: 1, minHeight: 4 * P }} />
+          <GameTitle mode={m.room ? "PRIVATE" : m.rated === false ? "UNRANKED" : "COMPETITIVE"} />
+          <div style={{ flex: 2, minHeight: 4 * P }} />
           <div className="flex flex-col items-center" style={{ gap: 3 * P }}>
-            <ForecastRow
+            {/* One forecast: both players are dealt the same pieces. */}
+            <TopBar
               width={groupW} compact={compact} pane={pane}
-              bag={m.pass || 1}
-              left={{
-                name: "YOU", ink: colors.you, dir: you === "B" ? -1 : 1, queue: m.queue || [], meter,
-                card: (
-                  <NowCard key="now" pane={pane} id={piece} ink={colors.you} dir={you === "B" ? -1 : 1}
-                    selected={pl.sel.handIdx === 0} dragging={pl.dragging || pl.holding}
-                    onPress={pl.onCardPointerDown} disabled={!canAct} spent={!!pending} />
-                ),
-              }}
+              ink={colors.you} dir={you === "B" ? -1 : 1} queue={m.queue || []}
+              card={(
+                <NowCard pane={pane} id={piece} ink={colors.you} dir={you === "B" ? -1 : 1}
+                  selected={pl.sel.handIdx === 0} dragging={pl.dragging || pl.holding}
+                  onPress={pl.onCardPointerDown} disabled={!canAct} spent={!!pending} />
+              )}
+              left={{ name: "YOU", ink: colors.you, meter, rating: net.profile?.guest ? null : net.profile?.rating?.r }}
               right={{
-                name: err || `${m.opponent.name}${m.oppReady ? " ✓" : ""}`,
-                ink: err ? UI.bad : colors.rival, dir: them === "B" ? -1 : 1,
-                now: m.opp?.piece, queue: m.opp?.queue || [], busy: !!m.oppReady, meter: m.meters?.opp ?? 0,
+                name: err || `${m.opponent.name}${m.oppReady ? " ✓" : ""}`, ink: err ? UI.bad : colors.rival,
+                meter: m.meters?.opp ?? 0, rating: m.opponent.guest ? null : m.opponent.rating, busy: !!m.oppReady,
               }}
             />
             {compact && <HMeter a={myScore} b={theirScore} inkA={colors.you} inkB={colors.rival} width={boardW} />}
@@ -3580,8 +3606,10 @@ function NetGame({ colors, theme, onResult, onAbort }) {
               {!compact && <ActionRail height={boardH} {...rail} />}
             </div>
 
+            <BoardLine width={boardW} />
             {compact && <ActionRow width={boardW} {...rail} />}
           </div>
+          <div style={{ flex: 3, minHeight: 4 * P }} />
         </div>
       </div>
     </div>
@@ -3965,7 +3993,6 @@ function ReplayViewer({ id, theme, colors, onBack }) {
   const playing = playRequested && t < last;
   const [copied, setCopied] = useState(false);
   const [stageRef, stage] = useSize();
-  const listRef = useRef(null);
   const compact = useCompact();
   const d = useBubble(compact);
 
@@ -3988,8 +4015,6 @@ function ReplayViewer({ id, theme, colors, onBack }) {
     window.addEventListener("keydown", on);
     return () => window.removeEventListener("keydown", on);
   }, [last, t, playing]);
-  // Keep the current turn in view in the move list.
-  useEffect(() => { listRef.current?.querySelector(`[data-turn="${t}"]`)?.scrollIntoView({ block: "nearest" }); }, [t]);
 
   if (!rec || !frames.length) {
     return (
@@ -4017,26 +4042,35 @@ function ReplayViewer({ id, theme, colors, onBack }) {
     }
   }
 
-  // Layout: the board with the meter, sized like a game; the move list beside or below.
-  const listW = compact ? 0 : 150;
-  const area = { w: Math.max(0, stage.w - (compact ? 0 : listW * (P / BASE_P) + 16)), h: stage.h };
+  // Layout: the board, centred, sized like a game.
+  const area = { w: stage.w, h: stage.h + TITLE_H * P }; // no title block here
   const { cell, boardW, boardH, groupW, pane } = gameLayout(area, theme, P, d, true);
   const step = (dx) => { setPlaying(false); setT((x) => Math.max(0, Math.min(last, x + dx))); };
   const copy = async () => { try { await navigator.clipboard.writeText(exportReplay(rec)); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* no clipboard */ } };
   const res = rec.result || {};
-  const moveList = (
-    <div ref={listRef} className="overflow-y-auto tb-t" style={{ ...glass(UI.line), padding: 3 * P, maxHeight: compact ? 110 : boardH, minWidth: compact ? 0 : listW }}>
-      {frames.slice(1).map((fr, i) => (
-        <button key={i} data-turn={i + 1} onClick={() => { setPlaying(false); setT(i + 1); }}
-          className="w-full text-left flex gap-2 tabular-nums" style={{ color: i + 1 === t ? UI.text : UI.dim, background: i + 1 === t ? "color-mix(in srgb, var(--tb-text) 12%, transparent)" : "transparent" }}>
-          <span style={{ width: 22, opacity: 0.6 }}>{i + 1}.</span>
-          <span style={{ color: i + 1 === t ? INK.A : undefined }}>{fr.played.text[0]}</span>
-          <span style={{ opacity: 0.5 }}>/</span>
-          <span style={{ color: i + 1 === t ? INK.B : undefined }}>{fr.played.text[1]}</span>
-        </button>
-      ))}
-    </div>
-  );
+  // The whole game in MINO notation, as a text file.
+  const download = () => {
+    const lines = [
+      "MINO replay",
+      `${nameA} (bottom) vs ${nameB} (top) · ${MODE_LABEL[rec.mode] || rec.mode} · ${new Date(rec.date).toISOString()}`,
+      `Result: ${res.a}–${res.b}${res.reason ? ` (${res.reason})` : ""}`,
+      `Seeds: ${rec.seeds.A} ${rec.seeds.B}`,
+      "",
+      "Squares a–j left to right, 1–10 from the bottom player's side. Piece.square.rotation (0 R 2 L);",
+      "x = delete stamp, + = pin stamp, - = pass. Each line: bottom player / top player.",
+      "",
+      ...rec.turns.map((tt, i) => `${i + 1}. ${tt}`),
+      "",
+      `Replay code: ${exportReplay(rec)}`,
+    ];
+    const blob = new Blob([lines.join("\n") + "\n"], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const el = document.createElement("a");
+    el.href = url;
+    el.download = `mino-${new Date(rec.date).toISOString().slice(0, 16).replace(/[:T]/g, "-")}.txt`;
+    document.body.appendChild(el); el.click(); el.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
 
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ color: UI.text }}>
@@ -4047,14 +4081,17 @@ function ReplayViewer({ id, theme, colors, onBack }) {
             <span style={{ color: INK.A }}>{nameA}</span> {res.a}–{res.b} <span style={{ color: INK.B }}>{nameB}</span>
             {!compact && <span> · {MODE_LABEL[rec.mode] || ""} · {fmtDate(rec.date)}</span>}
           </div>
-          <button onClick={copy} className="tb-t px-2 py-2" style={{ color: UI.dim }} title="Copy a code a friend can paste into REPLAYS">{copied ? "COPIED" : "COPY CODE"}</button>
+          <div className="flex items-center gap-1 shrink-0">
+            <button onClick={download} className="tb-t px-2 py-2" style={{ color: UI.dim }} title="Download the moves as a text file">DOWNLOAD MOVES</button>
+            <button onClick={copy} className="tb-t px-2 py-2" style={{ color: UI.dim }} title="Copy a code a friend can paste into REPLAYS">{copied ? "COPIED" : "COPY CODE"}</button>
+          </div>
         </div>
 
-        <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center gap-4">
+        <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center">
           <div className="flex flex-col items-center" style={{ gap: 3 * P }}>
-            <ForecastRow width={groupW} compact pane={pane} bag={f.bag}
-              left={{ name: nameA, ink: INK.A, now: f.pieces.A, queue: f.queues.A }}
-              right={{ name: nameB, ink: INK.B, dir: -1, now: f.pieces.B, queue: f.queues.B }} />
+            <TopBar width={groupW} compact pane={pane} ink={INK.A} now={f.pieces.A} queue={f.queues.A}
+              left={{ name: nameA, ink: INK.A, meter: f.meters.A }}
+              right={{ name: nameB, ink: INK.B, meter: f.meters.B }} />
             <HMeter a={f.score.a} b={f.score.b} inkA={INK.A} inkB={INK.B} width={boardW} />
             <div className="relative" style={{ width: boardW, height: boardH }}>
               <BoardGrid board={f.board} pins={f.pins} cell={cell} ink={INK} theme={theme}
@@ -4063,8 +4100,8 @@ function ReplayViewer({ id, theme, colors, onBack }) {
                 boardRef={{ current: null }} onPointerDown={() => {}}
                 marks={marks} otFlash={f.played?.flash || null} />
             </div>
+            <BoardLine width={boardW} />
           </div>
-          {!compact && moveList}
         </div>
 
         {/* Transport: start · back · play · forward · end, speed, and a scrubber. */}
@@ -4086,9 +4123,8 @@ function ReplayViewer({ id, theme, colors, onBack }) {
             </div>
           </div>
           <div className="tb-t tabular-nums" style={{ color: UI.dim }}>
-            {t === 0 ? "start" : `turn ${t} / ${last}`}{f.ot ? " · overtime" : ""}{t === last && res.reason === "forfeit" ? " · forfeit" : ""}
+            {t === 0 ? "start" : `turn ${t} / ${last}`}{t > 0 ? ` · ${f.played.text[0]} / ${f.played.text[1]}` : ""}{f.ot ? " · overtime" : ""}{t === last && res.reason === "forfeit" ? " · forfeit" : ""}
           </div>
-          {compact && <div className="w-full" style={{ maxWidth: groupW }}>{moveList}</div>}
           {error && <div className="tb-t" style={{ color: UI.bad }}>{error}</div>}
         </div>
       </div>

@@ -451,6 +451,7 @@ class Net {
           loadout: m.loadout,
           turns: m.turns,
           rated: m.rated !== false,
+          room: m.room || null,
           turn: 0,
           board: null,
           hand: [],
