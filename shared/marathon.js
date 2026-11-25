@@ -15,8 +15,8 @@
  *                 a clear end it
  *
  * Every 10 lines the level goes up. Levels 1–2 are calm; from level 3 each
- * new bag carries more of the big, awkward pieces, so the board always
- * closes in eventually — and clears pay more the deeper you are.
+ * new bag carries 6 more of the big, awkward pieces (with no limit), so the
+ * board always closes in eventually — and clears pay more the deeper you are.
  *
  * Deterministic from the seed: the server replays a game's moves to check
  * its score (see server/index.js), and the client plays the same code.
@@ -34,13 +34,22 @@ export const HAND = 3;
  *                      bag is big pieces, and the board always closes in.
  * Then levels 1–2 made calm (no extra pieces): a one-move bot's median run
  * 75 → 82 moves, the two-move bot's longest 492 — still always ends.
+ * Then pieces could be turned, which made strong play far longer (same ramp:
+ * median 2480, longest 7745). Capped ramps couldn't hold it, so the ramp no
+ * longer stops (24 games each, two-move bot, rotation on):
+ *   +3/level, max 60   median 1803, longest 6987
+ *   +4/level, max 80   median 1132, longest 4375
+ *   +4/level, no max   median  683, longest 2081
+ *   +6/level, no max   median  590, longest 1281   ← this (a one-move bot:
+ *                      median 190, longest 379). Boards repeat on ~1% of moves:
+ *                      no loops, every run its own.
  */
 export const TUNING = {
   levelLines: 10,     // lines per level
   calmLevels: 2,      // the first levels have no extra big pieces: room to learn
   levelBonus: 0.1,    // clears score this much more per level above 1 (level 5: ×1.4)
-  extraPerLevel: 2,   // extra hard pieces per bag, per level after the first
-  maxExtra: 40,       // most extra hard pieces per bag
+  extraPerLevel: 6,   // extra hard pieces per bag, per level after the calm ones
+  maxExtra: Infinity, // no cap: deeper always means harder
   grace: 3,           // moves without a clear before the streak ends
 };
 export const LEVEL_LINES = TUNING.levelLines;
