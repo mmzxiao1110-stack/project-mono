@@ -81,6 +81,7 @@ const publicProfile = (p, acct) => ({
   rating: p.rating,
   stats: p.stats,
   marathon: p.marathon || null,
+  marathonOpen: p.marathonOpen ? { score: p.marathonOpen.score, lines: p.marathonOpen.lines, at: p.marathonOpen.at } : null,
   createdAt: p.createdAt,
   email: acct ? acct.email : null,
   emailVerified: acct ? !!acct.emailVerified : false,
@@ -636,9 +637,39 @@ async function handle(ws, msg) {
     case "marathonStart": {
       // A Marathon game: the seed comes from us, so a score can't be fished for
       // by retrying seeds, and the finished game is replayed to check it.
+      // A game you left (signed in) is picked up where you left it.
+      const acct = getAccount(ws.userId);
+      const p = acct && acct.emailVerified ? getProfile(ws.userId) : null;
+      const open = p?.marathonOpen;
+      if (open) {
+        const moves = decodeMoves(open.moves);
+        const res = moves ? replayMarathon(open.seed, moves) : { error: "unreadable" };
+        if (!res.error && !res.over) {
+          marathons.set(ws.userId, { seed: open.seed, at: Date.now() });
+          send(ws, { t: "marathonSeed", seed: open.seed, moves: open.moves, resume: true });
+          break;
+        }
+        delete p.marathonOpen; saveProfile(p);
+      }
       const seed = newMarathonSeed();
       marathons.set(ws.userId, { seed, at: Date.now() });
       send(ws, { t: "marathonSeed", seed });
+      break;
+    }
+
+    case "marathonSave": {
+      // Leaving mid-game (signed in): keep it to come back to.
+      const open = marathons.get(ws.userId);
+      if (!open || open.seed !== msg.seed) return;
+      const acct = getAccount(ws.userId);
+      if (!acct || !acct.emailVerified) return;
+      const moves = decodeMoves(msg.moves);
+      const res = moves ? replayMarathon(open.seed, moves) : { error: "unreadable" };
+      if (res.error || res.over) return send(ws, { t: "marathonSaved", ok: false });
+      const p = getProfile(ws.userId);
+      p.marathonOpen = { seed: open.seed, moves: msg.moves, score: res.score, lines: res.lines, at: Date.now() };
+      saveProfile(p);
+      send(ws, { t: "marathonSaved", ok: true, score: res.score, lines: res.lines });
       break;
     }
 
@@ -653,6 +684,7 @@ async function handle(ws, msg) {
       const acct = getAccount(ws.userId);
       if (!acct || !acct.emailVerified) return send(ws, { t: "marathonResult", score: res.score, saved: false });
       const p = getProfile(ws.userId);
+      if (p.marathonOpen && p.marathonOpen.seed === open.seed) delete p.marathonOpen; // finished: nothing to come back to
       const m = p.marathon || { best: 0, lines: 0, games: 0, at: null };
       const newBest = res.score > m.best;
       p.marathon = { ...m, games: m.games + 1, ...(newBest ? { best: res.score, lines: res.lines, at: Date.now() } : null) };

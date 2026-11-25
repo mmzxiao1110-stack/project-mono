@@ -309,6 +309,8 @@ class Net {
   marathonStart() { this.send({ t: "marathonStart" }); }
   /** Marathon: the finished game, as its moves (see shared/marathon.js encodeMoves). */
   marathonEnd(seed, moves) { this.send({ t: "marathonEnd", seed, moves }); }
+  /** Marathon: keep this unfinished game on the server to come back to (signed in only). */
+  marathonSave(seed, moves) { this.send({ t: "marathonSave", seed, moves }); }
 
   forfeit() {
     this.send({ t: "forfeit" });
@@ -448,10 +450,18 @@ class Net {
         break;
 
       case "marathonSeed":
-        this.emit("marathonSeed", m.seed);
+        this.emit("marathonSeed", m);
+        break;
+
+      case "marathonSaved":
+        if (m.ok && this.profile) {
+          this.profile = { ...this.profile, marathonOpen: { score: m.score, lines: m.lines, at: Date.now() } };
+          this.emit("profile", this.profile);
+        }
         break;
 
       case "marathonResult":
+        if (this.profile) this.profile = { ...this.profile, marathonOpen: null };
         if (m.saved && this.profile) {
           this.profile = { ...this.profile, marathon: { ...(this.profile.marathon || {}), best: Math.max(m.best || 0, this.profile.marathon?.best || 0) } };
           this.emit("profile", this.profile);
