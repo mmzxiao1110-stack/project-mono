@@ -25,6 +25,7 @@ export class Game extends DurableObject {
     this.dirty = new Set();
     this.flushTimer = null;
     setBlocklist(blocklist);
+    core.setHostName("cloudflare");
     // Nothing is handled until every record is back in memory.
     ctx.blockConcurrencyWhile(async () => {
       const all = await ctx.storage.list();

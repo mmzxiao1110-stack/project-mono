@@ -680,6 +680,10 @@ async function handle(ws, msg) {
 const clients = new Set();
 export const onlineCount = () => clients.size;
 
+/** Which host runs this game ("cloudflare" or "node"), told to each client so Settings can show it. */
+let hostName = "node";
+export const setHostName = (name) => { hostName = name; };
+
 /** A socket opened. Returns false (and closes it) if this network has too many already. */
 export function connect(conn, ip) {
   const open = (perIp.get(ip) || 0) + 1;
@@ -694,7 +698,7 @@ export function connect(conn, ip) {
   conn.userId = null;
   conn.tokens = messageLimit.burst;
   conn.tokensAt = Date.now();
-  send(conn, { t: "online", n: clients.size });
+  send(conn, { t: "online", n: clients.size, host: hostName });
   return true;
 }
 
