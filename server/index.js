@@ -19,6 +19,7 @@ import { createServer as createHttps } from "node:https";
 import { WebSocketServer } from "ws";
 import { staticHandler, hasBuild } from "./static.js";
 import { apiHandler, setOnlineCounter } from "./api.js";
+import { newMarathonSeed, replayMarathon, decodeMoves } from "../shared/marathon.js";
 import { sanitizeLoadout } from "../shared/engine.js";
 import {
   getProfile, saveProfile, flush, countAccounts, dataFile,
@@ -58,6 +59,9 @@ if (PROD && !mailConfigured()) {
 
 const sockets = new Map(); // userId -> socket
 const inMatch = new Map(); // userId -> { match, side }
+const marathons = new Map(); // userId -> { seed, at }: the Marathon game each player has open
+// Games left open for half a day are forgotten.
+setInterval(() => { const old = Date.now() - 12 * 3600e3; for (const [k, v] of marathons) if (v.at < old) marathons.delete(k); }, 3600e3).unref();
 const perIp = new Map();   // ip -> open sockets
 
 const send = (ws, msg) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg)); };
@@ -76,6 +80,7 @@ const publicProfile = (p, acct) => ({
   name: p.name,
   rating: p.rating,
   stats: p.stats,
+  marathon: p.marathon || null,
   createdAt: p.createdAt,
   email: acct ? acct.email : null,
   emailVerified: acct ? !!acct.emailVerified : false,
@@ -625,6 +630,34 @@ async function handle(ws, msg) {
       if (!text) return;
       if (!chatLimit.take(ws.userId)) return send(ws, { t: "chatError", msg: "Slow down a little." });
       active.match.chat(active.side, text);
+      break;
+    }
+
+    case "marathonStart": {
+      // A Marathon game: the seed comes from us, so a score can't be fished for
+      // by retrying seeds, and the finished game is replayed to check it.
+      const seed = newMarathonSeed();
+      marathons.set(ws.userId, { seed, at: Date.now() });
+      send(ws, { t: "marathonSeed", seed });
+      break;
+    }
+
+    case "marathonEnd": {
+      const open = marathons.get(ws.userId);
+      if (!open || open.seed !== msg.seed) return send(ws, { t: "marathonResult", error: "That game wasn't started here." });
+      marathons.delete(ws.userId);
+      const moves = decodeMoves(msg.moves);
+      if (!moves) return send(ws, { t: "marathonResult", error: "That game couldn't be read." });
+      const res = replayMarathon(open.seed, moves);
+      if (res.error) return send(ws, { t: "marathonResult", error: "That game didn't add up." });
+      const acct = getAccount(ws.userId);
+      if (!acct || !acct.emailVerified) return send(ws, { t: "marathonResult", score: res.score, saved: false });
+      const p = getProfile(ws.userId);
+      const m = p.marathon || { best: 0, lines: 0, games: 0, at: null };
+      const newBest = res.score > m.best;
+      p.marathon = { ...m, games: m.games + 1, ...(newBest ? { best: res.score, lines: res.lines, at: Date.now() } : null) };
+      saveProfile(p);
+      send(ws, { t: "marathonResult", score: res.score, saved: true, newBest, best: p.marathon.best });
       break;
     }
 

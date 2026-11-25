@@ -4,6 +4,7 @@
  *   #/rankings/2       the ranked ladder, 50 a page
  *   #/search/name      players whose name contains it
  *   #/player/name      one player's record
+ *   #/marathon/2       Marathon high scores
  * Reads the server's public API (server/api.js).
  */
 import { useEffect, useState } from "react";
@@ -82,6 +83,53 @@ function PlayerTable({ players, showPos = true }) {
   );
 }
 
+/** Marathon high scores: position, name, score, lines. */
+function ScoreTable({ players }) {
+  if (!players.length) return <div className="tb-t text-center" style={{ color: "var(--tb-dim)", padding: px(6) }}>NO SCORES YET</div>;
+  const cols = "3.2em 1fr 6em 3.6em";
+  return (
+    <div className="flex flex-col" style={{ gap: px(1) }}>
+      <div className="tb-t grid" style={{ gridTemplateColumns: cols, gap: px(2), color: "var(--tb-dim)", padding: `0 ${px(3)}` }}>
+        <span>#</span><span>PLAYER</span><span className="text-right">SCORE</span><span className="text-right">LINES</span>
+      </div>
+      {players.map((p, i) => (
+        <a key={p.name} href={playerHref(p.name)} className="tb-t grid items-center no-underline"
+          style={{ gridTemplateColumns: cols, gap: px(2), padding: `${px(2)} ${px(3)}`, color: "var(--tb-text)",
+            background: i % 2 ? "transparent" : "color-mix(in srgb, var(--tb-text) 5%, transparent)" }}>
+          <span style={{ color: p.position <= 3 ? "var(--tb-special)" : "var(--tb-dim)" }}>{p.position}</span>
+          <span className="truncate">{p.name}</span>
+          <span className="text-right tabular-nums" style={{ color: "var(--tb-special)" }}>{p.best.toLocaleString("en-US")}</span>
+          <span className="text-right tabular-nums" style={{ color: "var(--tb-dim)" }}>{p.lines}</span>
+        </a>
+      ))}
+    </div>
+  );
+}
+
+function MarathonBoard({ page }) {
+  const st = useApi(`/api/marathon?page=${page}`);
+  const d = st.data;
+  const nav = (n) => { location.hash = `#/marathon/${n}`; };
+  return (
+    <Panel>
+      <div className="flex justify-between items-baseline" style={{ marginBottom: px(4) }}>
+        <span className="tb-t tb-b" style={{ color: "var(--tb-you)" }}>MARATHON HIGH SCORES</span>
+        {d && <span className="tb-t" style={{ color: "var(--tb-dim)" }}>{d.total} PLAYERS</span>}
+      </div>
+      <Status st={st} />
+      {d && <ScoreTable players={d.players} />}
+      {d && d.pages > 1 && (
+        <div className="flex justify-center items-center tb-t" style={{ gap: px(4), marginTop: px(5) }}>
+          <button disabled={page <= 1} onClick={() => nav(page - 1)} className="tb-t disabled:opacity-30" style={{ height: px(14), padding: `0 ${px(4)}`, color: "var(--tb-text)", ...glass() }}>‹ PREV</button>
+          <span style={{ color: "var(--tb-dim)" }}>{page} / {d.pages}</span>
+          <button disabled={page >= d.pages} onClick={() => nav(page + 1)} className="tb-t disabled:opacity-30" style={{ height: px(14), padding: `0 ${px(4)}`, color: "var(--tb-text)", ...glass() }}>NEXT ›</button>
+        </div>
+      )}
+      <div className="tb-t text-center" style={{ color: "var(--tb-dim)", marginTop: px(4) }}>Every score is checked by replaying the game on the server.</div>
+    </Panel>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 
 function Home() {
@@ -108,6 +156,13 @@ function Home() {
               <a href="#/rankings/1" className="tb-t" style={{ color: "var(--tb-you)" }}>ALL RANKINGS ›</a>
             </div>
             <PlayerTable players={o.top} />
+          </Panel>
+          <Panel>
+            <div className="flex justify-between items-baseline" style={{ marginBottom: px(4) }}>
+              <span className="tb-t tb-b" style={{ color: "var(--tb-you)" }}>MARATHON HIGH SCORES</span>
+              <a href="#/marathon/1" className="tb-t" style={{ color: "var(--tb-you)" }}>ALL SCORES ›</a>
+            </div>
+            <ScoreTable players={o.marathon || []} />
           </Panel>
           <Panel>
             <div className="tb-t tb-b" style={{ color: "var(--tb-you)", marginBottom: px(4) }}>RANK SPREAD</div>
@@ -217,6 +272,13 @@ export function PlayerRecord({ p, onOpen }) {
         {cell("BEST STREAK", p.bestStreak)}
         {cell("PEAK", p.peakTr != null ? `${p.peakTr}${p.peakRank ? ` ${p.peakRank}` : ""}` : "—")}
       </div>
+      {p.marathon && (
+        <div className="grid grid-cols-3" style={{ gap: px(2) }}>
+          {cell("MARATHON BEST", p.marathon.best.toLocaleString("en-US"), "var(--tb-special)")}
+          {cell("MARATHON #", p.marathon.position ? `#${p.marathon.position}` : "—")}
+          {cell("LINES", p.marathon.lines)}
+        </div>
+      )}
       <div>
         <div className="tb-t" style={{ color: "var(--tb-dim)", marginBottom: px(2) }}>TR, LAST {Math.min(40, p.history.length)} GAMES</div>
         <HistoryBars history={p.history} />
@@ -272,7 +334,14 @@ export default function Terminal() {
         </div>
         <span className="tb-t" style={{ color: "var(--tb-dim)" }}>PLAYERS · RANKINGS · RECORDS</span>
       </a>
+      <div className="flex justify-center" style={{ gap: px(2), marginBottom: px(5) }}>
+        {[["#/", "OVERVIEW", ""], ["#/rankings/1", "RANKINGS", "rankings"], ["#/marathon/1", "MARATHON", "marathon"]].map(([href, label, r]) => (
+          <a key={label} href={href} className="tb-t no-underline flex items-center" style={{ height: px(14), padding: `0 ${px(4)}`, color: "var(--tb-text)",
+            ...((route || "") === r || (!route && r === "") ? glassFill("var(--tb-you)") : glass()) }}>{label}</a>
+        ))}
+      </div>
       {route === "rankings" ? <Rankings page={Math.max(1, Number(arg2) || 1)} />
+        : route === "marathon" ? <MarathonBoard page={Math.max(1, Number(arg2) || 1)} />
         : route === "search" ? <Search q={arg2} />
         : route === "player" ? <Player name={arg2} />
         : <Home />}

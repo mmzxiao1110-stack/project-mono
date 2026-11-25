@@ -36,6 +36,7 @@ const TYPES = {
   ".woff2": "font/woff2",
   ".webmanifest": "application/manifest+json",
   ".txt": "text/plain; charset=utf-8",
+  ".mp3": "audio/mpeg",
 };
 
 export const hasBuild = () => fs.existsSync(path.join(DIST, "index.html"));
@@ -51,6 +52,28 @@ function sendIndex(res, code = 200) {
     }
     res.writeHead(code, { ...SECURITY, "content-type": TYPES[".html"], "cache-control": "no-cache" });
     res.end(html);
+  });
+}
+
+/** A file served with HTTP range support (206 Partial Content). */
+function sendRanged(req, res, file) {
+  fs.stat(file, (err, st) => {
+    if (err || !st.isFile()) return sendIndex(res, 404);
+    const size = st.size;
+    const head = { ...SECURITY, "content-type": TYPES[path.extname(file).toLowerCase()] || "application/octet-stream", "accept-ranges": "bytes", "cache-control": "public, max-age=86400" };
+    const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || "");
+    if (!m || (m[1] === "" && m[2] === "")) {
+      res.writeHead(200, { ...head, "content-length": size });
+      if (req.method === "HEAD") return res.end();
+      return fs.createReadStream(file).pipe(res);
+    }
+    let start = m[1] === "" ? size - Number(m[2]) : Number(m[1]);
+    let end = m[1] !== "" && m[2] !== "" ? Number(m[2]) : size - 1;
+    start = Math.max(0, start); end = Math.min(size - 1, end);
+    if (!(start <= end)) { res.writeHead(416, { "content-range": `bytes */${size}` }); return res.end(); }
+    res.writeHead(206, { ...head, "content-length": end - start + 1, "content-range": `bytes ${start}-${end}/${size}` });
+    if (req.method === "HEAD") return res.end();
+    fs.createReadStream(file, { start, end }).pipe(res);
   });
 }
 
@@ -84,6 +107,10 @@ export function staticHandler(req, res) {
     res.writeHead(403, { "content-type": "text/plain" });
     return res.end("forbidden");
   }
+
+  // Music streams in pieces: the player asks for byte ranges so it can start a
+  // song from its middle without downloading the start first.
+  if (path.extname(target).toLowerCase() === ".mp3") return sendRanged(req, res, target);
 
   fs.readFile(target, (err, buf) => {
     // "/privacy" serves privacy.html, so the links can be clean.

@@ -8,16 +8,33 @@
 
 import { RULES } from "./rules.js";
 
-export const COLS = RULES.size;
-export const ROWS = RULES.size;
-export const TURNS = RULES.turns;
+// The board's size and the match length. Normally RULES.size and RULES.turns;
+// a game variant (the 7×7 turn-based mode) can change them with
+// setBoard(). These are live bindings: every importer sees the new values.
+// The server never calls setBoard, so online play is always the standard board.
+export let COLS = RULES.size;
+export let ROWS = RULES.size;
+export let TURNS = RULES.turns;
 export const SLOTS = 7;
 export const QUEUE_SHOWN = RULES.queueShown;
 
-/** The middle 2×2 squares, worth RULES.centreValue each. */
-const MID = Math.floor(RULES.size / 2) - 1;
-export const CENTRE = [[MID, MID], [MID, MID + 1], [MID + 1, MID], [MID + 1, MID + 1]];
-export const isCentre = (r, c) => (r === MID || r === MID + 1) && (c === MID || c === MID + 1);
+/**
+ * The centre, worth RULES.centreValue a square: the middle 2×2 on an even
+ * board, the single middle square on an odd one.
+ */
+let MID = Math.floor(RULES.size / 2) - 1, MID2 = MID + 1;
+export let CENTRE = [[MID, MID], [MID, MID2], [MID2, MID], [MID2, MID2]];
+export const isCentre = (r, c) => r >= MID && r <= MID2 && c >= MID && c <= MID2;
+
+/** Switches the board size and match length (client-side variants only). Returns the old ones. */
+export function setBoard({ size = RULES.size, turns = RULES.turns } = {}) {
+  const old = { size: ROWS, turns: TURNS };
+  ROWS = COLS = size;
+  TURNS = turns;
+  if (size % 2) { MID = MID2 = (size - 1) / 2; CENTRE = [[MID, MID]]; }
+  else { MID = size / 2 - 1; MID2 = MID + 1; CENTRE = [[MID, MID], [MID, MID2], [MID2, MID], [MID2, MID2]]; }
+  return old;
+}
 
 // The seven tetrominoes, as in Tetris. Rotation gives every orientation;
 // S/Z and J/L are mirror pairs, so all seven are distinct.

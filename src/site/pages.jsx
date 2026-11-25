@@ -52,7 +52,9 @@ export function About() {
             <p><Dim>RANKED</Dim>: rated matches with a TR and a rank from F to X.</p>
             <p><Dim>UNRANKED</Dim>: quick games against anyone; guests welcome.</p>
             <p><Dim>PRIVATE</Dim>: send a friend a room code.</p>
-            <p><Dim>SINGLE PLAYER</Dim>: against the AI, strength 1 to 10. <Dim>TAKE TURNS</Dim>: two players, one device.</p>
+            <p><Dim>SINGLE PLAYER</Dim>: against the AI, strength 1 to 10.</p>
+            <p><Dim>MARATHON</Dim>: alone on a 7×7 board, for a high score. Three pieces at a time; clear rows and columns to keep going.</p>
+            <p><Dim>TURN BASED</Dim>: two players, one device, a 7×7 board, one move each in turn.</p>
           </div>
         </Panel>
         <Panel>
@@ -71,6 +73,13 @@ export function About() {
    NEWS — sea green
    ============================================================ */
 const NEWS = [
+  { v: "v0.10.0", date: "NOV 2026", title: "MARATHON AND TURN BASED", items: [
+    "One big PLAY button: ranked, unranked, private, Marathon and Turn Based in one place.",
+    "Marathon: a solo high-score mode on a 7×7 board. Three pieces at a time, no rotating; only the piece you use is replaced. Clear rows and columns, chain clears for a streak.",
+    "Marathon high scores on T-Terminal, every one checked by replaying the game on the server.",
+    "Turn Based: two players, one device, a 7×7 board, taking turns.",
+    "New music: Butterfly on the menu; Initial Wave, Lullaby, Water Light and Wave Effect in game.",
+  ] },
   { v: "v0.9.0", date: "NOV 2026", title: "TERMINAL, CHAT AND PROFILES", items: [
     "T-Terminal: search players, browse the rankings, open anyone's record.",
     "Chat with your opponent during online matches.",
