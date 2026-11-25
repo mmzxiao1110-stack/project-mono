@@ -284,6 +284,10 @@ export function resolveTurn(board, moveA, moveB, pins = null) {
   const ck = new Set(contested.map(([r, c]) => key(r, c)));
   for (const [r, c] of aCells) if (!ck.has(key(r, c))) nb[r][c] = "A";
   for (const [r, c] of bCells) if (!ck.has(key(r, c))) nb[r][c] = "B";
+  // A placement made with PIN on lands pinned (whatever of it survived the clash).
+  for (const [m, cells] of [[moveA, aCells], [moveB, bCells]]) {
+    if (m && m.pin) for (const [r, c] of cells) if (!ck.has(key(r, c))) np[r][c] = true;
+  }
 
   // Snapshot after both pieces land, so a piece placed and immediately
   // cleared is still seen appearing and then going.
@@ -356,6 +360,12 @@ export function stampOptions(board, pins, blockId, kind, owner) {
  *   the squares it actually deletes / pins.
  */
 export function normalizeAction(board, pins, meter, side, blockId, move) {
+  if (move && move.pin) {
+    if (!RULES.pinToggle) return { error: "pins are stamps in these rules" };
+    if (move.type && move.type !== "place") return { error: "only a placement can be pinned" };
+    if (meter < 1) return { error: "no pin charge" };
+  }
+  if (move && move.pins && RULES.pinToggle) return { error: "pin by switching PIN on before placing" };
   if (!move || !RULES.stamp) {
     const error = checkAction(board, pins, meter, side, move);
     return error ? { error } : { move };
@@ -411,6 +421,16 @@ export function checkAction(board, pins, meter, side, move) {
 
 /** Pin meters after a turn: what each side deleted goes to the other; pins spent come off. */
 export function nextMeters(meters, moveA, moveB, deleted) {
+  if (RULES.pinToggle) {
+    // A charge for every turn your opponent spends deleting, whatever it hit;
+    // one spent for every pinned placement.
+    const gained = (m) => (m && m.type === "delete" ? RULES.pinsPerDeleteTurn || 1 : 0);
+    const spent = (m) => (m && m.pin ? 1 : 0);
+    return {
+      A: Math.min(RULES.pinCap, meters.A - spent(moveA) + gained(moveB)),
+      B: Math.min(RULES.pinCap, meters.B - spent(moveB) + gained(moveA)),
+    };
+  }
   // Per square deleted, or a flat amount for any delete at all.
   const gained = (n) => (RULES.pinsPerDeleteTurn ? (n > 0 ? RULES.pinsPerDeleteTurn : 0) : n * RULES.pinPerDelete);
   const spent = (m) => (m && m.type === "pin" ? m.cells.length : 0) + (m && m.pins ? m.pins.length : 0);

@@ -94,7 +94,7 @@ export function aiPickMove(board, piece, owner, level, levels) {
    rules.js). The level scales the weights and the noise like above.
    ------------------------------------------------------------------ */
 
-const TUNED = { front: 0.2, risk: 0.19, meter: 0.25, pin: 0.42 };
+const TUNED = { front: 0.2, risk: 0.19, meter: 0.25, pin: 0.42, charge: 1.0 };
 const N8 = [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]];
 const N4 = [[-1, 0], [1, 0], [0, -1], [0, 1]];
 const val = (r, c) => (isCentre(r, c) ? RULES.centreValue : 1);
@@ -114,15 +114,26 @@ function exposure(b, pins, o) {
   return e;
 }
 
+/** How much a square of yours is worth protecting: the centre, and squares the enemy touches. */
+function threat(b, r, c, o) {
+  let t = isCentre(r, c) ? 2 : 0;
+  for (const [dr, dc] of N8) { const v = b[r + dr]?.[c + dc]; if (v && v !== o && v !== "X") t += 0.5; }
+  return t;
+}
+
 function evalState(b, pins, meters, o, w) {
   let me = 0, them = 0, pinMe = 0;
   for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
     const v = b[r][c]; if (!v || v === "X") continue; // empty or dead (overtime)
-    if (v === o) { me += val(r, c); if (pins[r][c]) pinMe++; } else them += val(r, c);
+    if (v === o) {
+      me += val(r, c);
+      // With the pin toggle, a pin is worth what it protects; a charge is worth a whole piece's pins.
+      if (pins[r][c]) pinMe += RULES.pinToggle ? threat(b, r, c, o) : 1;
+    } else them += val(r, c);
   }
   return (me - them) + w.front * (frontierSize(b, o) - frontierSize(b, other(o)))
     - w.risk * (exposure(b, pins, o) - exposure(b, pins, other(o)))
-    + w.meter * (meters[o] - meters[other(o)]) + w.pin * pinMe;
+    + (RULES.pinToggle ? w.charge : w.meter) * (meters[o] - meters[other(o)]) + w.pin * pinMe;
 }
 
 /** Connected sets of 1..max squares where ok(r, c). */
@@ -186,10 +197,12 @@ export function aiPickAction(st, piece, owner, level, levels) {
     return m ? { type: "place", cells: m.cells, blockId: m.blockId } : null;
   }
   const t = levels > 1 ? (level - 1) / (levels - 1) : 1;
-  const w = { front: TUNED.front * t, risk: TUNED.risk * t, meter: TUNED.meter * t, pin: TUNED.pin * t };
+  const w = { front: TUNED.front * t, risk: TUNED.risk * t, meter: TUNED.meter * t, pin: TUNED.pin * t, charge: TUNED.charge * t };
   const noise = 8 * (1 - t) + 0.05;
   const { board: b, pins, meters } = st;
   const list = enumerateMoves(b, [piece], owner).map((m) => ({ type: "place", cells: m.cells, blockId: m.blockId }));
+  // With a charge, each placement can also go down pinned.
+  if (RULES.pinToggle && meters[owner] >= 1) for (const m of list.slice()) list.push({ ...m, pin: true });
   // Deletes: drawn shapes, or stamps of the current piece (kept as what they hit).
   const dels = RULES.stamp
     ? stampOptions(b, pins, piece, "delete", owner)
@@ -207,7 +220,7 @@ export function aiPickAction(st, piece, owner, level, levels) {
     if (s > bs) { bs = s; best = m; }
   }
   // Weaker players forget to pin. (Pins only ride along when pinning is free.)
-  if (best && RULES.pinIsFree && Math.random() < 0.3 + 0.7 * t) {
+  if (best && RULES.pinIsFree && !RULES.pinToggle && Math.random() < 0.3 + 0.7 * t) {
     const p = pickPins(st, owner, best, piece);
     if (p && (RULES.stamp || isLegalPin(b, pins, p, owner, meters[owner]))) best = { ...best, pins: p };
   }

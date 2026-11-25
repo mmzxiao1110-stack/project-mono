@@ -48,10 +48,11 @@ export const RULES = {
        delete  stamp your piece's shape anywhere: every square with ink
                under it is wiped — anyone's, never pinned ones.
                Any delete gives your OPPONENT 2 pins.
-     and you may also
-       pin     stamp your piece's shape over your own squares to pin them,
-               one pin per square. Pinned squares can't be deleted — but a
-               full line still wipes them.
+     and, with a pin charge, you may
+       pin     switch PIN on before placing: the piece you place lands
+               pinned. Each turn your opponent spends on a delete gives you
+               one charge, whatever it hit. Pinned squares can't be
+               deleted — but a full line still wipes them.
      So: pins beat deletes, deletes beat line clears (break the line),
      line clears beat pins.
      Order within a turn: pins, then deletes, then placements, then lines.
@@ -61,9 +62,10 @@ export const RULES = {
   deleteMax: 4,
   connectDiagonal: false, // may a delete/pin shape join at corners?
   pinOwnOnly: true,       // pin only your own squares (else any square with ink)
-  pinCap: 8,              // most pins you can bank
+  pinToggle: true,        // pins are a toggle: the piece you place lands pinned, one charge per piece
+  pinCap: 2,              // most pins (with pinToggle: charges) you can bank
   pinPerDelete: 1,        // pins your opponent gets for each square you delete
-  pinsPerDeleteTurn: 2,   // a flat 2 pins for any delete, however many squares (0 = per square)
+  pinsPerDeleteTurn: 1,   // a flat amount for any delete turn, however many squares (0 = per square)
   pinMax: 4,              // most squares one pin covers
   pinConnected: true,     // must pinned squares touch each other?
   pinHoldMax: Infinity,   // most pinned squares one player may hold at once

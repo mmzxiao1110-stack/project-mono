@@ -84,6 +84,8 @@ export const defaultTheme = () => ({
   haptics: true,
   showTimer: true,
   sound: 7,          // 0 (off) to 10
+  music: 5,          // 0 (off) to 10
+  track: "mix",      // in-game music: mix | kelp | signal | reef
 });
 
 function stripLabel(p) {
