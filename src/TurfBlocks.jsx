@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef, useSyncExtern
 import {
   RotateCw, Check, SkipForward, ChevronLeft, Settings2, X,
   BarChart3, Wifi, WifiOff, UserRound, LogOut,
-  Palette, Lock, MailCheck, ShieldAlert, BookOpen, ChevronRight, Eraser, Pin,
+  Palette, Lock, MailCheck, ShieldAlert, BookOpen, ChevronRight, Eraser, Pin, Film, Play, Pause, First,
 } from "./pixelIcons.jsx";
 
 /* The rules live in one place and the server imports the same file. */
@@ -14,6 +14,9 @@ import {
   isCheckTurn, shrinkBoard,
 } from "../shared/engine.js";
 import { aiPickAction } from "../shared/ai.js";
+import { encodeAction, encodeTurn } from "../shared/notation.js";
+import { REPLAY_VERSION, buildFrames, exportReplay, importReplay } from "../shared/replay.js";
+import { replays } from "./replays.js";
 import {
   RANKS, PLACEMENT_GAMES, rankIndexFor, rankMin, rankProgress,
 } from "../shared/glicko.js";
@@ -1057,7 +1060,7 @@ function BoardGrid({
   boardRef, onPointerDown, theme, youSide = "A", ghostGolden = false,
   pendingKeys = null, pendingInk = null,
   pins = null, traceKeys = null, traceKind = null, traceOk = false, stagedKeys = null,
-  otFlash = null,
+  otFlash = null, marks = null,
 }) {
   const P = usePx();
   const gap = (theme.gap ?? 1) * P;
@@ -1155,6 +1158,11 @@ function BoardGrid({
                   background: traceKind === "pin" ? CHESS : DITHER("rgba(255,90,110,.75)"),
                   boxShadow: `inset 0 0 0 ${P}px ${traceOk ? (traceKind === "pin" ? UI.text : UI.bad) : UI.dim}`,
                 }} />
+              )}
+              {marks?.has(k) && (
+                // Replays: what changed on this turn, outlined in whose move it was.
+                <span aria-hidden="true" style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 2,
+                  boxShadow: `inset 0 0 0 ${2 * P}px ${marks.get(k)}` }} />
               )}
               <span aria-hidden="true" style={{ position: "absolute", inset: 0, pointerEvents: "none", background: shine }} />
               {mark}
@@ -2844,6 +2852,11 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
 
         <div className="flex justify-between">
           <div className="flex gap-2.5">
+            <button onClick={() => onPick("REPLAYS")} aria-label="Replays"
+              className="rounded flex items-center justify-center"
+              style={{ width: 44, height: 44, ...glass(UI.line) }}>
+              <Film size={17} style={{ color: UI.dim }} />
+            </button>
             <button onClick={() => setModal("HOWTO")} aria-label="How to play"
               className="rounded flex items-center justify-center"
               style={{ width: 44, height: 44, ...glass(UI.line) }}>
@@ -3078,11 +3091,12 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   const [decided, setDecided] = useState(false); // this turn's check settled the match
   const [turn, setTurn] = useState(1);
   const [phase, setPhase] = useState("PLAY_A");
-  const [decks, setDecks] = useState(() => {
-    // Same seed, same pieces in the same order (RULES.sharedSequence).
-    const seed = newSeed();
-    return { A: newDeck(loadout, seed), B: newDeck(loadout, RULES.sharedSequence ? seed : newSeed()) };
-  });
+  // Same seed, same pieces in the same order (RULES.sharedSequence). Kept for the replay.
+  const [seeds] = useState(() => { const sd = newSeed(); return { A: sd, B: RULES.sharedSequence ? sd : newSeed() }; });
+  const [decks, setDecks] = useState(() => ({ A: newDeck(loadout, seeds.A), B: newDeck(loadout, seeds.B) }));
+  // The game in MINO notation, for the replay; and player 1's action as sent, this turn.
+  const logRef = useRef([]);
+  const rawARef = useRef(null);
   const [pendingA, setPendingA] = useState(null);
   const [reveal, setReveal] = useState(null);
   const [lockedOut, setLockedOut] = useState(false);
@@ -3107,6 +3121,19 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   const compact = useCompact();
   const railD = useBubble(compact);
   const { g, side, cell, boardW, boardH, groupW, pane } = gameLayout(stage, theme, P, railD, compact);
+
+  // The match is over: keep it as a replay.
+  useEffect(() => {
+    if (phase !== "DONE" || !logRef.current.length) return;
+    const sc = scoreOf(board);
+    replays.save({
+      v: REPLAY_VERSION, date: Date.now(), mode: solo ? "solo" : "hotseat", you: solo ? "A" : null,
+      players: { A: { name: solo ? "YOU" : "P1" }, B: { name: solo ? oppName : "P2" } },
+      seeds, turns: logRef.current,
+      result: { a: sc.a, b: sc.b, reason: forfeitBy ? "forfeit" : lockedOut ? "locked" : ot ? "overtime" : "turns", forfeitBy },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
 
   // The match is over: wash to the result screen.
   const wipe = useContext(WipeCtx);
@@ -3155,6 +3182,8 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
     // Stamps arrive as footprints; the engine turns them into what they hit.
     const { move, error } = normalizeAction(board, pins, meters[player], player, piece, raw);
     if (error) return;
+    if (player === "A") rawARef.current = { raw, piece };
+    else logRef.current.push(encodeTurn(encodeAction(rawARef.current?.raw, rawARef.current?.piece), encodeAction(raw, piece)));
     advance(player);
     if (player === "A") handOver(move); else finish(pendingA, move);
     pl.reset();
@@ -3196,7 +3225,11 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   useEffect(() => {
     if (phase !== "AI_THINK") return;
     const t = setTimeout(() => {
-      const move = aiPickAction({ board, pins, meters }, currentPiece(decks.B), "B", aiLevel, LEVELS.length);
+      const pieceB = currentPiece(decks.B);
+      const raw = aiPickAction({ board, pins, meters }, pieceB, "B", aiLevel, LEVELS.length);
+      // Stamps → what they hit (an AI pin stamp only pins its own squares, and pays for those).
+      const move = raw ? normalizeAction(board, pins, meters.B, "B", pieceB, raw).move || null : null;
+      logRef.current.push(encodeTurn(encodeAction(rawARef.current?.raw, rawARef.current?.piece), encodeAction(move ? raw : null, pieceB)));
       advance("B");
       finish(pendingA, move);
     }, AI_THINK_MS);
@@ -3862,6 +3895,208 @@ function PrivateRoom({ status, onBack, pendingCode, clearPending }) {
 }
 
 /* ============================================================
+   REPLAYS — every game you play, kept on this device
+   ============================================================ */
+const useReplayList = () => useSyncExternalStore(replays.subscribe, replays.all);
+const MODE_LABEL = { ranked: "RANKED", unranked: "UNRANKED", private: "PRIVATE", solo: "SOLO", hotseat: "TAKE TURNS" };
+const fmtDate = (t) => { try { return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + new Date(t).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }); } catch { return ""; } };
+
+/** Names from the viewer's side: "you" on the left when there's a you. */
+function replaySides(rec) {
+  const me = rec.you || "A", them = me === "A" ? "B" : "A";
+  return { me, them, meName: rec.you ? "YOU" : rec.players.A.name, themName: rec.players[them].name };
+}
+
+function ReplayList({ onOpen, onBack }) {
+  const P = usePx();
+  const list = useReplayList();
+  const [code, setCode] = useState("");
+  const [err, setErr] = useState(null);
+  const doImport = () => {
+    try { const id = replays.save({ ...importReplay(code), id: undefined }); setCode(""); setErr(null); onOpen(id); }
+    catch (e) { setErr(e.message); }
+  };
+  return (
+    <div className="tb-screen tb-safe w-full flex flex-col items-center px-5 font-mono" style={{ color: UI.text }}>
+      <Scaled className="w-full flex flex-col" style={{ maxWidth: 380, height: "100%", paddingTop: 24, paddingBottom: 16 }}>
+        <div className="flex items-center justify-between mb-3 shrink-0">
+          <button onClick={onBack} className="flex items-center gap-1 tb-t py-2" style={{ color: UI.dim }}><ChevronLeft size={13} /> MENU</button>
+          <div className="tb-t" style={{ color: UI.dim }}>REPLAYS</div>
+        </div>
+        <form onSubmit={(e) => { e.preventDefault(); if (code.trim()) doImport(); }} className="flex gap-2 mb-1 shrink-0">
+          <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="paste a replay code" aria-label="Replay code"
+            className="tb-t px-3 flex-1 min-w-0" style={{ height: 40, ...glass(UI.line), color: UI.text, outline: "none" }} />
+          <button type="submit" disabled={!code.trim()} className="tb-t px-3 disabled:opacity-40" style={{ height: 40, ...glass(UI.line), color: UI.dim }}>OPEN</button>
+        </form>
+        {err && <div className="tb-t mb-1" style={{ color: UI.bad }}>{err}</div>}
+        <div className="flex-1 min-h-0 overflow-y-auto mt-2 flex flex-col gap-2 pr-1">
+          {!list.length && <div className="tb-t text-center py-10" style={{ color: UI.dim }}>No replays yet. Every game you finish is saved here.</div>}
+          {list.map((rec) => {
+            const { me, them, meName, themName } = replaySides(rec);
+            const my = rec.result?.[me.toLowerCase()] ?? 0, their = rec.result?.[them.toLowerCase()] ?? 0;
+            const ink = my > their ? "var(--tb-you)" : my < their ? "var(--tb-rival)" : UI.dim;
+            return (
+              <button key={rec.id} onClick={() => onOpen(rec.id)} className="w-full text-left flex items-center gap-3 px-3 py-2" style={{ ...glass(UI.line) }}>
+                <div className="flex-1 min-w-0">
+                  <div className="tb-t truncate">{meName} <span style={{ color: UI.dim }}>vs</span> {themName}</div>
+                  <div className="tb-t truncate" style={{ color: UI.dim }}>{MODE_LABEL[rec.mode] || "GAME"} · {rec.turns.length} turns · {fmtDate(rec.date)}</div>
+                </div>
+                <div className="tb-t tb-b tabular-nums shrink-0" style={{ color: ink, textShadow: `${P}px ${P}px 0 rgba(0,0,0,.4)` }}>{my}–{their}</div>
+              </button>
+            );
+          })}
+        </div>
+      </Scaled>
+    </div>
+  );
+}
+
+const SPEEDS = [0.5, 1, 2, 4];
+
+function ReplayViewer({ id, theme, colors, onBack }) {
+  const P = usePx();
+  const rec = useMemo(() => replays.get(id), [id]);
+  const { frames, error } = useMemo(() => (rec ? buildFrames(rec) : { frames: [], error: "Replay not found." }), [rec]);
+  const last = Math.max(0, frames.length - 1);
+  const [t, setT] = useState(last ? 0 : 0);
+  const [playRequested, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(1);
+  // Playing stops by itself at the last turn.
+  const playing = playRequested && t < last;
+  const [copied, setCopied] = useState(false);
+  const [stageRef, stage] = useSize();
+  const listRef = useRef(null);
+  const compact = useCompact();
+  const d = useBubble(compact);
+
+  // Play: one turn every 900 ms at 1×.
+  useEffect(() => {
+    if (!playing) return;
+    const h = setTimeout(() => setT((x) => Math.min(last, x + 1)), 900 / speed);
+    return () => clearTimeout(h);
+  }, [playing, t, last, speed]);
+  // Keyboard: ← → step, space play/pause, Home/End.
+  useEffect(() => {
+    const on = (e) => {
+      if (e.target && e.target.tagName === "INPUT") return;
+      if (e.key === "ArrowRight") { e.preventDefault(); setPlaying(false); setT((x) => Math.min(last, x + 1)); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); setPlaying(false); setT((x) => Math.max(0, x - 1)); }
+      else if (e.key === " ") { e.preventDefault(); if (t >= last) { setT(0); setPlaying(true); } else setPlaying(!playing); }
+      else if (e.key === "Home") setT(0);
+      else if (e.key === "End") setT(last);
+    };
+    window.addEventListener("keydown", on);
+    return () => window.removeEventListener("keydown", on);
+  }, [last, t, playing]);
+  // Keep the current turn in view in the move list.
+  useEffect(() => { listRef.current?.querySelector(`[data-turn="${t}"]`)?.scrollIntoView({ block: "nearest" }); }, [t]);
+
+  if (!rec || !frames.length) {
+    return (
+      <div className="tb-screen tb-safe w-full flex items-center justify-center font-mono" style={{ color: UI.dim }}>
+        <div className="text-center"><div className="tb-t mb-4">{error || "Replay not found."}</div>
+          <button onClick={onBack} className="tb-t px-4" style={{ height: 44, ...glass(UI.line), color: UI.dim }}>BACK</button></div>
+      </div>
+    );
+  }
+
+  const f = frames[t];
+  const { meName, themName } = replaySides(rec);
+  const INK = { A: rec.you === "B" ? colors.rival : colors.you, B: rec.you === "B" ? colors.you : colors.rival, S: colors.special };
+  const nameA = rec.you === "B" ? themName : meName, nameB = rec.you === "B" ? meName : themName;
+
+  // What changed on this turn: placed squares, deletes, new pins — outlined in the mover's colour.
+  const marks = new Map();
+  if (f.played) {
+    for (const side of ["A", "B"]) {
+      const m = f.played.moves[side];
+      if (!m) continue;
+      if (m.type === "place") for (const [r, c] of m.cells) if (f.board[r][c] === side) marks.set(key(r, c), INK[side]);
+      if (m.type === "delete") for (const [r, c] of m.cells) marks.set(key(r, c), UI.bad);
+      for (const [r, c] of m.pins || []) marks.set(key(r, c), "var(--tb-text)");
+    }
+  }
+
+  // Layout: the board with the meter, sized like a game; the move list beside or below.
+  const listW = compact ? 0 : 150;
+  const area = { w: Math.max(0, stage.w - (compact ? 0 : listW * (P / BASE_P) + 16)), h: stage.h };
+  const { cell, boardW, boardH, groupW, pane } = gameLayout(area, theme, P, d, true);
+  const step = (dx) => { setPlaying(false); setT((x) => Math.max(0, Math.min(last, x + dx))); };
+  const copy = async () => { try { await navigator.clipboard.writeText(exportReplay(rec)); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* no clipboard */ } };
+  const res = rec.result || {};
+  const moveList = (
+    <div ref={listRef} className="overflow-y-auto tb-t" style={{ ...glass(UI.line), padding: 3 * P, maxHeight: compact ? 110 : boardH, minWidth: compact ? 0 : listW }}>
+      {frames.slice(1).map((fr, i) => (
+        <button key={i} data-turn={i + 1} onClick={() => { setPlaying(false); setT(i + 1); }}
+          className="w-full text-left flex gap-2 tabular-nums" style={{ color: i + 1 === t ? UI.text : UI.dim, background: i + 1 === t ? "color-mix(in srgb, var(--tb-text) 12%, transparent)" : "transparent" }}>
+          <span style={{ width: 22, opacity: 0.6 }}>{i + 1}.</span>
+          <span style={{ color: i + 1 === t ? INK.A : undefined }}>{fr.played.text[0]}</span>
+          <span style={{ opacity: 0.5 }}>/</span>
+          <span style={{ color: i + 1 === t ? INK.B : undefined }}>{fr.played.text[1]}</span>
+        </button>
+      ))}
+    </div>
+  );
+
+  return (
+    <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ color: UI.text }}>
+      <div className="tb-col relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: 900 }}>
+        <div className="flex items-center justify-between shrink-0 pt-3 pb-1 gap-2">
+          <button onClick={onBack} className="flex items-center gap-1 tb-t py-2" style={{ color: UI.dim }}><ChevronLeft size={13} /> REPLAYS</button>
+          <div className="tb-t truncate text-center" style={{ color: UI.dim }}>
+            <span style={{ color: INK.A }}>{nameA}</span> {res.a}–{res.b} <span style={{ color: INK.B }}>{nameB}</span>
+            {!compact && <span> · {MODE_LABEL[rec.mode] || ""} · {fmtDate(rec.date)}</span>}
+          </div>
+          <button onClick={copy} className="tb-t px-2 py-2" style={{ color: UI.dim }} title="Copy a code a friend can paste into REPLAYS">{copied ? "COPIED" : "COPY CODE"}</button>
+        </div>
+
+        <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center gap-4">
+          <div className="flex flex-col items-center" style={{ gap: 3 * P }}>
+            <ForecastRow width={groupW} compact pane={pane} bag={f.bag}
+              left={{ name: nameA, ink: INK.A, now: f.pieces.A, queue: f.queues.A }}
+              right={{ name: nameB, ink: INK.B, dir: -1, now: f.pieces.B, queue: f.queues.B }} />
+            <HMeter a={f.score.a} b={f.score.b} inkA={INK.A} inkB={INK.B} width={boardW} />
+            <div className="relative" style={{ width: boardW, height: boardH }}>
+              <BoardGrid board={f.board} pins={f.pins} cell={cell} ink={INK} theme={theme}
+                ghostKeys={EMPTY_SET} ghostLegal={false} ghostInk={INK.A}
+                contestedKeys={new Set((f.played?.res.contested || []).map(([r, c]) => key(r, c)))}
+                boardRef={{ current: null }} onPointerDown={() => {}}
+                marks={marks} otFlash={f.played?.flash || null} />
+            </div>
+          </div>
+          {!compact && moveList}
+        </div>
+
+        {/* Transport: start · back · play · forward · end, speed, and a scrubber. */}
+        <div className="shrink-0 flex flex-col items-center gap-2 pt-2 pb-3">
+          <input type="range" min={0} max={last} value={t} onChange={(e) => { setPlaying(false); setT(Number(e.target.value)); }}
+            aria-label="Turn" className="w-full" style={{ maxWidth: Math.max(groupW, 280), accentColor: "var(--tb-you)" }} />
+          <div className="flex items-center justify-center flex-wrap" style={{ gap: 2 * P }}>
+            <Bubble w={d} h={d} label="Start" onClick={() => { setPlaying(false); setT(0); }}><First /></Bubble>
+            <Bubble w={d} h={d} label="Back one turn" onClick={() => step(-1)}><ChevronLeft /></Bubble>
+            <Bubble w={d + 8} h={d} label={playing ? "Pause" : "Play"} tint={colors.you} fill={30}
+              onClick={() => { if (t >= last) { setT(0); setPlaying(true); } else setPlaying(!playing); }}>{playing ? <Pause /> : <Play />}</Bubble>
+            <Bubble w={d} h={d} label="Forward one turn" onClick={() => step(1)}><ChevronRight /></Bubble>
+            <Bubble w={d} h={d} label="End" onClick={() => { setPlaying(false); setT(last); }}><span style={{ display: "inline-flex", transform: "scaleX(-1)" }}><First /></span></Bubble>
+            <div className="flex items-center" style={{ gap: P, marginLeft: 2 * P }}>
+              {SPEEDS.map((sp) => (
+                <button key={sp} onClick={() => setSpeed(sp)} className="tb-t px-1.5"
+                  style={{ height: d * P, ...(speed === sp ? skFill(UI.text) : glass(UI.line)), color: speed === sp ? UI.text : UI.dim }}>{sp}×</button>
+              ))}
+            </div>
+          </div>
+          <div className="tb-t tabular-nums" style={{ color: UI.dim }}>
+            {t === 0 ? "start" : `turn ${t} / ${last}`}{f.ot ? " · overtime" : ""}{t === last && res.reason === "forfeit" ? " · forfeit" : ""}
+          </div>
+          {compact && <div className="w-full" style={{ maxWidth: groupW }}>{moveList}</div>}
+          {error && <div className="tb-t" style={{ color: UI.bad }}>{error}</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
    RESULT — ranked
    ============================================================ */
 function Result(props) {
@@ -3995,6 +4230,7 @@ export default function TurfBlocks() {
     return () => window.removeEventListener("resize", on);
   }, []);
   const [over, setOver] = useState(null);
+  const [replayId, setReplayId] = useState(null);
   // The wave between a finished match and its result screen.
   const [wipeRun, setWipeRun] = useState(null);
   const wipe = useCallback((atMiddle) => setWipeRun((cur) => cur || { id: Date.now(), atMiddle }), []);
@@ -4160,6 +4396,7 @@ export default function TurfBlocks() {
           else if (t === "MATCHMAKING") setScreen("MATCHMAKING");
           else if (t === "PRIVATE") setScreen("PRIVATE");
           else if (t === "UNRANKED") setScreen("UNRANKED");
+          else if (t === "REPLAYS") setScreen("REPLAYS");
           else { setSeed((s) => s + 1); setScreen("HOTSEAT"); }
         }}
         loadout={loadout} setLoadout={setLoadout}
@@ -4174,6 +4411,10 @@ export default function TurfBlocks() {
         onBack={() => setScreen("MENU")}
         onStart={(lv) => { setAiLevel(lv); setSeed((s) => s + 1); setScreen("SOLO"); }} />
     );
+  else if (screen === "REPLAYS")
+    view = <ReplayList onOpen={(id) => { setReplayId(id); setScreen("REPLAY"); }} onBack={() => setScreen("MENU")} />;
+  else if (screen === "REPLAY")
+    view = <ReplayViewer id={replayId} theme={theme} colors={colors} onBack={() => setScreen("REPLAYS")} />;
   else if (screen === "UNRANKED")
     view = (
       <Unranked status={status} profile={profile} loadout={loadout} colors={colors}

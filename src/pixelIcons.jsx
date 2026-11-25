@@ -6,6 +6,50 @@
  * `size` is accepted and ignored on purpose: icons are always 9 pixels.
  */
 const ART = {
+  film: [
+    "#########",
+    "#.#...#.#",
+    "#########",
+    "#..#....#",
+    "#..##...#",
+    "#..#....#",
+    "#########",
+    "#.#...#.#",
+    "#########",
+  ],
+  play: [
+    ".........",
+    ".#.......",
+    ".##......",
+    ".###.....",
+    ".####....",
+    ".###.....",
+    ".##......",
+    ".#.......",
+    ".........",
+  ],
+  pause: [
+    ".........",
+    ".##..##..",
+    ".##..##..",
+    ".##..##..",
+    ".##..##..",
+    ".##..##..",
+    ".##..##..",
+    ".##..##..",
+    ".........",
+  ],
+  first: [
+    ".........",
+    "#.....#..",
+    "#....##..",
+    "#...###..",
+    "#..####..",
+    "#...###..",
+    "#....##..",
+    "#.....#..",
+    ".........",
+  ],
   eraser: [
     ".........",
     ".....##..",
@@ -322,3 +366,7 @@ export const ShieldAlert = make("alert");
 export const BookOpen = make("book");
 export const Eraser = make("eraser");
 export const Pin = make("pin");
+export const Film = make("film");
+export const Play = make("play");
+export const Pause = make("pause");
+export const First = make("first");
