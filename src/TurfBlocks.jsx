@@ -4,6 +4,7 @@ import {
   BarChart3, Wifi, WifiOff, UserRound, LogOut,
   Palette, Lock, MailCheck, ShieldAlert, BookOpen, ChevronRight, Eraser, Pin, Film, Play, Pause, First,
   Chat, Terminal as TerminalIcon, Info, News as NewsIcon, Download as DownloadIcon, Help as HelpIcon,
+  Trophy, Stack, People, Robot, Speaker, SpeakerOff,
 } from "./pixelIcons.jsx";
 import { PlayerRecord } from "./site/terminal.jsx";
 import { apiGet } from "./site/api.js";
@@ -21,7 +22,7 @@ import {
 import { aiPickAction } from "../shared/ai.js";
 import {
   SIZE as M_SIZE, PIECES as M_PIECES, newMarathon, newMarathonSeed, placePiece as mPlace, fits as mFits,
-  fitsAnywhere as mFitsAnywhere, levelOf as mLevelOf, encodeMoves, TUNING as M_TUNING,
+  fitsAnywhere as mFitsAnywhere, levelOf as mLevelOf, encodeMoves, TUNING as M_TUNING, shapeOf as mShape,
 } from "../shared/marathon.js";
 import { encodeAction, encodeTurn } from "../shared/notation.js";
 import { REPLAY_VERSION, buildFrames, exportReplay, importReplay } from "../shared/replay.js";
@@ -1550,7 +1551,7 @@ function AmbientField({ colors, theme, paused }) {
   );
 }
 
-function Popup({ title, onClose, children, pinned, maxW = 430 }) {
+function Popup({ title, onClose, children, pinned, maxW = 430, glassy = false }) {
   useEffect(() => { sky.paused++; sfx.open(); music.duck(true); return () => { sky.paused--; music.duck(false); }; }, []);
   return (
     <div
@@ -1573,8 +1574,12 @@ function Popup({ title, onClose, children, pinned, maxW = 430 }) {
         style={{
           maxWidth: maxW,
           maxHeight: "100%",
-          background: "color-mix(in srgb, var(--tb-panel-solid) 92%, black)",
           ...sk("var(--tb-text)"),
+          // Glassy: a clear pane over the sky, lit along the top, shaded below.
+          background: glassy
+            ? "linear-gradient(180deg, color-mix(in srgb, var(--tb-text) 12%, transparent), color-mix(in srgb, var(--tb-panel-solid) 35%, transparent) 40%, color-mix(in srgb, var(--tb-panel-solid) 55%, transparent))"
+            : "color-mix(in srgb, var(--tb-panel-solid) 92%, black)",
+          ...(glassy ? { boxShadow: `${BEVEL}, inset 0 calc(var(--p) * 2) 0 color-mix(in srgb, var(--tb-text) 18%, transparent)` } : null),
         }}
       >
         <div className="flex items-center justify-between px-4 h-12 shrink-0 mx-2" style={RULE_BELOW}>
@@ -2932,13 +2937,25 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
   const rank = tr !== null ? RANKS[rankIndexFor(tr)] : null;
   const online = useOnline();
   const notice = useNotice();
+  const muted = !(theme.sound ?? 7) && !(theme.music ?? 5);
+  const toggleSound = () => {
+    if (muted) {
+      let back = { sound: 7, music: 5 };
+      try { back = { ...back, ...JSON.parse(store.get("tb:unmute") || "{}") }; } catch { /* defaults */ }
+      setTheme({ ...theme, sound: back.sound || 7, music: back.music || 5 });
+    } else {
+      store.set("tb:unmute", JSON.stringify({ sound: theme.sound ?? 7, music: theme.music ?? 5 }));
+      setTheme({ ...theme, sound: 0, music: 0 });
+    }
+  };
 
   return (
     <div className="tb-screen tb-safe relative w-full flex items-center justify-center px-5 font-mono overflow-hidden" style={{ color: UI.text }}>
       <AmbientField colors={colors} theme={theme} paused={!!modal} />
       <div className="absolute inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse at 50% 46%, color-mix(in srgb, var(--tb-ground) 45%, transparent) 0%, color-mix(in srgb, var(--tb-ground) 20%, transparent) 50%, transparent 80%)" }} />
 
-      <Scaled className="relative w-full" style={{ maxWidth: 330 }}>
+      {/* Behind the PLAY glass only the sky shows, not the menu. */}
+      <Scaled className="relative w-full" style={{ maxWidth: 330, visibility: modal === "PLAY" ? "hidden" : "visible" }}>
         <div className="text-center mb-9">
           <PixelLogo />
           <PixelRule />
@@ -2947,8 +2964,8 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
 
         {/* One big way in: PLAY opens the modes. */}
         <button onClick={() => setModal("PLAY")}
-          className="w-full rounded flex flex-col items-center justify-center gap-2 mb-2.5"
-          style={{ height: 120, ...skFill("var(--tb-you)") }}>
+          className="w-full rounded flex flex-col items-center justify-center gap-1.5 mb-2.5"
+          style={{ height: 86, ...skFill("var(--tb-you)") }}>
           <PixelWord text="PLAY" from="var(--tb-text)" to="var(--tb-you)" />
           {status === "online" && online !== null ? (
             <span className="tb-t" style={{ color: UI.dim }}>{online === 1 ? "just you online right now" : `${online} people online`}</span>
@@ -2966,8 +2983,12 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
 
         <div className="flex gap-2.5 mb-2.5">
           {/* Offline play takes the left half; T-TERMINAL, the player hub, the right. */}
-          <button onClick={() => { onPick("DIFFICULTY"); }} aria-label="Single player" className="flex-1 rounded flex items-center justify-center min-w-0" style={{ height: 44, ...glass(UI.line) }}>
-            <span className="tb-t">SP</span>
+          {/* Your account: who you're signed in as, or a way to sign in. */}
+          <button onClick={() => setModal(authed || profile?.guest ? "ACCOUNT" : "login")} aria-label="Account"
+            className="flex-1 rounded flex items-center justify-center gap-2 min-w-0 px-2"
+            style={{ height: 44, ...glass(authed && !verified ? GOLD_SOFT : UI.line) }}>
+            <span style={{ color: authed && verified ? UI.text : GOLD, display: "flex" }}><UserRound /></span>
+            <span className="tb-t truncate">{authed ? (profile?.name || "ACCOUNT") : profile?.guest ? `${profile.name} (GUEST)` : "LOG IN"}</span>
           </button>
           <a href="/terminal" className="flex-1 rounded flex items-center justify-center gap-2 no-underline"
             style={{ height: 44, ...skFill(ACCENTS.terminal), color: UI.text }}>
@@ -2995,10 +3016,11 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
             </button>
           </div>
           <div className="flex gap-2.5">
-            <button onClick={() => setModal(authed || profile?.guest ? "ACCOUNT" : "login")} aria-label="Account"
+            {/* Sound on/off in one tap (Settings has the volumes). */}
+            <button onClick={toggleSound} aria-label={muted ? "Sound on" : "Sound off"} aria-pressed={muted}
               className="rounded flex items-center justify-center"
-              style={{ width: 44, height: 44, ...glass(authed && verified ? UI.line : GOLD_SOFT) }}>
-              <UserRound size={17} style={{ color: authed && verified ? UI.dim : GOLD }} />
+              style={{ width: 44, height: 44, ...glass(UI.line) }}>
+              {muted ? <SpeakerOff style={{ color: UI.dim }} /> : <Speaker style={{ color: UI.dim }} />}
             </button>
             <button onClick={() => setModal("STATS")} aria-label="Stats" className="rounded flex items-center justify-center" style={{ width: 44, height: 44, ...glass(UI.line) }}>
               <BarChart3 size={17} style={{ color: UI.dim }} />
@@ -3050,32 +3072,57 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
   );
 }
 
-/** PLAY: every way to play, online and off. */
+/**
+ * PLAY: every way to play. Two columns of coloured glass: the solo side
+ * (MARATHON, then TURN BASED and PRIVATE) and the competitive side (RANKED,
+ * then UNRANKED and VS AI). The two main modes are the big panes.
+ */
+const MODE_INK = { ranked: "#7CC7BF", unranked: "#B4A3EE", ai: "#EAD6A4", marathon: "#F2B880", turns: "#EC93B8", private: "#A3D98C" };
+function ModeCard({ big = false, ink, icon: Icon, title, sub, note, onClick, disabled }) {
+  const fill = (n) => `color-mix(in srgb, ${ink} ${n}%, transparent)`;
+  const px2 = "calc(var(--p) * 18)";
+  return (
+    <button onClick={onClick} disabled={disabled} aria-label={title}
+      className="w-full h-full text-left flex flex-col disabled:opacity-35"
+      style={{
+        minHeight: big ? 150 : 64, padding: big ? "14px 14px 12px" : "9px 11px", gap: big ? 8 : 4,
+        borderWidth: "var(--p)", borderStyle: "solid", borderColor: fill(big ? 85 : 60), clipPath: CLIP,
+        background: `linear-gradient(180deg, ${fill(big ? 32 : 20)}, ${fill(big ? 14 : 9)})`,
+        boxShadow: `inset 0 var(--p) 0 ${fill(70)}, inset 0 calc(var(--p) * -1) 0 rgba(0,0,0,.3)`,
+      }}>
+      {big ? (
+        <>
+          <Icon style={{ color: ink, width: px2, height: px2 }} />
+          <span className="flex-1" />
+          <PixelWord text={title} from="var(--tb-text)" to={ink} />
+        </>
+      ) : (
+        <span className="flex items-center gap-2 min-w-0"><Icon style={{ color: ink }} /><span className="tb-t" style={{ color: ink }}>{title}</span></span>
+      )}
+      <span className="tb-t" style={{ color: UI.text, opacity: 0.8 }}>{sub}</span>
+      {note && <span className="tb-t" style={{ color: ink }}>{note}</span>}
+    </button>
+  );
+}
+
 function PlayModal({ status, authed, verified, placed, rank, tr, onPick, onClose }) {
   const online = status === "online";
   const best = Math.max(Number(store.get("tb:marathonBest")) || 0, net.profile?.marathon?.best || 0);
-  const modes = [
-    { key: "MATCHMAKING", title: "RANKED", needs: true, tint: authed && verified && placed ? rank.color : "var(--tb-you)",
-      sub: !online ? "server offline" : !authed ? "account required" : !verified ? "verify your email first" : placed ? `${rank.name} · ${tr} TR` : "unplaced: 10 games to a rank" },
-    { key: "UNRANKED", title: "UNRANKED", needs: true, sub: "anyone, guests too · no rating" },
-    { key: "PRIVATE", title: "PRIVATE", needs: true, sub: "a room code for a friend" },
-    { key: "MARATHON", title: "MARATHON", tint: GOLD, sub: best ? `solo high score · best ${best.toLocaleString("en-US")}` : "solo high score · how far can you go?" },
-    { key: "TURNBASED", title: "TURN BASED", sub: "two players, one device · pass it between turns" },
-  ];
+  const off = online ? null : "needs the server";
+  // Rows, so each pair lines up: solo modes on the left, competitive on the right.
   return (
-    <Popup title="PLAY" onClose={onClose} maxW={400}>
-      <div className="pt-4 pb-1 flex flex-col gap-2.5">
-        {modes.map((m) => {
-          const off = m.needs && !online;
-          return (
-            <button key={m.key} onClick={() => onPick(m.key)} disabled={off}
-              className="w-full text-left flex flex-col gap-1 px-3 disabled:opacity-40"
-              style={{ minHeight: 58, justifyContent: "center", ...(m.key === "MATCHMAKING" ? skFill(m.tint) : glass(m.tint ? `color-mix(in srgb, ${m.tint} 60%, transparent)` : UI.line)) }}>
-              <span className="tb-t" style={{ color: m.tint || UI.text }}>{m.title}</span>
-              <span className="tb-t" style={{ color: UI.dim }}>{m.sub}</span>
-            </button>
-          );
-        })}
+    <Popup title="PLAY" onClose={onClose} maxW={640} glassy>
+      <div className="pt-4 pb-1 grid grid-cols-2 gap-3">
+        <ModeCard big ink={MODE_INK.marathon} icon={Stack} title="MARATHON" sub="solo high score on a 7×7 board"
+          note={best ? `best ${best.toLocaleString("en-US")}` : "how far can you go?"} onClick={() => onPick("MARATHON")} />
+        <ModeCard big ink={authed && verified && placed ? rank.color : MODE_INK.ranked} icon={Trophy} title="RANKED"
+          sub={!online ? "needs the server" : !authed ? "account required" : !verified ? "verify your email first" : placed ? "rated 1v1 matches" : "10 games to a rank"}
+          note={online && authed && verified ? (placed ? `${rank.name} · ${tr} TR` : "unplaced") : null}
+          disabled={!online} onClick={() => onPick("MATCHMAKING")} />
+        <ModeCard ink={MODE_INK.turns} icon={People} title="TURN BASED" sub="two players, one device" onClick={() => onPick("TURNBASED")} />
+        <ModeCard ink={MODE_INK.unranked} icon={Wifi} title="UNRANKED" sub={off || "anyone, guests too"} disabled={!online} onClick={() => onPick("UNRANKED")} />
+        <ModeCard ink={MODE_INK.private} icon={Lock} title="PRIVATE" sub={off || "a room code for a friend"} disabled={!online} onClick={() => onPick("PRIVATE")} />
+        <ModeCard ink={MODE_INK.ai} icon={Robot} title="VS AI" sub="strength 1 to 10" onClick={() => onPick("DIFFICULTY")} />
       </div>
     </Popup>
   );
@@ -3259,8 +3306,8 @@ const localBest = { get: () => Number(store.get("tb:marathonBest")) || 0, set: (
 const cloneMarathon = (s) => ({ ...s, board: s.board.map((r) => r.slice()), hand: s.hand.slice(), bag: s.bag.slice() });
 
 /** A piece drawn small, for the tray (and, at full size, under your finger). */
-function MPiece({ id, cell, gap, ink, faint = false }) {
-  const p = M_PIECES[id];
+function MPiece({ id, rot = 0, cell, gap, ink, faint = false }) {
+  const p = mShape(id, rot);
   return (
     <div className="relative" style={{ width: p.w * cell + (p.w - 1) * gap, height: p.h * cell + (p.h - 1) * gap, opacity: faint ? 0.35 : 1 }}>
       {p.cells.map(([r, c]) => (
@@ -3276,11 +3323,13 @@ function MarathonGame({ theme, onExit }) {
   useEffect(() => { sky.slow = true; return () => { sky.slow = false; }; }, []);
   const P = usePx();
   const compact = useCompact();
+  const railD = useBubble(compact);
   const [stageRef, stage] = useSize();
   const boardRef = useRef(null);
   // A seed from the server makes the score count on T-Terminal; offline, a local one.
   const [game, setGame] = useState(null);           // { st, seed, official }
   const [sel, setSel] = useState(null);             // hand slot picked up
+  const [rots, setRots] = useState([0, 0, 0]);      // how each piece in hand is turned
   const [ptr, setPtr] = useState(null);             // { x, y, touch, drag } while a piece is held
   const [vanish, setVanish] = useState(null);       // cleared squares, animating
   const [flash, setFlash] = useState(null);         // "+120 · COMBO ×3"
@@ -3322,13 +3371,14 @@ function MarathonGame({ theme, onExit }) {
     if (!st || sel === null || !ptr || !ptr.rect) return null;
     const rect = ptr.rect;
     const scale = rect.width / boardW || 1;
-    const p = M_PIECES[st.hand[sel]];
+    const rot = rots[sel];
+    const p = mShape(st.hand[sel], rot);
     const lift = ptr.touch ? 3 * cell * scale : 0;
     const x = (ptr.x - rect.left) / scale, y = (ptr.y - lift - rect.top) / scale;
     const c0 = Math.floor(x / (cell + g)) - Math.floor((p.w - 1) / 2), r0 = Math.floor(y / (cell + g)) - Math.floor((p.h - 1) / 2);
     if (x < -cell * 2 || y < -cell * 2 || x > boardW + cell * 2 || y > boardW + cell * 2) return null;
-    return { r: r0, c: c0, ok: mFits(st.board, st.hand[sel], r0, c0), cells: p.cells.map(([dr, dc]) => [r0 + dr, c0 + dc]) };
-  }, [st, sel, ptr, cell, g, boardW]);
+    return { r: r0, c: c0, ok: mFits(st.board, st.hand[sel], r0, c0, rot), cells: p.cells.map(([dr, dc]) => [r0 + dr, c0 + dc]) };
+  }, [st, sel, ptr, cell, g, boardW, rots]);
 
   const finish = (reason, s) => {
     setEnded({ reason });
@@ -3342,8 +3392,10 @@ function MarathonGame({ theme, onExit }) {
   const place = (slot, r, c) => {
     if (!st || over) return false;
     const next = cloneMarathon(st);
-    if (!mPlace(next, slot, r, c)) { sfx.illegal(); return false; }
-    movesRef.current.push([slot, r, c]);
+    const rot = rots[slot];
+    if (!mPlace(next, slot, r, c, rot)) { sfx.illegal(); return false; }
+    movesRef.current.push([slot, r, c, rot]);
+    setRots((rs) => rs.map((x, i) => (i === slot ? 0 : x))); // the new piece arrives unturned
     const L = next.last;
     sfx.lockIn("place");
     if (L.cleared.length) {
@@ -3386,22 +3438,29 @@ function MarathonGame({ theme, onExit }) {
     return () => window.removeEventListener("pointerup", release);
   });
 
-  // Keys: 1–3 pick a piece, Esc puts it down.
+  // Turning: R, the turn button, or tapping the piece you already picked.
+  const turn = (slot) => {
+    if (slot === null || slot === undefined) return;
+    setRots((rs) => rs.map((x, i) => (i === slot ? (x + 1) % 4 : x)));
+    sfx.rotate(1);
+  };
+  // Keys: 1–3 pick a piece, R turns it, Esc puts it down.
   useEffect(() => {
     const onKey = (e) => {
       const t = e.target;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
       if (["1", "2", "3"].includes(e.key) && st && !over) { const i = Number(e.key) - 1; setSel(i); sfx.pick(); setPtr((p) => p || null); }
+      if ((e.key === "r" || e.key === "R") && st && !over) { e.preventDefault(); turn(sel ?? 0); if (sel === null) setSel(0); }
       if (e.key === "Escape") { setSel(null); setPtr(null); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [st, over]);
+  });
 
   const pickUp = (slot, e) => {
     if (!st || over) return;
     e.preventDefault();
-    if (sel === slot && !(ptr && ptr.drag)) { setSel(null); setPtr(null); return; }
+    if (sel === slot && !(ptr && ptr.drag)) { turn(slot); setPtr({ x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, rect: boardRef.current?.getBoundingClientRect() || null, touch: e.pointerType !== "mouse", drag: false }); return; }
     setSel(slot);
     sfx.pick();
     setPtr({ x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, rect: boardRef.current?.getBoundingClientRect() || null, touch: e.pointerType !== "mouse", drag: false });
@@ -3425,7 +3484,9 @@ function MarathonGame({ theme, onExit }) {
   }
 
   const ghostKeys = new Set((ghost?.cells || []).map(([r, c]) => r * M_SIZE + c));
-  const hint = st && !over && sel === null ? (compact ? "drag a piece onto the board" : "pick a piece: click or drag, or press 1–3") : "";
+  const hint = st && !over ? (sel === null
+    ? (compact ? "tap a piece to turn it, drag it onto the board" : "pick a piece: click or drag, or press 1–3")
+    : (compact ? "tap it again to turn it" : "R or click it again to turn it")) : "";
   const slotPx = slotArt * P;
   const tray = st && (
     <div className={`flex ${compact ? "flex-row" : "flex-col"} items-center`} style={{ gap: 3 * P, ...(compact ? { width: boardW, justifyContent: "space-between" } : { height: boardW }) }}>
@@ -3436,14 +3497,17 @@ function MarathonGame({ theme, onExit }) {
           return (
             <button key={i} aria-label={`Piece ${i + 1}${can ? "" : " (doesn't fit)"}`} onPointerDown={(e) => pickUp(i, e)}
               className="relative flex items-center justify-center" style={{ width: slotPx, height: slotPx, touchAction: "none", ...glass(held ? UI.text : UI.line), opacity: over ? 0.5 : 1 }}>
-              {!(held && ptr?.drag) && <MPiece id={id} cell={trayCellArt * P} gap={P} ink={M_INK[id]} faint={!can} />}
+              {!(held && ptr?.drag) && <MPiece id={id} rot={rots[i]} cell={trayCellArt * P} gap={P} ink={M_INK[id]} faint={!can} />}
               {!compact && <span className="absolute tb-t" style={{ left: 2 * P, top: P, color: UI.dim, opacity: 0.6 }}>{i + 1}</span>}
             </button>
           );
         })}
       </div>
       {!compact && <div className="flex-1" />}
-      <ForfeitButton compact={compact} disabled={over} onConfirm={() => { sfx.forfeit(); finish("forfeit", st); }} />
+      <div className={`flex ${compact ? "flex-row" : "flex-col"} items-center`} style={{ gap: 3 * P }}>
+        <Bubble w={railD} h={railD} label="Turn piece (R)" onClick={() => { if (sel === null) setSel(0); turn(sel ?? 0); }} disabled={over}><RotateCw /></Bubble>
+        <ForfeitButton compact={compact} disabled={over} onConfirm={() => { sfx.forfeit(); finish("forfeit", st); }} />
+      </div>
     </div>
   );
 
@@ -3512,7 +3576,7 @@ function MarathonGame({ theme, onExit }) {
       {/* The piece in hand follows the pointer while dragging. */}
       {st && sel !== null && ptr?.drag && (
         <div className="fixed pointer-events-none" style={{ left: ptr.x, top: ptr.y - (ptr.touch ? 3 * cell : 0), transform: "translate(-50%, -50%)", zIndex: 50, opacity: ghost?.ok ? 0.35 : 0.85 }}>
-          <MPiece id={st.hand[sel]} cell={cell} gap={g} ink={M_INK[st.hand[sel]]} />
+          <MPiece id={st.hand[sel]} rot={rots[sel]} cell={cell} gap={g} ink={M_INK[st.hand[sel]]} />
         </div>
       )}
     </div>

@@ -1,10 +1,10 @@
 /**
  * MARATHON — a solo block puzzle for high scores.
  *
- *   A 7×7 board, empty to start. You hold three pieces; place any of them
- *   anywhere it fits (no rotating). Only the slot you used is refilled, from
+ *   A 7×7 board, empty to start. You hold three pieces; turn any of them
+ *   (a quarter turn at a time) and place it anywhere it fits. Only the slot you used is refilled, from
  *   a shuffled bag, like the 1v1 queue. Fill a row or a column and it clears.
- *   The game ends when none of your three pieces fits anywhere.
+ *   The game ends when none of your three pieces fits anywhere, turned any way.
  *
  * Scoring:
  *   placing       1 point per square placed
@@ -15,8 +15,8 @@
  *                 a clear end it
  *
  * Every 10 lines the level goes up. Levels 1–2 are calm; from level 3 each
- * new bag carries more of the big, awkward pieces, so the board always
- * closes in eventually — and clears pay more the deeper you are.
+ * new bag carries 6 more of the big, awkward pieces (with no limit), so the
+ * board always closes in eventually — and clears pay more the deeper you are.
  *
  * Deterministic from the seed: the server replays a game's moves to check
  * its score (see server/index.js), and the client plays the same code.
@@ -34,13 +34,22 @@ export const HAND = 3;
  *                      bag is big pieces, and the board always closes in.
  * Then levels 1–2 made calm (no extra pieces): a one-move bot's median run
  * 75 → 82 moves, the two-move bot's longest 492 — still always ends.
+ * Then pieces could be turned, which made strong play far longer (same ramp:
+ * median 2480, longest 7745). Capped ramps couldn't hold it, so the ramp no
+ * longer stops (24 games each, two-move bot, rotation on):
+ *   +3/level, max 60   median 1803, longest 6987
+ *   +4/level, max 80   median 1132, longest 4375
+ *   +4/level, no max   median  683, longest 2081
+ *   +6/level, no max   median  590, longest 1281   ← this (a one-move bot:
+ *                      median 190, longest 379). Boards repeat on ~1% of moves:
+ *                      no loops, every run its own.
  */
 export const TUNING = {
   levelLines: 10,     // lines per level
   calmLevels: 2,      // the first levels have no extra big pieces: room to learn
   levelBonus: 0.1,    // clears score this much more per level above 1 (level 5: ×1.4)
-  extraPerLevel: 2,   // extra hard pieces per bag, per level after the first
-  maxExtra: 40,       // most extra hard pieces per bag
+  extraPerLevel: 6,   // extra hard pieces per bag, per level after the calm ones
+  maxExtra: Infinity, // no cap: deeper always means harder
   grace: 3,           // moves without a clear before the streak ends
 };
 export const LEVEL_LINES = TUNING.levelLines;
@@ -113,30 +122,45 @@ export function newMarathon(seed) {
   return st;
 }
 
-export function fits(board, piece, r, c) {
-  const p = PIECES[piece];
+/** A piece turned `rot` quarter turns clockwise: { cells, h, w }, top-left at 0,0. */
+const SHAPES = PIECES.map((p) => {
+  const out = [{ cells: p.cells, h: p.h, w: p.w }];
+  for (let k = 1; k < 4; k++) {
+    const prev = out[k - 1];
+    const cells = prev.cells.map(([r, c]) => [c, prev.h - 1 - r]);
+    out.push({ cells, h: prev.w, w: prev.h });
+  }
+  return out;
+});
+export const shapeOf = (piece, rot = 0) => SHAPES[piece][((rot % 4) + 4) % 4];
+
+export function fits(board, piece, r, c, rot = 0) {
+  const p = shapeOf(piece, rot);
   if (r < 0 || c < 0 || r + p.h > SIZE || c + p.w > SIZE) return false;
   return p.cells.every(([dr, dc]) => board[r + dr][c + dc] === null);
 }
 
+/** Does the piece fit anywhere, turned any way? */
 export function fitsAnywhere(board, piece) {
-  const p = PIECES[piece];
-  for (let r = 0; r + p.h <= SIZE; r++) for (let c = 0; c + p.w <= SIZE; c++) if (fits(board, piece, r, c)) return true;
+  for (let rot = 0; rot < 4; rot++) {
+    const p = shapeOf(piece, rot);
+    for (let r = 0; r + p.h <= SIZE; r++) for (let c = 0; c + p.w <= SIZE; c++) if (fits(board, piece, r, c, rot)) return true;
+  }
   return false;
 }
 
 export const anyFits = (st) => st.hand.some((id) => id !== null && fitsAnywhere(st.board, id));
 
 /**
- * Places hand slot `slot` with its top-left at (r, c). Mutates and returns
+ * Places hand slot `slot`, turned `rot` quarter turns, with its top-left at (r, c). Mutates and returns
  * `st`, with `st.last` describing the move ({ cells, cleared, rows, cols,
  * points, combo }), or returns null if the move isn't legal.
  */
-export function placePiece(st, slot, r, c, colour = null) {
-  if (st.over || !Number.isInteger(slot) || slot < 0 || slot >= HAND) return null;
+export function placePiece(st, slot, r, c, rot = 0, colour = null) {
+  if (st.over || !Number.isInteger(slot) || slot < 0 || slot >= HAND || !Number.isInteger(rot) || rot < 0 || rot > 3) return null;
   const id = st.hand[slot];
-  if (id === null || id === undefined || !Number.isInteger(r) || !Number.isInteger(c) || !fits(st.board, id, r, c)) return null;
-  const p = PIECES[id];
+  if (id === null || id === undefined || !Number.isInteger(r) || !Number.isInteger(c) || !fits(st.board, id, r, c, rot)) return null;
+  const p = shapeOf(id, rot);
   const cells = p.cells.map(([dr, dc]) => [r + dr, c + dc]);
   for (const [a, b] of cells) st.board[a][b] = colour ?? id;
 
@@ -166,19 +190,24 @@ export function placePiece(st, slot, r, c, colour = null) {
   st.moves += 1;
   st.hand[slot] = draw(st);
   st.over = !anyFits(st);
-  st.last = { slot, piece: id, cells, cleared, rows, cols, points, combo: lines ? st.combo : 0 };
+  st.last = { slot, piece: id, rot, cells, cleared, rows, cols, points, combo: lines ? st.combo : 0 };
   return st;
 }
 
-/** Moves as text for the wire: two base-36 characters each (slot·49 + row·7 + column). */
-export const encodeMoves = (moves) => moves.map(([s, r, c]) => (s * 49 + r * 7 + c).toString(36).padStart(2, "0")).join("");
+/**
+ * Moves as text for the wire: two base-36 characters each,
+ * ((rotation·3 + slot)·49 + row·7 + column). An unturned move reads the same
+ * as before rotation existed.
+ */
+export const encodeMoves = (moves) => moves.map(([s, r, c, rot = 0]) => ((rot * HAND + s) * 49 + r * 7 + c).toString(36).padStart(2, "0")).join("");
 export function decodeMoves(text) {
   if (typeof text !== "string" || text.length % 2 || !/^[0-9a-z]*$/.test(text)) return null;
   const out = [];
   for (let i = 0; i < text.length; i += 2) {
     const n = parseInt(text.slice(i, i + 2), 36);
-    if (!(n >= 0 && n < HAND * 49)) return null;
-    out.push([Math.floor(n / 49), Math.floor((n % 49) / 7), n % 7]);
+    if (!(n >= 0 && n < 4 * HAND * 49)) return null;
+    const k = Math.floor(n / 49);
+    out.push([k % HAND, Math.floor((n % 49) / 7), n % 7, Math.floor(k / HAND)]);
   }
   return out;
 }
@@ -193,7 +222,7 @@ export function replayMarathon(seed, moves) {
   const st = newMarathon(seed);
   for (let i = 0; i < moves.length; i++) {
     const m = moves[i];
-    if (!Array.isArray(m) || m.length !== 3 || !placePiece(st, m[0], m[1], m[2])) return { error: `illegal move ${i + 1}` };
+    if (!Array.isArray(m) || m.length < 3 || m.length > 4 || !placePiece(st, m[0], m[1], m[2], m[3] ?? 0)) return { error: `illegal move ${i + 1}` };
   }
   return { score: st.score, lines: st.lines, moves: st.moves, over: st.over };
 }

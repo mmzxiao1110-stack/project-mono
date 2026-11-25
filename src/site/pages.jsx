@@ -73,6 +73,12 @@ export function About() {
    NEWS — sea green
    ============================================================ */
 const NEWS = [
+  { v: "v0.11.0", date: "NOV 2026", title: "A NEW PLAY SCREEN", items: [
+    "PLAY opens a new screen: Marathon and Ranked up top, Turn Based, Private, Unranked and VS AI below.",
+    "Marathon pieces can be turned: R, the turn button, or tap a picked piece.",
+    "Your account sits on the menu; the small button is now sound on/off.",
+    "The menu music plays from its beginning.",
+  ] },
   { v: "v0.10.0", date: "NOV 2026", title: "MARATHON AND TURN BASED", items: [
     "One big PLAY button: ranked, unranked, private, Marathon and Turn Based in one place.",
     "Marathon: a solo high-score mode on a 7×7 board. Three pieces at a time, no rotating; only the piece you use is replaced. Clear rows and columns, chain clears for a streak.",
