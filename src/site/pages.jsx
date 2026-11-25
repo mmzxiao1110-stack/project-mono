@@ -73,6 +73,12 @@ export function About() {
    NEWS — sea green
    ============================================================ */
 const NEWS = [
+  { v: "v0.13.0", date: "NOV 2026", title: "CALMER PLAY SCREEN, ONE ACCOUNT PAGE", items: [
+    "PLAY: offline modes on the left, online on the right, clear glass cards, no more falling specks.",
+    "Your account page now holds your ranked stats and your Marathon best.",
+    "Menu: theme, replays, how to play and settings in one even row.",
+    "Fixed: a Marathon piece near the edge no longer shows up on the far side of the board.",
+  ] },
   { v: "v0.12.0", date: "NOV 2026", title: "A DREAMIER PLAY SCREEN", items: [
     "PLAY is a little night sky over the sea: stars, shooting stars, light rays and bubbles, with floating glass cards.",
     "Marathon: leave whenever you like and pick up where you left off (signed in).",

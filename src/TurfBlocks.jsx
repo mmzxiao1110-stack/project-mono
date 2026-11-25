@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef, useSyncExternalStore, createContext, useContext, useLayoutEffect } from "react";
 import {
   RotateCw, Check, SkipForward, ChevronLeft, Settings2, X,
-  BarChart3, Wifi, WifiOff, UserRound, LogOut,
+  Wifi, WifiOff, UserRound, LogOut,
   Palette, Lock, MailCheck, ShieldAlert, BookOpen, ChevronRight, Eraser, Pin, Film, Play, Pause, First,
   Chat, Terminal as TerminalIcon, Info, News as NewsIcon, Download as DownloadIcon, Help as HelpIcon,
-  Trophy, Stack, People, Robot, Speaker, SpeakerOff,
+  Trophy, Stack, People, Robot,
 } from "./pixelIcons.jsx";
 import { PlayerRecord } from "./site/terminal.jsx";
 import { apiGet } from "./site/api.js";
@@ -1850,7 +1850,7 @@ function StatCell({ label, value, sub, color }) {
   );
 }
 
-function StatsModal({ profile, status, onClose }) {
+function StatsModal({ profile, status, onClose, onLogout }) {
   // No profile has two very different causes. Saying "offline" for both sent
   // people hunting a server problem when they simply weren't signed in.
   // (Guests have a name but no ranked stats.)
@@ -1885,10 +1885,16 @@ function StatsModal({ profile, status, onClose }) {
   const next = ri < RANKS.length - 1 ? RANKS[ri + 1] : null;
   const toNext = next ? Math.max(0, Math.ceil(rankMin(ri + 1) - tr)) : 0;
   const winRate = st.games ? Math.round((st.wins / st.games) * 100) : 0;
+  const since = profile.createdAt ? new Date(profile.createdAt).toLocaleDateString(undefined, { month: "short", year: "numeric" }) : "—";
+  const mar = profile.marathon;
 
   return (
-    <Popup title="RANKED STATS" onClose={onClose}>
-      <div className="mt-4 rounded p-4" style={{ ...glass(UI.line) }}>
+    <Popup title="ACCOUNT" onClose={onClose}>
+      <div className="mt-4 flex items-baseline justify-between gap-3">
+        <span className="tb-t truncate" style={{ color: UI.text }}>{profile.name}</span>
+        <span className="tb-t shrink-0" style={{ color: UI.dim }}>since {since}</span>
+      </div>
+      <div className="mt-3 rounded p-4" style={{ ...glass(UI.line) }}>
         <div className="flex items-center gap-4">
           <div className="rounded flex items-center justify-center shrink-0"
             style={{ width: 74, height: 74, background: placed ? `${rank.color}1F` : UI.cell, ...sk(placed ? rank.color : UI.line) }}>
@@ -1959,6 +1965,16 @@ function StatsModal({ profile, status, onClose }) {
         <StatCell label="AVG TURF" value={st.squares ? st.squares.toFixed(1) : "–"} sub={st.special ? `${st.special.toFixed(1)} special` : "no data"} />
       </div>
 
+      {/* Marathon: your best, also on T-Terminal. */}
+      <div className="mt-5">
+        <div className="tb-t mb-2" style={{ color: UI.dim }}>MARATHON</div>
+        <div className="grid grid-cols-3 gap-2">
+          <StatCell label="BEST" value={mar?.best ? mar.best.toLocaleString("en-US") : "–"} sub={mar?.at ? new Date(mar.at).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "no score yet"} color={GOLD} />
+          <StatCell label="LINES" value={mar?.lines ?? "–"} sub="in your best" />
+          <StatCell label="GAMES" value={mar?.games ?? 0} sub={profile.marathonOpen ? `run saved · ${profile.marathonOpen.score}` : "finished"} />
+        </div>
+      </div>
+
       <div className="mt-5 mb-2">
         <div className="tb-t mb-2" style={{ color: UI.dim }}>RECENT MATCHES</div>
         {st.recent.length === 0 ? (
@@ -1985,9 +2001,15 @@ function StatsModal({ profile, status, onClose }) {
       </div>
 
       <div className="tb-t pt-3 pb-2" style={{ color: UI.dim, ...RULE_ABOVE }}>
-        Ranked only. Rating is Glicko-2 and computed on the server — TR is your rating,
+        Rating is Glicko-2 and computed on the server — TR is your rating,
         ± is how sure the system is about it. It narrows as you play.
       </div>
+      {onLogout && (
+        <button onClick={onLogout} className="w-full rounded tb-t flex items-center justify-center gap-2 mt-2 mb-1"
+          style={{ height: 44, ...sk(UI.line), color: UI.dim }}>
+          <LogOut size={13} /> SIGN OUT
+        </button>
+      )}
     </Popup>
   );
 }
@@ -2645,6 +2667,8 @@ function AccountModal({ profile, onLogout, onClose }) {
       </Popup>
     );
   }
+  // Signed in: your account and your stats are one page.
+  if (profile.stats) return <StatsModal profile={profile} status="online" onClose={onClose} onLogout={onLogout} />;
   const st = profile.stats;
   const tr = Math.round(profile.rating.r);
   const placed = st.games >= PLACEMENT_GAMES;
@@ -2937,17 +2961,6 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
   const rank = tr !== null ? RANKS[rankIndexFor(tr)] : null;
   const online = useOnline();
   const notice = useNotice();
-  const muted = !(theme.sound ?? 7) && !(theme.music ?? 5);
-  const toggleSound = () => {
-    if (muted) {
-      let back = { sound: 7, music: 5 };
-      try { back = { ...back, ...JSON.parse(store.get("tb:unmute") || "{}") }; } catch { /* defaults */ }
-      setTheme({ ...theme, sound: back.sound || 7, music: back.music || 5 });
-    } else {
-      store.set("tb:unmute", JSON.stringify({ sound: theme.sound ?? 7, music: theme.music ?? 5 }));
-      setTheme({ ...theme, sound: 0, music: 0 });
-    }
-  };
 
   return (
     <div className="tb-screen tb-safe relative w-full flex items-center justify-center px-5 font-mono overflow-hidden" style={{ color: UI.text }}>
@@ -2997,38 +3010,14 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
           </a>
         </div>
 
-        <div className="flex justify-between">
-          <div className="flex gap-2.5">
-            <button onClick={() => onPick("REPLAYS")} aria-label="Replays"
-              className="rounded flex items-center justify-center"
-              style={{ width: 44, height: 44, ...glass(UI.line) }}>
-              <Film size={17} style={{ color: UI.dim }} />
+        {/* Four, evenly: theme, replays, how to play, settings. */}
+        <div className="grid grid-cols-4 gap-2.5">
+          {[["THEME", "Theme", Palette], ["REPLAYS", "Replays", Film], ["HOWTO", "How to play", BookOpen], ["SETTINGS", "Settings", Settings2]].map(([k, label, Icon]) => (
+            <button key={k} onClick={() => (k === "REPLAYS" ? onPick("REPLAYS") : setModal(k))} aria-label={label}
+              className="rounded flex items-center justify-center" style={{ height: 44, ...glass(UI.line) }}>
+              <Icon size={17} style={{ color: UI.dim }} />
             </button>
-            <button onClick={() => setModal("HOWTO")} aria-label="How to play"
-              className="rounded flex items-center justify-center"
-              style={{ width: 44, height: 44, ...glass(UI.line) }}>
-              <BookOpen size={17} style={{ color: UI.dim }} />
-            </button>
-            <button onClick={() => setModal("THEME")} aria-label="Theme"
-              className="rounded flex items-center justify-center"
-              style={{ width: 44, height: 44, ...glass(UI.line) }}>
-              <Palette size={17} style={{ color: UI.dim }} />
-            </button>
-          </div>
-          <div className="flex gap-2.5">
-            {/* Sound on/off in one tap (Settings has the volumes). */}
-            <button onClick={toggleSound} aria-label={muted ? "Sound on" : "Sound off"} aria-pressed={muted}
-              className="rounded flex items-center justify-center"
-              style={{ width: 44, height: 44, ...glass(UI.line) }}>
-              {muted ? <SpeakerOff style={{ color: UI.dim }} /> : <Speaker style={{ color: UI.dim }} />}
-            </button>
-            <button onClick={() => setModal("STATS")} aria-label="Stats" className="rounded flex items-center justify-center" style={{ width: 44, height: 44, ...glass(UI.line) }}>
-              <BarChart3 size={17} style={{ color: UI.dim }} />
-            </button>
-            <button onClick={() => setModal("SETTINGS")} aria-label="Settings" className="rounded flex items-center justify-center" style={{ width: 44, height: 44, ...glass(UI.line) }}>
-              <Settings2 size={17} style={{ color: UI.dim }} />
-            </button>
-          </div>
+          ))}
         </div>
 
         {/* The site: each page in its own colour. */}
@@ -3089,66 +3078,38 @@ function DreamCanvas({ theme }) {
     const PIX = 3; // one scene pixel = 3 layout pixels (zoomed with the popup)
     let W = 1, H = 1, img = null;
     const size = () => {
-      const r = cv.parentElement.getBoundingClientRect();
-      const zoom = r.width / (cv.parentElement.offsetWidth || 1) || 1;
       W = Math.max(1, Math.ceil(cv.parentElement.offsetWidth / PIX));
-      H = Math.max(1, Math.ceil(cv.parentElement.offsetHeight / PIX));
+      H = Math.max(1, Math.ceil(cv.parentElement.scrollHeight / PIX));
       cv.width = W; cv.height = H;
       cv.style.width = `${W * PIX}px`; cv.style.height = `${H * PIX}px`;
       img = ctx.createImageData(W, H);
-      return zoom;
     };
     size();
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(size) : null;
     ro?.observe(cv.parentElement);
 
     const space = mixRgb(rgbOf(theme.ground), [0, 0, 10], 0.35);
-    const nebula = rgbOf(theme.special);        // lavender, by default
-    const sea = rgbOf(theme.you);               // teal
+    const nebula = rgbOf(theme.special);
+    const sea = rgbOf(theme.you);
     const deep = mixRgb(rgbOf(theme.ground), sea, 0.18);
+    const light = rgbOf(theme.text);
     const BANDS = [space, mixRgb(space, nebula, 0.16), mixRgb(space, nebula, 0.27), mixRgb(mixRgb(space, nebula, 0.3), sea, 0.3), mixRgb(deep, sea, 0.32), mixRgb(deep, sea, 0.22), deep];
-    const stars = Array.from({ length: 70 }, () => ({ x: Math.random(), y: Math.random() * 0.5, p: Math.random() * 6.3, s: 0.6 + Math.random() * 1.6, big: Math.random() < 0.12 }));
-    const bubbles = Array.from({ length: 22 }, () => ({ x: Math.random(), y: 0.5 + Math.random() * 0.55, v: 0.02 + Math.random() * 0.035, p: Math.random() * 6.3, big: Math.random() < 0.35 }));
-    const cream = rgbOf(theme.text);
-    let shoot = null;
-
-    const put = (x, y, c, a) => {
-      x = Math.round(x); y = Math.round(y);
-      if (x < 0 || y < 0 || x >= W || y >= H) return;
-      const o = (y * W + x) * 4, d = img.data;
-      d[o] += (c[0] - d[o]) * a; d[o + 1] += (c[1] - d[o + 1]) * a; d[o + 2] += (c[2] - d[o + 2]) * a;
-    };
     const draw = (t) => {
-      const s = t / 1000, d = img.data;
+      const s2 = t / 1000, d = img.data;
       for (let y = 0; y < H; y++) {
         const fy = (y / Math.max(1, H - 1)) * (BANDS.length - 1);
         for (let x = 0; x < W; x++) {
           const th = BAYER[(y & 3) * 4 + (x & 3)];
-          const wave = y > H * 0.45 ? Math.sin(x * 0.18 + s * 1.1 + y * 0.05) * 0.35 : Math.sin(x * 0.07 - s * 0.3) * 0.2;
-          const bi = Math.max(0, Math.min(BANDS.length - 1, Math.floor(fy + wave + th)));
-          let c = BANDS[bi];
+          const wave = y > H * 0.45 ? Math.sin(x * 0.18 + s2 * 1.1 + y * 0.05) * 0.35 : Math.sin(x * 0.07 - s2 * 0.3) * 0.2;
+          let c = BANDS[Math.max(0, Math.min(BANDS.length - 1, Math.floor(fy + wave + th)))];
           // Light rays falling into the water, drifting slowly.
           if (y > H * 0.48) {
-            const ray = Math.sin((x + y * 0.55) * 0.12 + s * 0.4) + Math.sin((x - y * 0.3) * 0.05 - s * 0.25);
-            if (ray > 1.15 + th * 0.4) c = mixRgb(c, cream, 0.09);
+            const ray = Math.sin((x + y * 0.55) * 0.12 + s2 * 0.4) + Math.sin((x - y * 0.3) * 0.05 - s2 * 0.25);
+            if (ray > 1.15 + th * 0.4) c = mixRgb(c, light, 0.08);
           }
           const o = (y * W + x) * 4;
           d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = 255;
         }
-      }
-      for (const st of stars) {
-        const tw = (Math.sin(st.p + s * st.s) + 1) / 2;
-        const x = st.x * W, y = st.y * H;
-        put(x, y, cream, 0.25 + 0.6 * tw);
-        if (st.big && tw > 0.6) { put(x - 1, y, cream, 0.3); put(x + 1, y, cream, 0.3); put(x, y - 1, cream, 0.3); put(x, y + 1, cream, 0.3); }
-      }
-      if (shoot) {
-        for (let k = 0; k < 9; k++) put(shoot.x - k * 1.6, shoot.y - k * 0.6, cream, 0.8 - k * 0.09);
-      }
-      for (const b of bubbles) {
-        const x = b.x * W + Math.sin(b.p + s * 1.7) * 1.5, y = b.y * H;
-        if (b.big) { put(x, y - 1, cream, 0.35); put(x - 1, y, cream, 0.35); put(x + 1, y, cream, 0.25); put(x, y + 1, cream, 0.2); }
-        else put(x, y, cream, 0.35);
       }
       ctx.putImageData(img, 0, 0);
     };
@@ -3156,15 +3117,7 @@ function DreamCanvas({ theme }) {
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     if (!theme.motion || reduced) return () => ro?.disconnect();
     let raf, last = 0;
-    const loop = (t) => {
-      raf = requestAnimationFrame(loop);
-      if (t - last < 80 || document.hidden) return;
-      const dt = Math.min(0.3, (t - last) / 1000); last = t;
-      for (const b of bubbles) { b.y -= b.v * dt; if (b.y < 0.46) { b.y = 1.03; b.x = Math.random(); } }
-      if (shoot) { shoot.x += 70 * dt; shoot.y += 26 * dt; if (shoot.x > W + 12) shoot = null; }
-      else if (Math.random() < dt * 0.12) shoot = { x: Math.random() * W * 0.5, y: Math.random() * H * 0.2 };
-      draw(t);
-    };
+    const loop = (t) => { raf = requestAnimationFrame(loop); if (t - last < 90 || document.hidden) return; last = t; draw(t); };
     raf = requestAnimationFrame(loop);
     return () => { cancelAnimationFrame(raf); ro?.disconnect(); };
   }, [theme.ground, theme.you, theme.special, theme.text, theme.motion]);
@@ -3173,74 +3126,29 @@ function DreamCanvas({ theme }) {
 
 const MODE_INK = { ranked: "#7CC7BF", unranked: "#B4A3EE", ai: "#EAD6A4", marathon: "#F2B880", turns: "#EC93B8", private: "#A3D98C" };
 
-/** Marathon's little scene: a stack on a tiny board, a block dropping onto it. */
-function MarathonArt({ ink }) {
-  const cells = [[4, 0], [4, 1], [4, 2], [4, 4], [3, 0], [3, 1], [3, 4], [2, 0]];
-  const sq = 10;
-  return (
-    <div className="relative shrink-0" style={{ width: 5 * sq + 4, height: 5 * sq + 4 }} aria-hidden="true">
-      {cells.map(([r, c], i) => (
-        <span key={i} className="absolute" style={{ left: c * (sq + 1), top: r * (sq + 1), width: sq, height: sq,
-          background: i % 3 === 0 ? ink : i % 3 === 1 ? MODE_INK.turns : MODE_INK.ranked,
-          boxShadow: "inset 2px 2px 0 rgba(255,255,255,.45), inset -2px -2px 0 rgba(0,0,0,.25)" }} />
-      ))}
-      {/* The falling piece. */}
-      <span className="absolute tb-drop-in" style={{ left: 3 * (sq + 1), top: 0, width: sq, height: sq * 2 + 1 }}>
-        <span className="absolute" style={{ left: 0, top: 0, width: sq, height: sq, background: "var(--tb-text)", boxShadow: "inset -2px -2px 0 rgba(0,0,0,.2)" }} />
-        <span className="absolute" style={{ left: 0, top: sq + 1, width: sq, height: sq, background: "var(--tb-text)", boxShadow: "inset -2px -2px 0 rgba(0,0,0,.2)" }} />
-      </span>
-    </div>
-  );
-}
-
-/** Ranked's little scene: the trophy, with sparkles winking around it. */
-function RankedArt({ ink }) {
-  const sparks = [[4, 2, "0s"], [46, 8, ".5s"], [8, 40, "1s"], [42, 38, "1.5s"]];
-  return (
-    <div className="relative shrink-0" style={{ width: 54, height: 54 }} aria-hidden="true">
-      <span className="absolute" style={{ left: 9, top: 9 }}><Trophy style={{ color: ink, width: "calc(var(--p) * 18)", height: "calc(var(--p) * 18)" }} /></span>
-      {sparks.map(([x, y, d], i) => (
-        <span key={i} className="absolute tb-twinkle" style={{ left: x, top: y, width: 6, height: 6, animationDelay: d,
-          background: "radial-gradient(circle, var(--tb-text) 30%, transparent 32%), linear-gradient(var(--tb-text), var(--tb-text)) center / 2px 6px no-repeat, linear-gradient(var(--tb-text), var(--tb-text)) center / 6px 2px no-repeat" }} />
-      ))}
-    </div>
-  );
-}
-
-/** A mode, as a pane of tinted glass that floats a little; light sweeps it on hover. */
-function ModeCard({ big = false, ink, icon: Icon, art = null, title, sub, note, onClick, disabled, delay = 0 }) {
-  const fill = (n) => `color-mix(in srgb, ${ink} ${n}%, transparent)`;
+/** A mode: a pane of clear, lightly tinted glass, like a board square. Light sweeps it on hover. */
+function ModeCard({ big = false, ink, icon: Icon, title, sub, note, onClick, disabled, delay = 0, h, style }) {
+  const tint = (n) => `color-mix(in srgb, ${ink} ${n}%, transparent)`;
   return (
     <button onClick={onClick} disabled={disabled} aria-label={title}
-      className="tb-card tb-float relative w-full h-full text-left flex flex-col overflow-hidden disabled:opacity-35"
+      className="tb-card tb-float relative w-full text-left flex flex-col overflow-hidden disabled:opacity-35"
       style={{
         animationDelay: `${delay}ms`,
-        minHeight: big ? 176 : 112, padding: big ? "14px 14px 12px" : "12px 10px 10px", gap: big ? 6 : 4,
-        borderWidth: "var(--p)", borderStyle: "solid", borderColor: fill(big ? 90 : 70), clipPath: CLIP,
-        // Tinted glass that darkens toward the bottom, so the words always read.
-        background: `linear-gradient(170deg, ${fill(big ? 34 : 26)} 0%, color-mix(in srgb, ${ink} 10%, color-mix(in srgb, var(--tb-ground) 45%, transparent)) 50%, color-mix(in srgb, var(--tb-ground) 72%, transparent) 100%)`,
-        textShadow: "var(--p) var(--p) 0 rgba(0,0,0,.55)",
-        boxShadow: `inset 0 var(--p) 0 ${fill(80)}, inset var(--p) 0 0 ${fill(40)}, inset 0 calc(var(--p) * -1) 0 rgba(0,0,0,.35), 0 0 18px ${fill(25)}`,
+        minHeight: h, padding: big ? "14px 16px 13px" : "11px 12px 10px", gap: big ? 6 : 4,
+        borderWidth: "var(--p)", borderStyle: "solid", borderColor: tint(big ? 75 : 55), clipPath: CLIP,
+        // Clear glass: the sky shows through, faintly tinted, lit along the top.
+        background: `color-mix(in srgb, ${ink} ${big ? 16 : 12}%, color-mix(in srgb, var(--tb-text) 8%, transparent))`,
+        boxShadow: `inset 0 var(--p) 0 color-mix(in srgb, var(--tb-text) 30%, transparent), inset var(--p) 0 0 color-mix(in srgb, var(--tb-text) 14%, transparent)`,
+        ...style,
       }}>
-      {/* The glint: a pixel streak in the corner, and the sweep on hover. */}
-      <span aria-hidden="true" className="absolute" style={{ left: 6, top: 6, width: 10, height: 2, background: "rgba(255,255,255,.55)" }} />
-      <span aria-hidden="true" className="absolute" style={{ left: 6, top: 8, width: 2, height: 6, background: "rgba(255,255,255,.4)" }} />
       <span aria-hidden="true" className="tb-sheen absolute inset-y-0" style={{ width: 28, left: -40, background: "linear-gradient(90deg, transparent, rgba(255,255,255,.22), transparent)" }} />
-      {big ? (
-        <>
-          <span className="flex justify-between items-start">{art}<span className="tb-t" style={{ color: fill(95) }}>{note}</span></span>
-          <span className="flex-1" />
-          <PixelWord text={title} from="var(--tb-text)" to={ink} />
-          <span className="tb-t" style={{ color: UI.text, opacity: 0.85 }}>{sub}</span>
-        </>
-      ) : (
-        <>
-          <Icon style={{ color: ink, width: "calc(var(--p) * 18)", height: "calc(var(--p) * 18)" }} />
-          <span className="flex-1" />
-          <span className="tb-t" style={{ color: ink }}>{title}</span>
-          <span className="tb-t" style={{ color: UI.text, opacity: 0.75 }}>{sub}</span>
-        </>
-      )}
+      <span className="flex justify-between items-start gap-2">
+        <Icon style={{ color: ink, ...(big ? { width: "calc(var(--p) * 18)", height: "calc(var(--p) * 18)" } : null) }} />
+        {note && <span className="tb-t text-right" style={{ color: ink }}>{note}</span>}
+      </span>
+      <span className="flex-1" />
+      {big ? <PixelWord text={title} from="var(--tb-text)" to={ink} /> : <span className="tb-t" style={{ color: ink }}>{title}</span>}
+      <span className="tb-t" style={{ color: UI.text, opacity: 0.8 }}>{sub}</span>
     </button>
   );
 }
@@ -3259,11 +3167,11 @@ function PlayModal({ theme, status, authed, verified, placed, rank, tr, onPick, 
     <div className="fixed inset-0 z-40 flex items-center justify-center tb-fade" onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
       style={{ padding: "clamp(12px, 4vw, 48px)", background: "repeating-conic-gradient(rgba(0,0,0,.45) 0 25%, rgba(0,0,0,.2) 0 50%) 0 0 / calc(var(--p) * 2) calc(var(--p) * 2)" }}>
       <PxContext.Provider value={BASE_P}>
-        <div className="tb-pop tb-scale relative w-full overflow-hidden" role="dialog" aria-label="Play"
+        <div className="tb-pop tb-scale tb-scroll relative w-full overflow-hidden" role="dialog" aria-label="Play"
           style={{ maxWidth: 680, maxHeight: "100%", overflowY: "auto", ...sk("color-mix(in srgb, var(--tb-text) 70%, transparent)"), background: "var(--tb-ground)" }}>
           <DreamCanvas theme={theme} />
           <div className="relative px-4 pb-4">
-            <div className="flex items-center justify-between pt-4 pb-3">
+            <div className="flex items-center justify-between pt-3 pb-2">
               <span style={{ width: 34 }} />
               <div className="flex flex-col items-center gap-1">
                 <PixelWord text="PLAY" from="var(--tb-text)" to="var(--tb-special)" />
@@ -3271,30 +3179,33 @@ function PlayModal({ theme, status, authed, verified, placed, rank, tr, onPick, 
               </div>
               <button onClick={onClose} aria-label="Close" className="p-2" style={{ color: UI.text, width: 34 }}><X /></button>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              {/* The two main modes. */}
-              <ModeCard big ink={MODE_INK.marathon} art={<MarathonArt ink={MODE_INK.marathon} />} title="MARATHON" delay={0}
-                sub={open ? `resume your run · ${open.score.toLocaleString("en-US")}` : "solo high score on a 7×7 board"}
-                note={best ? `BEST ${best.toLocaleString("en-US")}` : "NEW"} onClick={() => onPick("MARATHON")} />
-              <ModeCard big ink={rankedInk} art={<RankedArt ink={rankedInk} />} title="RANKED" delay={400}
-                sub={!online ? "needs the server" : !authed ? "account required" : !verified ? "verify your email first" : placed ? "rated 1v1 matches" : "10 games to a rank"}
-                note={online && authed && verified ? (placed ? `${rank.name} · ${tr}` : "UNPLACED") : null}
-                disabled={!online} onClick={() => onPick("MATCHMAKING")} />
-              {/* Under each, its two companions: side by side on a wide screen, stacked on a phone. */}
-              {(() => {
-                const turnBased = <ModeCard ink={MODE_INK.turns} icon={People} title="TURN BASED" sub="2 players, 1 device" delay={200} onClick={() => onPick("TURNBASED")} />;
-                const priv = <ModeCard ink={MODE_INK.private} icon={Lock} title="PRIVATE" sub={off || "room code"} delay={700} disabled={!online} onClick={() => onPick("PRIVATE")} />;
-                const unranked = <ModeCard ink={MODE_INK.unranked} icon={Wifi} title="UNRANKED" sub={off || "anyone, guests too"} delay={500} disabled={!online} onClick={() => onPick("UNRANKED")} />;
-                const ai = <ModeCard ink={MODE_INK.ai} icon={Robot} title="VS AI" sub="strength 1–10" delay={900} onClick={() => onPick("DIFFICULTY")} />;
-                return phone ? (
-                  <>{turnBased}{unranked}{priv}{ai}</>
-                ) : (
-                  <>
-                    <div className="grid grid-cols-2 gap-3">{turnBased}{priv}</div>
-                    <div className="grid grid-cols-2 gap-3">{unranked}{ai}</div>
-                  </>
-                );
-              })()}
+            {/* Two clusters, with room between them: offline on the left, online on the right. */}
+            <div className="flex items-start" style={{ gap: phone ? 14 : 26 }}>
+              <div className="flex flex-col min-w-0" style={{ flex: phone ? 1 : 1.12, gap: phone ? 10 : 12 }}>
+                <span className="tb-t" style={{ color: UI.text, opacity: 0.55 }}>OFFLINE</span>
+                <ModeCard big ink={MODE_INK.marathon} icon={Stack} title="MARATHON" h={phone ? 160 : 166} delay={0}
+                  sub={open ? `resume your run · ${open.score.toLocaleString("en-US")}` : "solo high score, 7×7"}
+                  note={best ? `BEST ${best.toLocaleString("en-US")}` : null} onClick={() => onPick("MARATHON")} />
+                <div className={phone ? "flex flex-col" : "flex items-start"} style={{ gap: phone ? 10 : 12 }}>
+                  <div style={{ flex: 1.35, width: "100%" }}>
+                    <ModeCard ink={MODE_INK.turns} icon={People} title="TURN BASED" sub="2 players, 1 device" h={phone ? 84 : 94} delay={300} onClick={() => onPick("TURNBASED")} />
+                  </div>
+                  <div style={{ flex: 1, width: "100%", marginTop: phone ? 0 : 14 }}>
+                    <ModeCard ink={MODE_INK.ai} icon={Robot} title="VS AI" sub="strength 1–10" h={phone ? 84 : 84} delay={800} onClick={() => onPick("DIFFICULTY")} />
+                  </div>
+                </div>
+              </div>
+              <div className="flex flex-col min-w-0" style={{ flex: 1, gap: phone ? 10 : 12, marginTop: phone ? 0 : 16 }}>
+                <span className="tb-t text-right" style={{ color: UI.text, opacity: 0.55 }}>ONLINE</span>
+                <ModeCard big ink={rankedInk} icon={Trophy} title="RANKED" h={phone ? 160 : 140} delay={500}
+                  sub={!online ? "needs the server" : !authed ? "account required" : !verified ? "verify your email" : placed ? "rated 1v1 matches" : "10 games to a rank"}
+                  note={online && authed && verified ? (placed ? `${rank.name} · ${tr}` : "UNPLACED") : null}
+                  disabled={!online} onClick={() => onPick("MATCHMAKING")} />
+                <ModeCard ink={MODE_INK.unranked} icon={Wifi} title="UNRANKED" sub={off || "anyone, guests too"} h={phone ? 84 : 70} delay={200} disabled={!online} onClick={() => onPick("UNRANKED")} />
+                <div style={{ width: phone ? "100%" : "84%", alignSelf: "flex-end" }}>
+                  <ModeCard ink={MODE_INK.private} icon={Lock} title="PRIVATE" sub={off || "a room code"} h={phone ? 84 : 70} delay={650} disabled={!online} onClick={() => onPick("PRIVATE")} />
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -3544,7 +3455,7 @@ function MarathonGame({ theme, onExit }) {
   const trayCellArt = compact ? 4 : 5;
   const slotArt = 5 * trayCellArt + 6;
   const availW = stage.w - (compact ? 0 : (slotArt + 8) * P);
-  const availH = stage.h - (TITLE_H + 26) * P - (compact ? (slotArt + 10) * P : 0);
+  const availH = stage.h - (TITLE_H + 26) * P - (railD + 6) * P - (compact ? (slotArt + 10) * P : 0);
   const cellArt = Math.max(6, Math.min(18, Math.floor(Math.min((availW - 6 * g) / M_SIZE, (availH - 6 * g) / M_SIZE) / P)));
   const cell = cellArt * P;
   const boardW = cell * M_SIZE + g * (M_SIZE - 1);
@@ -3685,13 +3596,14 @@ function MarathonGame({ theme, onExit }) {
     );
   }
 
-  const ghostKeys = new Set((ghost?.cells || []).map(([r, c]) => r * M_SIZE + c));
+  // Only squares actually on the board: one off the edge mustn't reappear on the far side.
+  const ghostKeys = new Set((ghost?.cells || []).filter(([r, c]) => r >= 0 && c >= 0 && r < M_SIZE && c < M_SIZE).map(([r, c]) => r * M_SIZE + c));
   const hint = st && !over ? (sel === null
     ? (compact ? "tap a piece to turn it, drag it onto the board" : "pick a piece: click or drag, or press 1–3")
     : (compact ? "tap it again to turn it" : "Q / E or click it again to turn it · Space drops it")) : "";
   const slotPx = slotArt * P;
   const tray = st && (
-    <div className={`flex ${compact ? "flex-row" : "flex-col"} items-center`} style={{ gap: 3 * P, ...(compact ? { width: boardW, justifyContent: "space-between" } : { height: boardW }) }}>
+    <div className={`flex ${compact ? "flex-row" : "flex-col"} items-center`} style={{ gap: 3 * P, ...(compact ? { width: boardW, justifyContent: "center" } : null) }}>
       <div className={`flex ${compact ? "flex-row" : "flex-col"}`} style={{ gap: 3 * P }}>
         {st.hand.map((id, i) => {
           const can = mFitsAnywhere(st.board, id);
@@ -3705,12 +3617,14 @@ function MarathonGame({ theme, onExit }) {
           );
         })}
       </div>
-      {!compact && <div className="flex-1" />}
-      <div className={`flex ${compact ? "flex-row" : "flex-col"} items-center`} style={{ gap: 3 * P }}>
-        <Bubble w={railD} h={railD} label="Turn piece (R)" onClick={() => { if (sel === null) setSel(0); turn(sel ?? 0); }} disabled={over}><RotateCw /></Bubble>
-        <Bubble w={railD} h={railD} label={game?.official ? "Leave (saved)" : "Leave"} onClick={leave} disabled={over}><LogOut /></Bubble>
-        <ForfeitButton compact={compact} disabled={over} onConfirm={() => { sfx.forfeit(); finish("forfeit", st); }} />
-      </div>
+    </div>
+  );
+  // Turn, leave and forfeit: a row at the bottom right, under the board.
+  const controls = st && (
+    <div className="flex items-center shrink-0" style={{ gap: 3 * P }}>
+      <Bubble w={railD} h={railD} label="Turn piece (R)" onClick={() => { if (sel === null) setSel(0); turn(sel ?? 0); }} disabled={over}><RotateCw /></Bubble>
+      <Bubble w={railD} h={railD} label={game?.official ? "Leave (saved)" : "Leave"} onClick={leave} disabled={over}><LogOut /></Bubble>
+      <ForfeitButton compact={compact} disabled={over} onConfirm={() => { sfx.forfeit(); finish("forfeit", st); }} />
     </div>
   );
 
@@ -3769,8 +3683,11 @@ function MarathonGame({ theme, onExit }) {
                 </div>
                 {tray}
               </div>
-              <BoardLine width={boardW} />
-              <div className="tb-t" style={{ color: UI.dim, opacity: 0.6, minHeight: 10 * P }}>{over ? "NO ROOM LEFT" : hint}</div>
+              <BoardLine width={compact ? boardW : boardW + (slotArt + 4) * P} />
+              <div className="flex items-start justify-between" style={{ width: compact ? boardW : boardW + (slotArt + 4) * P, gap: 4 * P }}>
+                <div className="tb-t min-w-0" style={{ color: UI.dim, opacity: 0.6 }}>{over ? "NO ROOM LEFT" : hint}</div>
+                {controls}
+              </div>
             </div>
           )}
           <div style={{ flex: 2, minHeight: 4 * P }} />
