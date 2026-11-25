@@ -21,7 +21,7 @@ import {
 import { aiPickAction } from "../shared/ai.js";
 import {
   SIZE as M_SIZE, PIECES as M_PIECES, newMarathon, newMarathonSeed, placePiece as mPlace, fits as mFits,
-  fitsAnywhere as mFitsAnywhere, levelOf as mLevelOf, encodeMoves,
+  fitsAnywhere as mFitsAnywhere, levelOf as mLevelOf, encodeMoves, TUNING as M_TUNING,
 } from "../shared/marathon.js";
 import { encodeAction, encodeTurn } from "../shared/notation.js";
 import { REPLAY_VERSION, buildFrames, exportReplay, importReplay } from "../shared/replay.js";
@@ -3284,6 +3284,7 @@ function MarathonGame({ theme, onExit }) {
   const [ptr, setPtr] = useState(null);             // { x, y, touch, drag } while a piece is held
   const [vanish, setVanish] = useState(null);       // cleared squares, animating
   const [flash, setFlash] = useState(null);         // "+120 · COMBO ×3"
+  const [levelUp, setLevelUp] = useState(null);     // { level, key }: the LEVEL UP moment
   const [ended, setEnded] = useState(null);         // { reason } once over
   const [showEnd, setShowEnd] = useState(false);
   const [result, setResult] = useState(null);       // the server's reply to our score
@@ -3351,6 +3352,12 @@ function MarathonGame({ theme, onExit }) {
       setTimeout(() => setVanish((v) => (v && v.key === next.moves ? null : v)), 700);
       setFlash({ text: `+${L.points}${L.combo > 1 ? ` · COMBO ×${L.combo}` : ""}`, key: next.moves });
       setTimeout(() => setFlash((f) => (f && f.key === next.moves ? null : f)), 1300);
+    }
+    const lv = mLevelOf(next.lines);
+    if (lv > mLevelOf(st.lines)) {
+      setTimeout(() => sfx.levelUp(), 350);
+      setLevelUp({ level: lv, key: next.moves });
+      setTimeout(() => setLevelUp((u) => (u && u.key === next.moves ? null : u)), 1900);
     }
     setGame({ ...game, st: next });
     setSel(null); setPtr(null);
@@ -3452,7 +3459,11 @@ function MarathonGame({ theme, onExit }) {
               {/* The high score on top, like the scores in a match. */}
               <div className="flex items-end justify-between tb-t" style={{ width: compact ? boardW : boardW + (slotArt + 4) * P, gap: 3 * P }}>
                 <div className="flex flex-col"><span style={{ color: UI.dim }}>SCORE</span><span className="tb-b tabular-nums" style={{ color: "var(--tb-you)" }}>{st.score.toLocaleString("en-US")}</span></div>
-                <div className="flex flex-col items-center"><span style={{ color: UI.dim }}>LEVEL {mLevelOf(st.lines)}</span><span className="tabular-nums" style={{ color: UI.dim }}>{st.lines} LINES</span></div>
+                <div className="flex flex-col items-center">
+                  <span style={{ color: UI.text }}>LEVEL {mLevelOf(st.lines)}{mLevelOf(st.lines) > 1 && <span style={{ color: GOLD }}> ×{(1 + M_TUNING.levelBonus * (mLevelOf(st.lines) - 1)).toFixed(1)}</span>}</span>
+                  {/* Always a near goal in view. */}
+                  <span className="tabular-nums" style={{ color: UI.dim }}>NEXT IN {M_TUNING.levelLines - (st.lines % M_TUNING.levelLines)} {M_TUNING.levelLines - (st.lines % M_TUNING.levelLines) === 1 ? "LINE" : "LINES"}</span>
+                </div>
                 <div className="flex flex-col items-end"><span style={{ color: UI.dim }}>BEST</span><span className="tb-b tabular-nums" style={{ color: GOLD }}>{Math.max(best, st.score).toLocaleString("en-US")}</span></div>
               </div>
               <div className={`flex ${compact ? "flex-col" : "flex-row"} items-start`} style={{ gap: 4 * P }}>
@@ -3470,8 +3481,19 @@ function MarathonGame({ theme, onExit }) {
                   </div>
                   {vanish && <VanishLayer key={vanish.key} cleared={vanish.cleared} cell={cell} gap={g} ink={M_INK} />}
                   {flash && (
-                    <div key={flash.key} className="absolute inset-x-0 flex justify-center pointer-events-none tb-rise" style={{ top: -9 * P, zIndex: 4 }}>
+                    <div key={flash.key} className="absolute flex pointer-events-none tb-rise" style={{ left: 0, bottom: -11 * P, zIndex: 4 }}>
                       <span className="tb-t tb-b" style={{ color: GOLD, textShadow: `${P}px ${P}px 0 rgba(0,0,0,.6)` }}>{flash.text}</span>
+                    </div>
+                  )}
+                  {levelUp && (
+                    // LEVEL UP: the board lights up and the new level drops in.
+                    <div key={levelUp.key} className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none tb-fade" style={{ zIndex: 5,
+                      background: "radial-gradient(closest-side, color-mix(in srgb, var(--tb-special) 30%, transparent), transparent)" }}>
+                      <div className="flex flex-col items-center tb-rise" style={{ gap: 2 * P, padding: `${5 * P}px ${7 * P}px`, clipPath: CLIP,
+                        background: "color-mix(in srgb, var(--tb-panel-solid) 88%, transparent)", boxShadow: `inset 0 0 0 ${P}px var(--tb-special)` }}>
+                        <PixelWord text="LEVEL UP" from="var(--tb-text)" to="var(--tb-special)" />
+                        <span className="tb-t" style={{ color: GOLD }}>LEVEL {levelUp.level} · CLEARS ×{(1 + M_TUNING.levelBonus * (levelUp.level - 1)).toFixed(1)}</span>
+                      </div>
                     </div>
                   )}
                   {st.combo > 1 && !over && (

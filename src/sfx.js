@@ -551,6 +551,15 @@ export const sfx = {
     });
   },
 
+  /** Marathon: a new level — a rising run, a chord, a rush of bubbles. */
+  levelUp() {
+    play("levelUp", 800, (c, t) => {
+      [10, 12, 13, 15, 17, 20].forEach((i, k) => tone(c, t + k * 0.06, { wave: "p25", f: note(i), vol: 0.06, d: 0.16, wet: 0.35, pan: (k / 5 - 0.5) * 0.6 }));
+      [15, 17, 20].forEach((i, k) => tone(c, t + 0.38 + k * 0.012, { wave: "triangle", f: note(i), vol: 0.06, hold: 0.15, d: 1.1, wet: 0.7, vib: 0.006 }));
+      fizz(c, t + 0.38, 12, 0.8, { lo: 700, hi: 2200, vol: 0.05, spread: 0.8 });
+    });
+  },
+
   /** A chat line from your opponent: two soft bubbles. */
   chat() {
     play("chat", 250, (c, t) => {

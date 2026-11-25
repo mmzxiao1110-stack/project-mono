@@ -10,11 +10,13 @@
  *   placing       1 point per square placed
  *   clearing      10 points per square cleared, × the lines cleared at once,
  *                 × your combo (1 + the clears in your current streak)
+ *                 × the level bonus (+10% a level: level 5 pays ×1.4)
  *   streak        a clear continues the streak; three moves in a row without
  *                 a clear end it
  *
- * Every LEVEL_LINES lines the level goes up, and each new bag carries more
- * of the big, awkward pieces — so the board always closes in eventually.
+ * Every 10 lines the level goes up. Levels 1–2 are calm; from level 3 each
+ * new bag carries more of the big, awkward pieces, so the board always
+ * closes in eventually — and clears pay more the deeper you are.
  *
  * Deterministic from the seed: the server replays a game's moves to check
  * its score (see server/index.js), and the client plays the same code.
@@ -30,9 +32,13 @@ export const HAND = 3;
  *   +2/level, max 40   median  209, longest  440   ← this: typical games the
  *                      same, but no endless runs. Past level 20 most of every
  *                      bag is big pieces, and the board always closes in.
+ * Then levels 1–2 made calm (no extra pieces): a one-move bot's median run
+ * 75 → 82 moves, the two-move bot's longest 492 — still always ends.
  */
 export const TUNING = {
   levelLines: 10,     // lines per level
+  calmLevels: 2,      // the first levels have no extra big pieces: room to learn
+  levelBonus: 0.1,    // clears score this much more per level above 1 (level 5: ×1.4)
   extraPerLevel: 2,   // extra hard pieces per bag, per level after the first
   maxExtra: 40,       // most extra hard pieces per bag
   grace: 3,           // moves without a clear before the streak ends
@@ -83,7 +89,7 @@ export const levelOf = (lines) => 1 + Math.floor(lines / TUNING.levelLines);
 
 /** A fresh bag for this level: every piece once, plus extra hard ones, shuffled. */
 function fillBag(st) {
-  const extra = Math.min(TUNING.maxExtra, TUNING.extraPerLevel * (levelOf(st.lines) - 1));
+  const extra = Math.min(TUNING.maxExtra, TUNING.extraPerLevel * Math.max(0, levelOf(st.lines) - TUNING.calmLevels));
   const bag = PIECES.map((_, i) => i);
   for (let k = 0; k < extra; k++) bag.push(HARD[Math.floor(st.rand() * HARD.length)]);
   for (let i = bag.length - 1; i > 0; i--) { const j = Math.floor(st.rand() * (i + 1)); [bag[i], bag[j]] = [bag[j], bag[i]]; }
@@ -151,7 +157,9 @@ export function placePiece(st, slot, r, c, colour = null) {
   if (lines) {
     st.combo += 1;
     st.sinceClear = 0;
-    points += 10 * cleared.length * lines * st.combo;
+    // Deeper levels pay more: surviving the hard pieces is worth it.
+    const boost = 1 + TUNING.levelBonus * (levelOf(st.lines) - 1);
+    points += Math.round(10 * cleared.length * lines * st.combo * boost);
   } else if (++st.sinceClear >= TUNING.grace) st.combo = 0;
   st.score += points;
   st.lines += lines;

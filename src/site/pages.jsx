@@ -76,6 +76,7 @@ const NEWS = [
   { v: "v0.10.0", date: "NOV 2026", title: "MARATHON AND TURN BASED", items: [
     "One big PLAY button: ranked, unranked, private, Marathon and Turn Based in one place.",
     "Marathon: a solo high-score mode on a 7×7 board. Three pieces at a time, no rotating; only the piece you use is replaced. Clear rows and columns, chain clears for a streak.",
+    "Marathon levels: every 10 lines is a new level. Levels 1–2 are calm, then big pieces start to appear, and every level makes your clears worth 10% more.",
     "Marathon high scores on T-Terminal, every one checked by replaying the game on the server.",
     "Turn Based: two players, one device, a 7×7 board, taking turns.",
     "New music: Butterfly on the menu; Initial Wave, Lullaby, Water Light and Wave Effect in game.",
