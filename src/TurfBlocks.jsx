@@ -3088,22 +3088,22 @@ function DreamCanvas({ theme }) {
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(size) : null;
     ro?.observe(cv.parentElement);
 
-    const space = mixRgb(rgbOf(theme.ground), [0, 0, 10], 0.35);
     const nebula = rgbOf(theme.special);
     const sea = rgbOf(theme.you);
     const deep = mixRgb(rgbOf(theme.ground), sea, 0.18);
     const light = rgbOf(theme.text);
-    const BANDS = [space, mixRgb(space, nebula, 0.16), mixRgb(space, nebula, 0.27), mixRgb(mixRgb(space, nebula, 0.3), sea, 0.3), mixRgb(deep, sea, 0.32), mixRgb(deep, sea, 0.22), deep];
+    // The sea's gradient from top to bottom: no dark space above it here.
+    const BANDS = [mixRgb(mixRgb(deep, nebula, 0.12), sea, 0.44), mixRgb(deep, sea, 0.38), mixRgb(deep, sea, 0.33), mixRgb(deep, sea, 0.28), mixRgb(deep, sea, 0.23), mixRgb(deep, sea, 0.17), deep];
     const draw = (t) => {
       const s2 = t / 1000, d = img.data;
       for (let y = 0; y < H; y++) {
         const fy = (y / Math.max(1, H - 1)) * (BANDS.length - 1);
         for (let x = 0; x < W; x++) {
           const th = BAYER[(y & 3) * 4 + (x & 3)];
-          const wave = y > H * 0.45 ? Math.sin(x * 0.18 + s2 * 1.1 + y * 0.05) * 0.35 : Math.sin(x * 0.07 - s2 * 0.3) * 0.2;
+          const wave = Math.sin(x * 0.18 + s2 * 1.1 + y * 0.05) * 0.35;
           let c = BANDS[Math.max(0, Math.min(BANDS.length - 1, Math.floor(fy + wave + th)))];
           // Light rays falling into the water, drifting slowly.
-          if (y > H * 0.48) {
+          {
             const ray = Math.sin((x + y * 0.55) * 0.12 + s2 * 0.4) + Math.sin((x - y * 0.3) * 0.05 - s2 * 0.25);
             if (ray > 1.15 + th * 0.4) c = mixRgb(c, light, 0.08);
           }
@@ -3124,7 +3124,7 @@ function DreamCanvas({ theme }) {
   return <canvas ref={ref} aria-hidden="true" style={{ position: "absolute", left: 0, top: 0, imageRendering: "pixelated", pointerEvents: "none" }} />;
 }
 
-const MODE_INK = { ranked: "#7CC7BF", unranked: "#B4A3EE", ai: "#EAD6A4", marathon: "#F2B880", turns: "#EC93B8", private: "#A3D98C" };
+const MODE_INK = { ranked: "#E8C95A", unranked: "#A9A7B4", ai: "#B9B6AC", marathon: "#8FD694", turns: "#EC93B8", private: "#A68BF0" };
 
 /** A mode: a pane of clear, lightly tinted glass, like a board square. Light sweeps it on hover. */
 function ModeCard({ big = false, ink, icon: Icon, title, sub, note, onClick, disabled, delay = 0, h, style }) {
@@ -3162,7 +3162,7 @@ function PlayModal({ theme, status, authed, verified, placed, rank, tr, onPick, 
   const best = Math.max(Number(store.get("tb:marathonBest")) || 0, net.profile?.marathon?.best || 0);
   const open = net.profile?.marathonOpen;
   const off = online ? null : "needs the server";
-  const rankedInk = authed && verified && placed ? rank.color : MODE_INK.ranked;
+  const rankedInk = MODE_INK.ranked;
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center tb-fade" onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
       style={{ padding: "clamp(12px, 4vw, 48px)", background: "repeating-conic-gradient(rgba(0,0,0,.45) 0 25%, rgba(0,0,0,.2) 0 50%) 0 0 / calc(var(--p) * 2) calc(var(--p) * 2)" }}>
@@ -3181,28 +3181,28 @@ function PlayModal({ theme, status, authed, verified, placed, rank, tr, onPick, 
             </div>
             {/* Two clusters, with room between them: offline on the left, online on the right. */}
             <div className="flex items-start" style={{ gap: phone ? 14 : 26 }}>
-              <div className="flex flex-col min-w-0" style={{ flex: phone ? 1 : 1.12, gap: phone ? 10 : 12 }}>
+              <div className="flex flex-col min-w-0" style={{ flex: 1, gap: phone ? 10 : 12 }}>
                 <span className="tb-t" style={{ color: UI.text, opacity: 0.55 }}>OFFLINE</span>
-                <ModeCard big ink={MODE_INK.marathon} icon={Stack} title="MARATHON" h={phone ? 160 : 166} delay={0}
+                <ModeCard big ink={MODE_INK.marathon} icon={Stack} title="MARATHON" h={phone ? 160 : 150} delay={0}
                   sub={open ? `resume your run · ${open.score.toLocaleString("en-US")}` : "solo high score, 7×7"}
                   note={best ? `BEST ${best.toLocaleString("en-US")}` : null} onClick={() => onPick("MARATHON")} />
-                <div className={phone ? "flex flex-col" : "flex items-start"} style={{ gap: phone ? 10 : 12 }}>
-                  <div style={{ flex: 1.35, width: "100%" }}>
-                    <ModeCard ink={MODE_INK.turns} icon={People} title="TURN BASED" sub="2 players, 1 device" h={phone ? 84 : 94} delay={300} onClick={() => onPick("TURNBASED")} />
-                  </div>
-                  <div style={{ flex: 1, width: "100%", marginTop: phone ? 0 : 14 }}>
-                    <ModeCard ink={MODE_INK.ai} icon={Robot} title="VS AI" sub="strength 1–10" h={phone ? 84 : 84} delay={800} onClick={() => onPick("DIFFICULTY")} />
-                  </div>
+                <div style={{ width: phone ? "100%" : "78%" }}>
+                  <ModeCard ink={MODE_INK.ai} icon={Robot} title="VS AI" sub="strength 1–10" h={phone ? 84 : 82} delay={800} onClick={() => onPick("DIFFICULTY")} />
                 </div>
+                {/* Pass-and-play only makes sense on one phone in two hands. */}
+                {phone && <ModeCard ink={MODE_INK.turns} icon={People} title="TURN BASED" sub="2 players, 1 device" h={84} delay={300} onClick={() => onPick("TURNBASED")} />}
               </div>
-              <div className="flex flex-col min-w-0" style={{ flex: 1, gap: phone ? 10 : 12, marginTop: phone ? 0 : 16 }}>
+              <div className="flex flex-col min-w-0 items-end" style={{ flex: 1, gap: phone ? 10 : 12, marginTop: phone ? 0 : 16 }}>
                 <span className="tb-t text-right" style={{ color: UI.text, opacity: 0.55 }}>ONLINE</span>
-                <ModeCard big ink={rankedInk} icon={Trophy} title="RANKED" h={phone ? 160 : 140} delay={500}
+                <ModeCard big ink={rankedInk} icon={Trophy} title="RANKED" h={phone ? 160 : 150} delay={500}
                   sub={!online ? "needs the server" : !authed ? "account required" : !verified ? "verify your email" : placed ? "rated 1v1 matches" : "10 games to a rank"}
                   note={online && authed && verified ? (placed ? `${rank.name} · ${tr}` : "UNPLACED") : null}
                   disabled={!online} onClick={() => onPick("MATCHMAKING")} />
-                <ModeCard ink={MODE_INK.unranked} icon={Wifi} title="UNRANKED" sub={off || "anyone, guests too"} h={phone ? 84 : 70} delay={200} disabled={!online} onClick={() => onPick("UNRANKED")} />
-                <div style={{ width: phone ? "100%" : "84%", alignSelf: "flex-end" }}>
+                {/* Narrower and narrower down the side. */}
+                <div style={{ width: phone ? "100%" : "84%" }}>
+                  <ModeCard ink={MODE_INK.unranked} icon={Wifi} title="UNRANKED" sub={off || "anyone, guests too"} h={phone ? 84 : 70} delay={200} disabled={!online} onClick={() => onPick("UNRANKED")} />
+                </div>
+                <div style={{ width: phone ? "100%" : "64%" }}>
                   <ModeCard ink={MODE_INK.private} icon={Lock} title="PRIVATE" sub={off || "a room code"} h={phone ? 84 : 70} delay={650} disabled={!online} onClick={() => onPick("PRIVATE")} />
                 </div>
               </div>
