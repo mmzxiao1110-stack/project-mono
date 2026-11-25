@@ -13,6 +13,8 @@ import {
   hasAnyMove, ROWS, COLS, newSeed, emptyPins, normalizeAction, nextMeters, isCheckTurn, shrinkBoard,
 } from "../shared/engine.js";
 import { RULES } from "../shared/rules.js";
+import { encodeAction, encodeTurn } from "../shared/notation.js";
+import { REPLAY_VERSION } from "../shared/replay.js";
 import { glickoUpdate, rankIndexFor } from "../shared/glicko.js";
 import { saveProfile } from "./store.js";
 
@@ -67,10 +69,15 @@ export class Match {
 
     // One seed for both queues when the rules say so: the same pieces, in the same order.
     const seed = newSeed();
+    this.seeds = { A: seed, B: RULES.sharedSequence ? seed : newSeed() };
     this.seats = {
-      A: { ...seats[0], side: "A", connected: true, deck: newDeck(seats[0].loadout, seed) },
-      B: { ...seats[1], side: "B", connected: true, deck: newDeck(seats[1].loadout, RULES.sharedSequence ? seed : newSeed()) },
+      A: { ...seats[0], side: "A", connected: true, deck: newDeck(seats[0].loadout, this.seeds.A) },
+      B: { ...seats[1], side: "B", connected: true, deck: newDeck(seats[1].loadout, this.seeds.B) },
     };
+    // The game so far in MINO notation, for replays; and each side's action
+    // this turn as it was SENT (stamps as footprints), before normalizing.
+    this.log = [];
+    this.raw = { A: null, B: null };
 
     // Snapshot ratings at match start — this is what Glicko scores against.
     this.ratingAtStart = {
@@ -225,6 +232,7 @@ export class Match {
     const { move: ok, error } = normalizeAction(this.board, this.pins, this.meters[side], side, blockId, move);
     if (error) return error;
     this.pending[side] = ok;
+    this.raw[side] = move;
     this.send(side, { t: "ack", turn: this.turn });
     this.send(this.other(side), { t: "oppReady", turn: this.turn });
     this.startShotClock();
@@ -249,6 +257,7 @@ export class Match {
 
   applyDiscard(side) {
     this.pending[side] = null; // null = passed, undefined = still thinking
+    this.raw[side] = null;
     return null;
   }
 
@@ -256,6 +265,13 @@ export class Match {
     if (this.pending.A === undefined || this.pending.B === undefined) return;
     clearTimeout(this.timer);
     this.deadline = null;
+
+    // Write the turn down (before the queues move on: notation names the piece played).
+    this.log.push(encodeTurn(
+      encodeAction(this.raw.A, currentPiece(this.seats.A.deck)),
+      encodeAction(this.raw.B, currentPiece(this.seats.B.deck)),
+    ));
+    this.raw = { A: null, B: null };
 
     const res = resolveTurn(this.board, this.pending.A, this.pending.B, this.pins);
     this.board = res.board;
@@ -327,6 +343,20 @@ export class Match {
     }
   }
 
+  /** This match as a replay record (see shared/replay.js), from one seat's point of view. */
+  replayFor(side, score, forfeitBy) {
+    return {
+      v: REPLAY_VERSION,
+      date: Date.now(),
+      mode: this.rated ? "ranked" : this.room ? "private" : "unranked",
+      you: side,
+      players: { A: { name: this.seats.A.profile.name }, B: { name: this.seats.B.profile.name } },
+      seeds: this.seeds,
+      turns: this.log,
+      result: { a: score.a, b: score.b, reason: this.endReason || "turns", forfeitBy: forfeitBy || null },
+    };
+  }
+
   /** @param forfeitBy side that quit, if any */
   end(forfeitBy = null) {
     if (this.over) return;
@@ -364,6 +394,7 @@ export class Match {
           seconds,
           opponent: this.publicSeat(this.other(side)),
           rating: null,
+          replay: this.replayFor(side, score, forfeitBy),
         });
       }
       this.onEnd(this);
@@ -430,6 +461,7 @@ export class Match {
         opponent: this.publicSeat(this.other(side)),
         rating: { before, after },
         profile: { name: p.name, rating: p.rating, stats: p.stats },
+        replay: this.replayFor(side, score, forfeitBy),
       });
     }
 

@@ -1,3 +1,4 @@
+import { replays } from "./replays.js";
 /**
  * Client half of the wire protocol.
  *
@@ -514,6 +515,8 @@ class Net {
         break;
 
       case "matchOver":
+        // Every online match is kept as a replay on this device.
+        if (m.replay) replays.save(m.replay);
         this.patch({ over: m });
         if (m.profile) {
           this.profile = { ...this.profile, ...m.profile };
