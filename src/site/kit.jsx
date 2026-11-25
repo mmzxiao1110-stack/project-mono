@@ -19,7 +19,7 @@ import { ACCENTS } from "./colors.js";
 const base = { stroke: "pixel", gap: 1, colorblind: false, motion: true };
 export const PAGES = {
   game: { href: "/", label: "PLAY", accent: ACCENTS.game,
-    pal: { ground: "#1B1A21", panel: "#2B2932", line: "#4A4656", cell: "#232129", text: "#F2E8D2", dim: "#ABA1CF", you: "#B4A3EE", rival: "#EAD6A4", special: "#7CC7BF" } },
+    pal: { ground: "#1B1A21", panel: "#2B2932", line: "#4A4656", cell: "#232129", text: "#F2E8D2", dim: "#ABA1CF", you: "#7CC7BF", rival: "#EAD6A4", special: "#B4A3EE" } },
   terminal: { href: "/terminal", label: "T-TERMINAL", accent: ACCENTS.terminal,
     pal: { ground: "#0C1330", panel: "#1B2A55", line: "#33498A", cell: "#14204A", text: "#EAF2FF", dim: "#93A9DC", you: "#6FA8FF", rival: "#A8CBFF", special: "#6FE3EC" } },
   about: { href: "/about", label: "ABOUT", accent: ACCENTS.about,
