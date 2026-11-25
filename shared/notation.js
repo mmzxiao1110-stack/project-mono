@@ -1,5 +1,5 @@
 /**
- * MINO notation — every move as a short string, like chess's algebraic
+ * Tesella notation — every move as a short string, like chess's algebraic
  * notation, so a whole game can be written down and replayed exactly.
  *
  * Squares: columns a–j from the left, rows 1–10 from the BOTTOM player's

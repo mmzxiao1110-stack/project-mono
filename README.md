@@ -1,4 +1,4 @@
-# MINO
+# Tesella
 
 A simultaneous-turn territory game for the browser. Solo against an AI, pass-and-play, or ranked online.
 
@@ -40,7 +40,7 @@ npm run test:match --prefix server
 1. **Resend:** add and verify your domain in Resend, then create an API key.
 2. **Render:** Dashboard → New → Blueprint → choose this repository. When asked, fill in:
    - `RESEND_API_KEY`: the key from step 1
-   - `MAIL_FROM`: e.g. `MINO <no-reply@yourdomain.com>` (must be on the verified domain)
+   - `MAIL_FROM`: e.g. `Tesella <no-reply@yourdomain.com>` (must be on the verified domain)
 3. Deploy. Render terminates HTTPS, so the game connects over `wss://` automatically.
 4. Optional: add your own domain under the service's Settings → Custom Domains.
 

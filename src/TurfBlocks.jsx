@@ -160,20 +160,10 @@ function tileShades(color) {
 // AI opponents, weakest first. The names are placeholders: replace each
 // string with the opponent's real name. Adding or removing entries changes
 // how many levels there are; the AI's strength scales to fit.
-const LEVELS = [
-  "1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
-  "11", "12", "13", "14", "15", "16", "17", "18", "19", "20",
-];
-const DEFAULT_LEVEL = 7;
+// AI strength 1–10 (10 plays at full strength; see aiPickAction).
+const LEVELS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
+const DEFAULT_LEVEL = 4;
 
-function levelBlurb(n) {
-  const t = (n - 1) / (LEVELS.length - 1);
-  if (t <= 0.15) return "Drops blocks almost anywhere they fit.";
-  if (t <= 0.35) return "Always grabs the biggest block available.";
-  if (t <= 0.55) return "Protects the open space it needs to grow.";
-  if (t <= 0.8) return "Pushes hard toward your half of the board.";
-  return "Expands, advances, and cuts off your room to build.";
-}
 
 const fmtTime = (s) => {
   if (!s) return "0m";
@@ -1557,7 +1547,7 @@ function gameLayout(stage, theme, P, d, compact) {
  * The menu backdrop: blocks spreading outward from the centre of an open
  * field. The field is larger than the screen (and slightly turned), so it
  * has no visible edge. Each new block touches what's already there and
- * prefers spots near the middle, so the shape grows like a game of MINO
+ * prefers spots near the middle, so the shape grows like a game of Tesella
  * with no board. Once enough is covered it fades out and starts over.
  */
 const FIELD_CELL = 60;       // px per square. HIGHER = more zoomed in
@@ -2731,24 +2721,26 @@ function HowToModal({ colors, loadout, onClose }) {
  * would mean bigger pixels. Letters are 19×25 pixels with thin 2-pixel
  * strokes, shaded in bands from your colour to your rival's.
  */
-/** The MINO letters, W×H pixels each with two-pixel strokes. */
+/** The TESELLA letters, W×H pixels each with two-pixel strokes. */
+const LOGO_WORD = "TESELLA";
 function makeLogo(W, H) {
-  const mid = Math.floor(W / 2), knee = Math.round(H * 0.52), bar = Math.max(1, Math.round(W * 0.2));
+  const mid = Math.floor(W / 2), midY = Math.round(H / 2) - 1;
   const glyph = (paint) => { const g = Array.from({ length: H }, () => Array(W).fill(0)); paint((x, y) => { if (x >= 0 && y >= 0 && x < W && y < H) g[y][x] = 1; }); return g; };
   const rect = (set, x0, y0, w, h) => { for (let y = y0; y < y0 + h; y++) for (let x = x0; x < x0 + w; x++) set(x, y); };
-  const diag = (set, x0, y0, x1, y1) => {
-    const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0));
-    for (let i = 0; i <= n; i++) { const x = Math.round(x0 + ((x1 - x0) * i) / n), y = Math.round(y0 + ((y1 - y0) * i) / n); set(x, y); set(x + 1, y); }
+  const L = {
+    T: (s2) => { rect(s2, 0, 0, W, 2); rect(s2, mid - 1, 0, 2, H); },
+    E: (s2) => { rect(s2, 0, 0, 2, H); rect(s2, 0, 0, W, 2); rect(s2, 0, midY, W - 2, 2); rect(s2, 0, H - 2, W, 2); },
+    S: (s2) => {
+      rect(s2, 2, 0, W - 2, 2); rect(s2, 0, 2, 2, midY - 2); rect(s2, 2, midY, W - 4, 2);
+      rect(s2, W - 2, midY + 2, 2, H - midY - 4); rect(s2, 0, H - 2, W - 2, 2);
+      s2(1, 1); s2(W - 3, midY + 1); s2(W - 2, midY + 1); s2(W - 2, H - 2);
+    },
+    L: (s2) => { rect(s2, 0, 0, 2, H); rect(s2, 0, H - 2, W, 2); },
+    A: (s2) => { rect(s2, 2, 0, W - 4, 2); rect(s2, 0, 2, 2, H - 2); rect(s2, W - 2, 2, 2, H - 2); rect(s2, 2, midY, W - 4, 2); s2(1, 1); s2(W - 2, 1); },
   };
-  return [
-    glyph((s2) => { rect(s2, 0, 0, 2, H); rect(s2, W - 2, 0, 2, H); diag(s2, 1, 1, mid - 1, knee); diag(s2, W - 3, 1, mid, knee); }), // M
-    glyph((s2) => { rect(s2, bar, 0, W - 2 * bar, 2); rect(s2, bar, H - 2, W - 2 * bar, 2); rect(s2, mid - 1, 0, 2, H); }),        // I
-    glyph((s2) => { rect(s2, 0, 0, 2, H); rect(s2, W - 2, 0, 2, H); diag(s2, 1, 1, W - 4, H - 2); }),                                 // N
-    glyph((s2) => { rect(s2, 2, 0, W - 4, 2); rect(s2, 2, H - 2, W - 4, 2); rect(s2, 0, 2, 2, H - 4); rect(s2, W - 2, 2, 2, H - 4);
-      s2(1, 1); s2(W - 2, 1); s2(1, H - 2); s2(W - 2, H - 2); }),                                                                   // O
-  ];
+  return LOGO_WORD.split("").map((ch) => glyph(L[ch]));
 }
-const LOGOS = { big: [19, 25, 5, makeLogo(19, 25)], small: [11, 13, 3, makeLogo(11, 13)] };
+const LOGOS = { big: [13, 19, 4, makeLogo(13, 19)], small: [9, 13, 3, makeLogo(9, 13)] };
 
 function PixelLogo({ small = false }) {
   const P = usePx();
@@ -2766,7 +2758,7 @@ function PixelLogo({ small = false }) {
   }));
   const BANDS = 6;
   return (
-    <svg aria-label="MINO" role="img" className={small ? undefined : "tb-bob"} viewBox={`0 0 ${total + 1} ${H + 1}`}
+    <svg aria-label="Tesella" role="img" className={small ? undefined : "tb-bob"} viewBox={`0 0 ${total + 1} ${H + 1}`}
       style={{ width: (total + 1) * P, height: (H + 1) * P, display: "block", margin: "0 auto", shapeRendering: "crispEdges" }}>
       {runs.map(([x, y, w], i) => <rect key={`s${i}`} x={x + 1} y={y + 1} width={w} height={1} fill="rgba(0,0,0,.55)" />)}
       {runs.map(([x, y, w], i) => {
@@ -2932,6 +2924,7 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
    DIFFICULTY
    ============================================================ */
 function Difficulty({ onStart, onBack, colors }) {
+  const P = usePx();
   const [lv, setLv] = useState(DEFAULT_LEVEL);
   return (
     <div className="tb-screen tb-safe w-full flex items-center justify-center px-5 font-mono" style={{ color: UI.text }}>
@@ -2939,25 +2932,14 @@ function Difficulty({ onStart, onBack, colors }) {
         <button onClick={onBack} className="flex items-center gap-1 tb-t mb-6 py-2" style={{ color: UI.dim }}>
           <ChevronLeft size={13} /> MENU
         </button>
-        <div className="tb-t mb-3" style={{ color: UI.dim }}>OPPONENT STRENGTH</div>
-        <div className="grid grid-cols-5 gap-1.5 mb-4">
-          {LEVELS.map((nm, i) => {
-            const n = i + 1, on = lv === n;
-            return (
-              <button key={n} onClick={() => { setLv(n); }}
-                className="rounded flex items-center justify-center tb-t"
-                style={{
-                  height: 44,
-                  color: UI.text,
-                  ...(on ? skFill(colors.rival) : sk(UI.line)),
-                  opacity: on ? 1 : 0.45 + (n / LEVELS.length) * 0.5,
-                }}>{n}</button>
-            );
-          })}
+        <div className="flex items-baseline justify-between mb-3">
+          <span className="tb-t" style={{ color: UI.dim }}>AI</span>
+          <span className="tb-t tb-b tabular-nums" style={{ color: colors.rival, textShadow: `${P}px ${P}px 0 rgba(0,0,0,.45)` }}>{lv}</span>
         </div>
-        <div className="rounded p-3 mb-4" style={{ ...glass(UI.line), minHeight: 76 }}>
-          <div className="tb-t mb-1" style={{ color: colors.rival }}>{LEVELS[lv - 1]}</div>
-          <div className="tb-t" style={{ color: UI.dim }}>{levelBlurb(lv)}</div>
+        <input type="range" min={1} max={LEVELS.length} step={1} value={lv} onChange={(e) => setLv(Number(e.target.value))}
+          aria-label="AI strength" className="w-full mb-2" style={{ accentColor: colors.rival }} />
+        <div className="flex justify-between tb-t mb-6" style={{ color: UI.dim, opacity: 0.7 }}>
+          <span>1</span><span>{LEVELS.length}</span>
         </div>
         <button onClick={() => onStart(lv)} className="w-full rounded tb-t" style={{ height: 50, ...skFill(UI.text), color: UI.text }}>
           START MATCH
@@ -3122,7 +3104,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   // Same seed, same pieces in the same order (RULES.sharedSequence). Kept for the replay.
   const [seeds] = useState(() => { const sd = newSeed(); return { A: sd, B: RULES.sharedSequence ? sd : newSeed() }; });
   const [decks, setDecks] = useState(() => ({ A: newDeck(loadout, seeds.A), B: newDeck(loadout, seeds.B) }));
-  // The game in MINO notation, for the replay; and player 1's action as sent, this turn.
+  // The game in Tesella notation, for the replay; and player 1's action as sent, this turn.
   const logRef = useRef([]);
   const rawARef = useRef(null);
   const [pendingA, setPendingA] = useState(null);
@@ -3869,9 +3851,9 @@ function PrivateRoom({ status, onBack, pendingCode, clearPending }) {
   } else {
     // Step 3: the room — share the code, wait, or ask for a rematch.
     const share = async () => {
-      const text = `Play me in MINO — room ${room.code}`;
+      const text = `Play me in Tesella — room ${room.code}`;
       try {
-        if (navigator.share) await navigator.share({ title: "MINO", text, url: roomLink(room.code) });
+        if (navigator.share) await navigator.share({ title: "Tesella", text, url: roomLink(room.code) });
         else { await navigator.clipboard.writeText(roomLink(room.code)); setCopied(true); setTimeout(() => setCopied(false), 1600); }
       } catch { /* cancelled */ }
     };
@@ -4048,10 +4030,10 @@ function ReplayViewer({ id, theme, colors, onBack }) {
   const step = (dx) => { setPlaying(false); setT((x) => Math.max(0, Math.min(last, x + dx))); };
   const copy = async () => { try { await navigator.clipboard.writeText(exportReplay(rec)); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* no clipboard */ } };
   const res = rec.result || {};
-  // The whole game in MINO notation, as a text file.
+  // The whole game in Tesella notation, as a text file.
   const download = () => {
     const lines = [
-      "MINO replay",
+      "Tesella replay",
       `${nameA} (bottom) vs ${nameB} (top) · ${MODE_LABEL[rec.mode] || rec.mode} · ${new Date(rec.date).toISOString()}`,
       `Result: ${res.a}–${res.b}${res.reason ? ` (${res.reason})` : ""}`,
       `Seeds: ${rec.seeds.A} ${rec.seeds.B}`,
@@ -4067,7 +4049,7 @@ function ReplayViewer({ id, theme, colors, onBack }) {
     const url = URL.createObjectURL(blob);
     const el = document.createElement("a");
     el.href = url;
-    el.download = `mino-${new Date(rec.date).toISOString().slice(0, 16).replace(/[:T]/g, "-")}.txt`;
+    el.download = `tesella-${new Date(rec.date).toISOString().slice(0, 16).replace(/[:T]/g, "-")}.txt`;
     document.body.appendChild(el); el.click(); el.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };

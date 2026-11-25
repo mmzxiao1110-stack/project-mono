@@ -74,7 +74,7 @@ export class Match {
       A: { ...seats[0], side: "A", connected: true, deck: newDeck(seats[0].loadout, this.seeds.A) },
       B: { ...seats[1], side: "B", connected: true, deck: newDeck(seats[1].loadout, this.seeds.B) },
     };
-    // The game so far in MINO notation, for replays; and each side's action
+    // The game so far in Tesella notation, for replays; and each side's action
     // this turn as it was SENT (stamps as footprints), before normalizing.
     this.log = [];
     this.raw = { A: null, B: null };

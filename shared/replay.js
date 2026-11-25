@@ -1,6 +1,6 @@
 /**
  * Replays. A replay is the two players' piece-sequence seeds plus every
- * turn in MINO notation (see notation.js). Because the rules are
+ * turn in Tesella notation (see notation.js). Because the rules are
  * deterministic, re-running those turns rebuilds every board exactly.
  *
  * playTurn() is the turn order the server and the local game use — kept
@@ -98,11 +98,12 @@ export function buildFrames(rec) {
 export function exportReplay(rec) {
   const json = JSON.stringify(rec);
   const b64 = typeof btoa === "function" ? btoa(unescape(encodeURIComponent(json))) : globalThis.Buffer.from(json, "utf8").toString("base64");
-  return `MINO1:${b64}`;
+  return `TESELLA1:${b64}`;
 }
 export function importReplay(code) {
-  const m = /^MINO1:([A-Za-z0-9+/=\s]+)$/.exec(String(code || "").trim());
-  if (!m) throw new Error("That isn't a MINO replay code.");
+  // TESELLA1: codes, and MINO1: from before the rename.
+  const m = /^(?:TESELLA1|MINO1):([A-Za-z0-9+/=\s]+)$/.exec(String(code || "").trim());
+  if (!m) throw new Error("That isn't a Tesella replay code.");
   const b64 = m[1].replace(/\s+/g, "");
   const json = typeof atob === "function" ? decodeURIComponent(escape(atob(b64))) : globalThis.Buffer.from(b64, "base64").toString("utf8");
   const rec = JSON.parse(json);

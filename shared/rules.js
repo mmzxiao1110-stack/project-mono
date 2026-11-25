@@ -1,5 +1,5 @@
 /**
- * MINO — gameplay rules.
+ * Tesella — gameplay rules.
  *
  * These live in shared/ rather than src/tuning.js because the SERVER imports
  * them too. If the client and server disagreed, boards would diverge mid-match

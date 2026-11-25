@@ -1,5 +1,5 @@
 /**
- * MINO — computer opponent.
+ * Tesella — computer opponent.
  *
  * Shared so the client (single-player) and test tools use the same player.
  * One-move lookahead with a weighted score; `level` (1…max) raises the
