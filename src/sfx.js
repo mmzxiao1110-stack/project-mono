@@ -329,10 +329,10 @@ function play(name, ms, fn) {
 export const sfx = {
   recent,
 
-  /** The pointer moving onto a button: a tiny bright tick. */
+  /** The pointer moving onto a button: barely there, a soft round tick (no buzz). */
   hover() {
-    play("hover", 45, (c, t) => {
-      tone(c, t, { wave: "p12", f: note(17), vol: 0.05, d: 0.03, wet: 0.15, pan: rand(-0.2, 0.2) });
+    play("hover", 90, (c, t) => {
+      tone(c, t, { wave: "sine", f: note(15), vol: 0.008, a: 0.004, d: 0.035, wet: 0.08, pan: rand(-0.15, 0.15) });
     });
   },
 
