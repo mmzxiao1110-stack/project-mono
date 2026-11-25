@@ -1325,6 +1325,28 @@ function useCompact() {
   return c;
 }
 
+/**
+ * True when a menu panel has room to spread sideways (a computer screen):
+ * then Theme, Settings and How to play lay out in columns instead of a long
+ * scroll. Only on the menu; a popup over a game stays narrow.
+ */
+function useWideScreen() {
+  const get = () => typeof window !== "undefined" && window.innerWidth >= 900 && window.innerHeight >= 560;
+  const [w, setW] = useState(get);
+  useEffect(() => {
+    const on = () => setW(get());
+    window.addEventListener("resize", on);
+    return () => window.removeEventListener("resize", on);
+  }, []);
+  return w;
+}
+function useWidePanel() {
+  const inline = !!useContext(InlineCtx);
+  return useWideScreen() && inline;
+}
+/** Tighter rows (settings laid out in columns). */
+const DenseCtx = createContext(false);
+
 /** Width of the desktop meter column (room for a three-digit count), in UI pixels. */
 const METER_COL_W = 16;
 
@@ -1619,8 +1641,9 @@ function InlineFrame({ title, aside, onClose, maxW = 430, pinned, children, labe
   );
 }
 
-function Popup({ title, onClose, children, pinned, maxW = 430 }) {
+function Popup({ title, onClose, children, pinned, maxW = 430, wideW }) {
   const inline = !!useContext(InlineCtx);
+  const wide = useWidePanel();
   useEffect(() => {
     sfx.open();
     if (inline) return undefined;
@@ -1633,7 +1656,7 @@ function Popup({ title, onClose, children, pinned, maxW = 430 }) {
     window.addEventListener("keydown", k);
     return () => window.removeEventListener("keydown", k);
   }, [inline, onClose]);
-  if (inline) return <InlineFrame title={title} onClose={onClose} maxW={maxW} pinned={pinned}>{children}</InlineFrame>;
+  if (inline) return <InlineFrame title={title} onClose={onClose} maxW={wide && wideW ? wideW : maxW} pinned={pinned}>{children}</InlineFrame>;
   return (
     <div
       className="fixed tb-fade inset-0 z-40 flex items-center justify-center"
@@ -1805,77 +1828,120 @@ function SettingsModal({ name, rename, status, theme, setTheme, onClose }) {
   // The server has the final say on names (taken, reserved, bad characters).
   useEffect(() => net.on("nameError", (msg) => { setNameErr(msg); setDraft(net.profile?.name ?? name); }), [name]);
 
-  return (
-    <Popup title="SETTINGS" onClose={onClose}>
-      <div className="pt-4">
-        <div className="tb-t mb-3">HANDLE</div>
-        <input value={draft} maxLength={16}
-          onChange={(e) => { setDraft(e.target.value); setNameErr(null); }} onBlur={() => rename(draft)}
-          onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-          className={`w-full rounded px-3 ${nameErr ? "mb-2" : "mb-7"} tb-t font-mono`}
-          style={{ height: 44, background: UI.ground, ...sk(nameErr ? UI.badSoft : UI.line), color: UI.text, outline: "none" }} />
-        {nameErr && <div className="tb-t mb-6" style={{ color: UI.bad }}>{nameErr}</div>}
-
-        <div className="tb-t mb-1" style={{ color: UI.dim }}>SOUND</div>
-        <Row label="VOLUME">
-          <PixelSlider min={0} max={10} value={theme.sound ?? 7} onChange={(v) => set({ sound: v })} ink={UI.text} label="Volume" style={{ width: 150 }} />
-          <span className="tb-t tabular-nums text-right" style={{ width: 30, color: theme.sound ? UI.text : UI.dim }}>{theme.sound ? theme.sound : "OFF"}</span>
-        </Row>
-        <Row label="MUSIC">
-          <PixelSlider min={0} max={10} value={theme.music ?? 5} onChange={(v) => set({ music: v })} ink={UI.text} label="Music" style={{ width: 150 }} />
-          <span className="tb-t tabular-nums text-right" style={{ width: 30, color: theme.music ? UI.text : UI.dim }}>{theme.music ? theme.music : "OFF"}</span>
-        </Row>
-        <div className="py-2.5" style={{ ...RULE_BELOW }}>
-          <div className="tb-t mb-2" style={{ color: UI.dim }}>IN-GAME MUSIC</div>
-          <div className="flex flex-wrap gap-1.5">
-            {["mix", ...GAME_TRACKS].map((k) => {
-              const on = (theme.track || "mix") === k;
-              return (
-                <button key={k} onClick={() => set({ track: k })} aria-pressed={on} className="tb-t px-2"
-                  style={{ height: 30, ...(on ? skFill(UI.text) : glass(UI.line)), color: on ? UI.text : UI.dim }}>
-                  {k === "mix" ? "TAKE TURNS" : TRACKS[k].title}
-                </button>
-              );
-            })}
-          </div>
+  const wide = useWidePanel();
+  const handle = (
+    <>
+      <div className="tb-t mb-2">HANDLE</div>
+      <input value={draft} maxLength={16}
+        onChange={(e) => { setDraft(e.target.value); setNameErr(null); }} onBlur={() => rename(draft)}
+        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+        className={`w-full rounded px-3 ${nameErr ? "mb-2" : wide ? "mb-4" : "mb-7"} tb-t font-mono`}
+        style={{ height: wide ? 38 : 44, background: UI.ground, ...sk(nameErr ? UI.badSoft : UI.line), color: UI.text, outline: "none" }} />
+      {nameErr && <div className="tb-t mb-4" style={{ color: UI.bad }}>{nameErr}</div>}
+    </>
+  );
+  const sound = (
+    <>
+      <div className="tb-t mb-1" style={{ color: UI.dim }}>SOUND</div>
+      <Row label="VOLUME">
+        <PixelSlider min={0} max={10} value={theme.sound ?? 7} onChange={(v) => set({ sound: v })} ink={UI.text} label="Volume" style={{ width: wide ? 130 : 150 }} />
+        <span className="tb-t tabular-nums text-right" style={{ width: 30, color: theme.sound ? UI.text : UI.dim }}>{theme.sound ? theme.sound : "OFF"}</span>
+      </Row>
+      <Row label="MUSIC">
+        <PixelSlider min={0} max={10} value={theme.music ?? 5} onChange={(v) => set({ music: v })} ink={UI.text} label="Music" style={{ width: wide ? 130 : 150 }} />
+        <span className="tb-t tabular-nums text-right" style={{ width: 30, color: theme.music ? UI.text : UI.dim }}>{theme.music ? theme.music : "OFF"}</span>
+      </Row>
+      <div className="py-2.5" style={{ ...RULE_BELOW }}>
+        <div className="tb-t mb-2" style={{ color: UI.dim }}>IN-GAME MUSIC</div>
+        <div className="flex flex-wrap gap-1.5">
+          {["mix", ...GAME_TRACKS].map((k) => {
+            const on = (theme.track || "mix") === k;
+            return (
+              <button key={k} onClick={() => set({ track: k })} aria-pressed={on} className="tb-t px-2"
+                style={{ height: 28, ...(on ? skFill(UI.text) : glass(UI.line)), color: on ? UI.text : UI.dim }}>
+                {k === "mix" ? "TAKE TURNS" : TRACKS[k].title}
+              </button>
+            );
+          })}
         </div>
-        <div className="mb-7" />
-
-        {HAS_KEYBOARD && <ControlsSection />}
-
-        <div className="tb-t mb-1" style={{ color: UI.dim }}>ACCESSIBILITY</div>
-        <Row label="COLOURBLIND MARKS">
-          <Toggle on={theme.colorblind} onClick={() => set({ colorblind: !theme.colorblind })} />
-        </Row>
-        <Row label="ANIMATION">
-          <Toggle on={theme.motion} onClick={() => set({ motion: !theme.motion })} />
-        </Row>
-        <Row label="HAPTICS">
-          <Toggle on={theme.haptics} onClick={() => set({ haptics: !theme.haptics })} />
-        </Row>
-        <Row label="SHOW TURN CLOCK">
-          <Toggle on={theme.showTimer} onClick={() => set({ showTimer: !theme.showTimer })} />
-        </Row>
-        <div className="tb-t mt-2 mb-7" style={{ color: UI.dim }}>
-          Marks put ○ on your squares
-          and ✕ on your opponent's, so the board reads without colour.
-        </div>
-
-        <div className="tb-t mb-2" style={{ color: UI.dim }}>CONNECTION</div>
-        <div className="flex items-center gap-2 tb-t mb-1" style={{ color: status === "online" ? UI.good : UI.dim }}>
-          {status === "online" ? <Wifi size={12} /> : <WifiOff size={12} />}
-          SERVER {status.toUpperCase()}
-        </div>
-        <div className="flex items-center gap-2 tb-t mb-1.5" style={{ color: IS_SECURE ? UI.good : GOLD }}>
-          {IS_SECURE ? <Lock size={12} /> : <ShieldAlert size={12} />}
-          {IS_SECURE ? "ENCRYPTED (TLS)" : "NOT ENCRYPTED"}
-        </div>
-        <div className="tb-t pb-2" style={{ color: UI.dim }}>
-          {SERVER_URL}
-          {!IS_SECURE && " — fine on your own machine, unsafe over a real network."}
-        </div>
-        <div className="pt-3 pb-2"><LegalLinks /></div>
       </div>
+    </>
+  );
+  const access = (
+    <>
+      <div className="tb-t mb-1" style={{ color: UI.dim }}>ACCESSIBILITY</div>
+      <Row label="COLOURBLIND MARKS">
+        <Toggle on={theme.colorblind} onClick={() => set({ colorblind: !theme.colorblind })} />
+      </Row>
+      <Row label="ANIMATION">
+        <Toggle on={theme.motion} onClick={() => set({ motion: !theme.motion })} />
+      </Row>
+      <Row label="HAPTICS">
+        <Toggle on={theme.haptics} onClick={() => set({ haptics: !theme.haptics })} />
+      </Row>
+      <Row label="SHOW TURN CLOCK">
+        <Toggle on={theme.showTimer} onClick={() => set({ showTimer: !theme.showTimer })} />
+      </Row>
+      <div className={`tb-t mt-2 ${wide ? "mb-4" : "mb-7"}`} style={{ color: UI.dim }}>
+        Marks put ○ on your squares
+        and ✕ on your opponent's, so the board reads without colour.
+      </div>
+    </>
+  );
+  const connection = wide ? (
+    // Columns: just the essentials, on one line.
+    <>
+      <div className="tb-t mb-2" style={{ color: UI.dim }}>CONNECTION</div>
+      <div className="flex items-center flex-wrap gap-x-3 gap-y-1 tb-t mb-2">
+        <span className="flex items-center gap-1.5" style={{ color: status === "online" ? UI.good : UI.dim }}>
+          {status === "online" ? <Wifi size={12} /> : <WifiOff size={12} />}{status.toUpperCase()}
+        </span>
+        <span className="flex items-center gap-1.5" style={{ color: IS_SECURE ? UI.good : GOLD }} title={SERVER_URL}>
+          {IS_SECURE ? <Lock size={12} /> : <ShieldAlert size={12} />}{IS_SECURE ? "ENCRYPTED" : "NOT ENCRYPTED"}
+        </span>
+      </div>
+      <LegalLinks />
+    </>
+  ) : (
+    <>
+      <div className="tb-t mb-2" style={{ color: UI.dim }}>CONNECTION</div>
+      <div className="flex items-center gap-2 tb-t mb-1" style={{ color: status === "online" ? UI.good : UI.dim }}>
+        {status === "online" ? <Wifi size={12} /> : <WifiOff size={12} />}
+        SERVER {status.toUpperCase()}
+      </div>
+      <div className="flex items-center gap-2 tb-t mb-1.5" style={{ color: IS_SECURE ? UI.good : GOLD }}>
+        {IS_SECURE ? <Lock size={12} /> : <ShieldAlert size={12} />}
+        {IS_SECURE ? "ENCRYPTED (TLS)" : "NOT ENCRYPTED"}
+      </div>
+      <div className="tb-t pb-2 break-all" style={{ color: UI.dim }}>
+        {SERVER_URL}
+        {!IS_SECURE && " — fine on your own machine, unsafe over a real network."}
+      </div>
+      <div className="pt-3 pb-2"><LegalLinks /></div>
+    </>
+  );
+
+  return (
+    <Popup title="SETTINGS" onClose={onClose} wideW={HAS_KEYBOARD ? 1120 : 720}>
+      {wide ? (
+        // A computer: everything at once, in columns.
+        <DenseCtx.Provider value={true}>
+        <div className="tb-cols grid gap-7 pt-3" style={{ gridTemplateColumns: HAS_KEYBOARD ? "1fr 1.45fr 1fr" : "1fr 1fr" }}>
+          <div className="min-w-0">{handle}{sound}</div>
+          {HAS_KEYBOARD && <div className="min-w-0"><ControlsSection /></div>}
+          <div className="min-w-0">{access}{connection}</div>
+        </div>
+        </DenseCtx.Provider>
+      ) : (
+        <div className="pt-4">
+          {handle}
+          {sound}
+          <div className="mb-7" />
+          {HAS_KEYBOARD && <ControlsSection />}
+          {access}
+          {connection}
+        </div>
+      )}
     </Popup>
   );
 }
@@ -2098,6 +2164,7 @@ function Swatch({ color, on, onClick, size = 24 }) {
 
 /** Settings → Controls: click a key, press the new one. Escape cancels. */
 function ControlsSection() {
+  const dense = useContext(DenseCtx);
   const keys = useKeys();
   const [listening, setListening] = useState(null);
   const [warn, setWarn] = useState(null);
@@ -2119,7 +2186,7 @@ function ControlsSection() {
   }, [listening]);
 
   return (
-    <div className="mb-7">
+    <div className={dense ? "mb-2" : "mb-7"}>
       <div className="flex items-center justify-between mb-1">
         <span className="tb-t">CONTROLS</span>
         <button onClick={() => { resetKeys(); setListening(null); setWarn(null); }}
@@ -2132,7 +2199,7 @@ function ControlsSection() {
         {ACTIONS.map((a) => {
           const on = listening === a.id;
           return (
-            <div key={a.id} className="flex items-center justify-between py-1.5" style={RULE_BELOW}>
+            <div key={a.id} className={`flex items-center justify-between gap-2 ${dense ? "py-1" : "py-1.5"}`} style={RULE_BELOW}>
               <span className="tb-t" style={{ color: UI.dim }}>{a.label}</span>
               <button onClick={() => { setWarn(null); setListening(on ? null : a.id); }}
                 className={`tb-t ${on ? "tb-pulse" : ""}`}
@@ -2149,8 +2216,9 @@ function ControlsSection() {
 }
 
 function Row({ label, children }) {
+  const dense = useContext(DenseCtx);
   return (
-    <div className="flex items-center justify-between gap-3 py-2.5" style={{ ...RULE_BELOW }}>
+    <div className={`flex items-center justify-between gap-3 ${dense ? "py-1.5" : "py-2.5"}`} style={{ ...RULE_BELOW }}>
       <span className="tb-t shrink-0" style={{ color: UI.dim }}>{label}</span>
       <div className="flex items-center gap-1.5 flex-wrap justify-end">{children}</div>
     </div>
@@ -2272,21 +2340,23 @@ function ThemeModal({ theme, setTheme, onClose }) {
     return b;
   }, []);
 
-  return (
-    <Popup title="THEME" onClose={onClose} maxW={420}>
-      {/* live preview */}
-      <div className="mt-3 mb-4 flex justify-center">
-        <div>
-          <BoardGrid
-            board={previewBoard} cell={12}
-            ink={{ A: theme.you, B: theme.rival, S: theme.special }}
-            theme={theme} youSide="A"
-            ghostKeys={new Set()} ghostLegal={false} ghostInk={theme.you}
-            contestedKeys={new Set()} boardRef={null} onPointerDown={undefined}
-          />
-        </div>
-      </div>
-
+  const wide = useWidePanel();
+  const preview = (
+    <BoardGrid
+      board={previewBoard} cell={wide ? 21 : 12}
+      ink={{ A: theme.you, B: theme.rival, S: theme.special }}
+      theme={theme} youSide="A"
+      ghostKeys={new Set()} ghostLegal={false} ghostInk={theme.you}
+      contestedKeys={new Set()} boardRef={null} onPointerDown={undefined}
+    />
+  );
+  const footnote = (
+    <div className={`tb-t ${wide ? "pt-3 mt-1" : "pt-4 mt-2"}`} style={{ color: UI.dim, ...RULE_ABOVE }}>
+      Themes are stored on this device only. Your opponent sees their own.
+    </div>
+  );
+  const controls = (
+    <>
       <div className="flex gap-1.5 mb-3">
         {[["preset", "PRESETS"], ["colour", "COLOURS"], ["blocks", "BLOCKS"]].map(([k, label]) => (
           <button key={k} onClick={() => setTab(k)}
@@ -2300,7 +2370,7 @@ function ThemeModal({ theme, setTheme, onClose }) {
       </div>
 
       {tab === "preset" && (
-        <div className="grid grid-cols-2 gap-2 pb-2">
+        <div className={`grid ${wide ? "grid-cols-3" : "grid-cols-2"} gap-2 pb-2`}>
           {Object.entries(PRESETS).map(([k, p]) => {
             const on = theme.preset === k;
             return (
@@ -2317,9 +2387,9 @@ function ThemeModal({ theme, setTheme, onClose }) {
             );
           })}
           {theme.preset === "custom" && (
-            <div className="rounded p-2.5 col-span-2 tb-t"
+            <div className={`rounded p-2.5 ${wide ? "col-span-3" : "col-span-2"} tb-t`}
               style={{ ...sk(UI.line), color: UI.dim }}>
-              CUSTOM — edited from a preset
+              CUSTOM: edited from a preset
             </div>
           )}
         </div>
@@ -2336,26 +2406,28 @@ function ThemeModal({ theme, setTheme, onClose }) {
           <Row label="CENTRE">
             {INKS.map((c) => <Swatch key={c} color={c} on={theme.special === c} onClick={() => set({ special: c })} />)}
           </Row>
-          <div className="tb-t mt-4 mb-2" style={{ color: UI.dim }}>SURFACES</div>
-          {[["BACKGROUND", "ground"], ["PANELS", "panel"], ["EMPTY CELL", "cell"], ["LINES", "line"], ["TEXT", "text"]].map(([label, k]) => (
-            <Row key={k} label={label}>
-              <input type="color" value={theme[k]} onChange={(e) => set({ [k]: e.target.value })}
-                style={{ width: 44, height: 26, background: "transparent", ...sk(UI.line), borderRadius: 5, padding: 0 }} />
-              <span className="tb-t tabular-nums" style={{ color: UI.dim }}>{theme[k]}</span>
-            </Row>
-          ))}
+          <div className={`tb-t ${wide ? "mt-3 mb-1" : "mt-4 mb-2"}`} style={{ color: UI.dim }}>SURFACES</div>
+          <div className={wide ? "grid grid-cols-3 gap-x-5" : undefined}>
+            {[["BACKGROUND", "ground"], ["PANELS", "panel"], ["EMPTY CELL", "cell"], ["LINES", "line"], ["TEXT", "text"]].map(([label, k]) => (
+              <Row key={k} label={label}>
+                <input type="color" value={theme[k]} onChange={(e) => set({ [k]: e.target.value })}
+                  style={{ width: 44, height: 26, background: "transparent", ...sk(UI.line), borderRadius: 5, padding: 0 }} />
+                {!wide && <span className="tb-t tabular-nums" style={{ color: UI.dim }}>{theme[k]}</span>}
+              </Row>
+            ))}
+          </div>
         </div>
       )}
 
       {tab === "blocks" && (
         <div className="pb-2">
           <div className="tb-t mb-2" style={{ color: UI.dim }}>STROKE</div>
-          <div className="grid grid-cols-3 gap-2 mb-5">
+          <div className={`grid grid-cols-3 gap-2 ${wide ? "mb-3" : "mb-5"}`}>
             {Object.entries(STROKES).map(([k, st]) => {
               const on = theme.stroke === k;
               return (
                 <button key={k} onClick={() => set({ stroke: k })}
-                  className="flex flex-col items-center justify-center gap-2 py-3"
+                  className={`flex flex-col items-center justify-center gap-2 ${wide ? "py-2" : "py-3"}`}
                   style={{ background: on ? UI.cell : "transparent", ...sk(on ? UI.text : UI.line) }}>
                   <div className="flex gap-1">
                     <Ink size={22} color={theme.you} stroke={k} dir={1} seed={2} />
@@ -2387,9 +2459,24 @@ function ThemeModal({ theme, setTheme, onClose }) {
         </div>
       )}
 
-      <div className="tb-t pt-4 mt-2" style={{ color: UI.dim, ...RULE_ABOVE }}>
-        Themes are stored on this device only. Your opponent sees their own.
-      </div>
+    </>
+  );
+
+  return (
+    <Popup title="THEME" onClose={onClose} maxW={420} wideW={900}>
+      {wide ? (
+        // A computer: the board on the left, everything you change on the right.
+        <div className="tb-cols grid gap-8 pt-3 items-start" style={{ gridTemplateColumns: "auto 1fr" }}>
+          <div className="flex flex-col items-center" style={{ width: 250 }}>{preview}</div>
+          <DenseCtx.Provider value={true}><div className="min-w-0">{controls}{footnote}</div></DenseCtx.Provider>
+        </div>
+      ) : (
+        <>
+          <div className="mt-3 mb-4 flex justify-center">{preview}</div>
+          {controls}
+          {footnote}
+        </>
+      )}
     </Popup>
   );
 }
@@ -2897,46 +2984,68 @@ function HowToModal({ colors, loadout, onClose }) {
   const p = pages[page];
   const last = page === pages.length - 1;
 
+  const wide = useWidePanel();
+  const progress = (
+    <div className="flex gap-1 mb-4">
+      {pages.map((_, i) => (
+        <div key={i} style={{
+          flex: 1, height: 2, borderRadius: 2,
+          background: i <= page ? colors.you : UI.line,
+          transition: "background 200ms",
+        }} />
+      ))}
+    </div>
+  );
+  const art = (
+    <div className="rounded py-5 flex items-center justify-center"
+      style={{ background: UI.ground, ...sk(UI.line), minHeight: wide ? 170 : 132 }}>
+      <div style={wide ? { zoom: 1.3 } : undefined}>{p.art}</div>
+    </div>
+  );
+  const buttons = (
+    <div className="flex gap-2">
+      <button
+        onClick={() => setPage((n) => Math.max(0, n - 1))}
+        disabled={page === 0}
+        className="rounded tb-t disabled:opacity-30"
+        style={{ height: wide ? 40 : 46, flex: 1, ...sk(UI.line), color: UI.dim }}
+      >
+        BACK
+      </button>
+      <button
+        onClick={() => (last ? onClose() : setPage((n) => n + 1))}
+        className="rounded tb-t"
+        style={{ height: wide ? 40 : 46, flex: 1.6, ...skFill(UI.text), color: UI.text }}
+      >
+        {last ? "GOT IT" : "NEXT"}
+      </button>
+    </div>
+  );
+
   return (
-    <Popup title="HOW TO PLAY" onClose={onClose} maxW={380}>
-      <div className="pt-4 pb-1">
-        <div className="flex gap-1 mb-4">
-          {pages.map((_, i) => (
-            <div key={i} style={{
-              flex: 1, height: 2, borderRadius: 2,
-              background: i <= page ? colors.you : UI.line,
-              transition: "background 200ms",
-            }} />
-          ))}
+    <Popup title="HOW TO PLAY" onClose={onClose} maxW={380} wideW={780}>
+      {wide ? (
+        // A computer: the picture on the left, the words and the buttons on the right.
+        <div className="pt-4 pb-1">
+          {progress}
+          <div className="tb-cols grid gap-7 items-stretch" style={{ gridTemplateColumns: "1.1fr 1fr" }}>
+            {art}
+            <div className="flex flex-col min-w-0">
+              <div className="tb-t mb-3" style={{ color: UI.dim }}>{p.title}</div>
+              <div className="tb-t flex-1 mb-4">{p.body}</div>
+              {buttons}
+            </div>
+          </div>
         </div>
-
-        <div className="tb-t mb-4" style={{ color: UI.dim }}>{p.title}</div>
-
-        <div className="rounded py-5 mb-4 flex items-center justify-center"
-          style={{ background: UI.ground, ...sk(UI.line), minHeight: 132 }}>
-          {p.art}
+      ) : (
+        <div className="pt-4 pb-1">
+          {progress}
+          <div className="tb-t mb-4" style={{ color: UI.dim }}>{p.title}</div>
+          <div className="mb-4">{art}</div>
+          <div className="tb-t mb-5" style={{ minHeight: 76 }}>{p.body}</div>
+          {buttons}
         </div>
-
-        <div className="tb-t mb-5" style={{ minHeight: 76 }}>{p.body}</div>
-
-        <div className="flex gap-2">
-          <button
-            onClick={() => setPage((n) => Math.max(0, n - 1))}
-            disabled={page === 0}
-            className="rounded tb-t disabled:opacity-30"
-            style={{ height: 46, flex: 1, ...sk(UI.line), color: UI.dim }}
-          >
-            BACK
-          </button>
-          <button
-            onClick={() => (last ? onClose() : setPage((n) => n + 1))}
-            className="rounded tb-t"
-            style={{ height: 46, flex: 1.6, ...skFill(UI.text), color: UI.text }}
-          >
-            {last ? "GOT IT" : "NEXT"}
-          </button>
-        </div>
-      </div>
+      )}
     </Popup>
   );
 }
@@ -3023,6 +3132,7 @@ function PixelRule({ count = 18 }) {
 const SINK_MS = 300;
 
 function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout, theme, setTheme }) {
+  const wideScreen = useWideScreen();
   const [modal, setShown] = useState(null);
   // While true, whatever is showing under the title is sinking out.
   const [leaving, setLeaving] = useState(false);
@@ -3057,7 +3167,9 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
   const notice = useNotice();
 
   return (
-    <div ref={rootRef} className="tb-screen tb-safe relative w-full flex items-center justify-center px-5 font-mono overflow-hidden" style={{ color: UI.text }}>
+    // On a computer the menu sits high, leaving the lower part of the screen for the panels.
+    <div ref={rootRef} className={`tb-screen tb-safe relative w-full flex items-center ${wideScreen ? "justify-start flex-col" : "justify-center"} px-5 font-mono overflow-hidden`}
+      style={{ color: UI.text, ...(wideScreen ? { paddingTop: "clamp(24px, 12vh, 150px)" } : null) }}>
       <AmbientField colors={colors} theme={theme} paused={false} />
       <div className="absolute inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse at 50% 46%, color-mix(in srgb, var(--tb-ground) 45%, transparent) 0%, color-mix(in srgb, var(--tb-ground) 20%, transparent) 50%, transparent 80%)" }} />
 
@@ -5214,6 +5326,11 @@ export default function TurfBlocks() {
       .tb-flow > * { animation: tbDive .6s cubic-bezier(.16,.84,.3,1) both, tbWater 7s ease-in-out infinite; }
       ${Array.from({ length: 10 }, (_, i) => `.tb-flow > :nth-child(${i + 1}) { animation-delay: ${i * 55}ms, ${-(i * 1.3).toFixed(1)}s }`).join("\n      ")}
       .tb-flow.out > * { animation: tbSink ${SINK_MS}ms cubic-bezier(.5,0,.8,.4) both; }
+      /* Side-by-side columns: each column rises and drifts on its own, not the row as one. */
+      .tb-flow > .tb-cols { animation: none; }
+      .tb-cols > * { animation: tbDive .6s cubic-bezier(.16,.84,.3,1) both, tbWater 7s ease-in-out infinite; }
+      ${Array.from({ length: 4 }, (_, i) => `.tb-cols > :nth-child(${i + 1}) { animation-delay: ${80 + i * 90}ms, ${-(2 + i * 2.1).toFixed(1)}s }`).join("\n      ")}
+      .tb-flow.out .tb-cols > * { animation: tbSink ${SINK_MS}ms cubic-bezier(.5,0,.8,.4) both; }
       ${Array.from({ length: 10 }, (_, i) => `.tb-flow.out > :nth-child(${i + 1}) { animation-delay: ${Math.min(i * 25, 120)}ms }`).join("\n      ")}
       /* The tide: soft light drifting across the menu while a panel is open. */
       @keyframes tbTide { 0% { background-position: 0% 0%, 100% 30%, 50% 100% } 50% { background-position: 60% 40%, 40% 70%, 20% 60% } 100% { background-position: 0% 0%, 100% 30%, 50% 100% } }
@@ -5236,9 +5353,9 @@ export default function TurfBlocks() {
         100% { transform: translateY(calc(var(--p) * -60)); opacity: 0 }
       }
       .tb-bubble { background: color-mix(in srgb, white 75%, var(--tb-you)); box-shadow: 0 0 calc(var(--p) * 2) color-mix(in srgb, var(--tb-you) 70%, transparent); animation-name: tbBubble; animation-timing-function: steps(14); animation-fill-mode: both; }
-      ${theme.motion ? "" : ".tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-bob,.tb-runner,.tb-line,.tb-vanish,.tb-rise,.tb-float,.tb-twinkle,.tb-drop-in,.tb-sheen,.tb-dive,.tb-flow > *,.tb-tide { animation: none !important } .tb-ripple,.tb-bubble { display: none }"}
+      ${theme.motion ? "" : ".tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-bob,.tb-runner,.tb-line,.tb-vanish,.tb-rise,.tb-float,.tb-twinkle,.tb-drop-in,.tb-sheen,.tb-dive,.tb-flow > *,.tb-cols > *,.tb-tide { animation: none !important } .tb-ripple,.tb-bubble { display: none }"}
       @media (prefers-reduced-motion: reduce) {
-        .tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-bob,.tb-runner,.tb-line,.tb-rise,.tb-dive,.tb-flow > *,.tb-tide { animation: none !important }
+        .tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-bob,.tb-runner,.tb-line,.tb-rise,.tb-dive,.tb-flow > *,.tb-cols > *,.tb-tide { animation: none !important }
         .tb-ripple,.tb-bubble { display: none }
       }
       /* Menus and popups: phone layout at BASE_P, zoomed by P / BASE_P (see Scaled). */
