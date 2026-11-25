@@ -1,5 +1,5 @@
 /**
- * MINO — game server.
+ * Tesella — game server.
  *
  *   in : hello, signup, login, google, verify, resend, resetRequest, resetConfirm,
  *        logout, setName, queue, unqueue, move, discard, forfeit

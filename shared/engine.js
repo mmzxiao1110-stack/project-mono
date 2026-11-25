@@ -1,5 +1,5 @@
 /**
- * MINO — rules engine.
+ * Tesella — rules engine.
  *
  * Pure functions only. No React, no DOM, no Node APIs.
  * The client imports this to render and predict; the server imports the

@@ -1,5 +1,5 @@
 /**
- * MINO — visual tuning.
+ * Tesella — visual tuning.
  *
  * Every number that controls how things look lives here. Change a value, save,
  * and the dev server reloads. Nothing here affects gameplay or the server.

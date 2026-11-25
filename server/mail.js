@@ -2,7 +2,7 @@
  * Outbound mail, via Resend's HTTP API (https://resend.com/docs/api-reference/emails/send-email).
  *
  *   RESEND_API_KEY  required to actually send
- *   MAIL_FROM       e.g. "MINO <no-reply@yourdomain.com>" — the domain must be
+ *   MAIL_FROM       e.g. "Tesella <no-reply@yourdomain.com>" — the domain must be
  *                   verified in Resend, or Resend rejects the send
  *
  * Without a key, codes are printed to the server console: right for local
@@ -16,8 +16,8 @@ if (RESEND_API_KEY) console.log(`[mail] sending through Resend as ${MAIL_FROM ||
 else console.log("[mail] RESEND_API_KEY not set — codes will print here instead of being emailed");
 
 const PURPOSE = {
-  verify: { subject: (c) => `${c} is your MINO code`, line: "Here's the code to verify your email" },
-  reset: { subject: (c) => `${c} is your MINO password reset code`, line: "Here's the code to reset your password" },
+  verify: { subject: (c) => `${c} is your Tesella code`, line: "Here's the code to verify your email" },
+  reset: { subject: (c) => `${c} is your Tesella password reset code`, line: "Here's the code to reset your password" },
 };
 
 // Usernames are already restricted to [A-Za-z0-9_], but escape anyway:

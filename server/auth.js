@@ -28,7 +28,7 @@ export const USERNAME_RE = /^[a-zA-Z0-9_]{3,16}$/;
 export const DISPLAY_RE = /^[a-zA-Z0-9_][a-zA-Z0-9_ .-]{1,14}[a-zA-Z0-9_]$/;
 
 // Names nobody should be able to take, plus names that read like staff.
-const RESERVED = /^(admin|administrator|mod|moderator|staff|support|system|server|official|mino|root|null|undefined|__proto__|proto|prototype|constructor)$/i;
+const RESERVED = /^(admin|administrator|mod|moderator|staff|support|system|server|official|mino|tesella|root|null|undefined|__proto__|proto|prototype|constructor)$/i;
 
 /**
  * Words a name may not contain. Kept short and in its own file so you can
