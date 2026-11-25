@@ -1,24 +1,24 @@
 /**
- * Test harness: signs up two bots, queues both, plays a full ranked match.
+ * Test harness: two guest bots open a private room and play a full match.
  *
- * Verifies the server without touching the UI. If this prints a final score
- * and two rating changes, signup, matchmaking, hidden moves, resolution,
- * scoring and Glicko all work.
+ * Verifies the server without touching the UI. If this prints a final score,
+ * guests, rooms, hidden moves, resolution and scoring all work. (Ranked play
+ * needs verified accounts, which bots can't do: every account verifies its
+ * email.)
  *
- * Start the server with SKIP_EMAIL_VERIFY=1 (the bots can't read email), then:
  *   npm run test:match
  *   URL=wss://your-app.onrender.com npm run test:match   # against a deployment
- *
- * Against a real deployment this creates two accounts. Only do that on a
- * staging copy, or with SKIP_EMAIL_VERIFY on for a closed test.
  */
 import { WebSocket } from "ws";
-import { enumerateMoves, DEFAULT_LOADOUT } from "../shared/engine.js";
+import { enumerateMoves } from "../shared/engine.js";
 
 const URL = process.env.URL || "ws://localhost:8787";
 const tag = Date.now().toString(36).slice(-5);
 
-function bot(name) {
+let roomCode = null;
+const waiting = [];
+
+function bot(name, host) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(URL);
     const send = (o) => ws.send(JSON.stringify(o));
@@ -26,22 +26,29 @@ function bot(name) {
     const fail = (why) => { ws.close(); reject(new Error(`[${name}] ${why}`)); };
     const timer = setTimeout(() => fail("timed out"), 5 * 60_000);
 
-    ws.on("open", () => send({ t: "signup", username: name, email: `${name}@example.test`, password: "test-password-1" }));
+    ws.on("open", () => send({ t: "guest", name }));
     ws.on("error", (e) => fail(e.message));
 
     ws.on("message", (raw) => {
       const m = JSON.parse(raw);
       switch (m.t) {
-        case "auth":
-          if (!m.profile.emailVerified) return fail("email not verified — start the server with SKIP_EMAIL_VERIFY=1");
-          console.log(`[${name}] signed in, rating ${Math.round(m.profile.rating.r)}`);
-          send({ t: "queue", loadout: DEFAULT_LOADOUT });
+        case "guestOk":
+          console.log(`[${name}] in as a guest`);
+          if (host) send({ t: "createRoom" });
+          else if (roomCode) send({ t: "joinRoom", code: roomCode });
+          else waiting.push(() => send({ t: "joinRoom", code: roomCode }));
           break;
-        case "authError":
-          return fail(`auth error: ${m.msg}`);
-        case "found":
-          console.log(`[${name}] matched with ${m.opponent.name} (${m.gap} TR apart)`);
+        case "guestError":
+          return fail(`guest error: ${m.msg}`);
+        case "room":
+          if (host && !roomCode) {
+            roomCode = m.code;
+            console.log(`[${name}] opened room ${roomCode}`);
+            waiting.splice(0).forEach((go) => go());
+          }
           break;
+        case "roomError":
+          return fail(`room error: ${m.msg}`);
         case "matchStart":
           side = m.you;
           break;
@@ -61,10 +68,7 @@ function bot(name) {
           break;
         case "matchOver":
           clearTimeout(timer);
-          console.log(
-            `[${name}] ${m.drew ? "DREW" : m.won ? "WON" : "LOST"} ${m.myScore}–${m.oppScore} ` +
-            `(${m.reason}), rating ${Math.round(m.rating.before.r)} → ${Math.round(m.rating.after.r)}`
-          );
+          console.log(`[${name}] ${m.drew ? "DREW" : m.won ? "WON" : "LOST"} ${m.myScore}–${m.oppScore} (${m.reason})`);
           ws.close();
           resolve(m);
           break;
@@ -74,8 +78,8 @@ function bot(name) {
 }
 
 try {
-  await Promise.all([bot(`bot_a_${tag}`), bot(`bot_b_${tag}`)]);
-  console.log("\nOK — a full ranked match completed.");
+  await Promise.all([bot(`bot_a_${tag}`, true), bot(`bot_b_${tag}`, false)]);
+  console.log("\nOK — a full match completed.");
   process.exit(0);
 } catch (e) {
   console.error("\nFAILED:", e.message);

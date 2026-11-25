@@ -44,17 +44,15 @@ import { randomBytes } from "node:crypto";
 
 const PORT = Number(process.env.PORT) || 8787;
 const PROD = process.env.NODE_ENV === "production";
-// For a closed playtest with no email set up. Anyone can then sign up with
-// any address — never leave it on for a public launch.
-const SKIP_VERIFY = process.env.SKIP_EMAIL_VERIFY === "1";
-
-if (PROD && !mailConfigured() && !SKIP_VERIFY) {
+// Every account verifies its email; there is no way to skip it. Without
+// Resend the codes can't be emailed, so sign-ups can't finish (guests still
+// play) — loud in the logs, but the game stays up.
+if (PROD && !mailConfigured()) {
   console.error(
-    "[server] NODE_ENV=production but RESEND_API_KEY is not set, so verification\n" +
-    "[server] codes can't be emailed and nobody could finish signing up. Set\n" +
-    "[server] RESEND_API_KEY and MAIL_FROM (or SKIP_EMAIL_VERIFY=1 for a closed test)."
+    "[server] ⚠  NODE_ENV=production but RESEND_API_KEY is not set: verification\n" +
+    "[server] codes can't be emailed, so nobody can finish signing up (they print\n" +
+    "[server] in this log instead). Set RESEND_API_KEY and MAIL_FROM."
   );
-  process.exit(1);
 }
 
 const sockets = new Map(); // userId -> socket
@@ -79,7 +77,7 @@ const publicProfile = (p, acct) => ({
   stats: p.stats,
   createdAt: p.createdAt,
   email: acct ? acct.email : null,
-  emailVerified: SKIP_VERIFY || (acct ? !!acct.emailVerified : false),
+  emailVerified: acct ? !!acct.emailVerified : false,
   provider: acct ? acct.provider : "password",
 });
 
@@ -319,7 +317,6 @@ httpServer.listen(PORT, HOST || "0.0.0.0", () => {
   console.log(`[server] ${scheme}://${HOST || "0.0.0.0"}:${PORT} — ${countAccounts()} accounts in ${dataFile()}`);
   console.log(`[server] client build: ${hasBuild() ? "serving ../dist" : "not built (use the Vite dev server)"}`);
   console.log(`[server] google sign-in: ${googleEnabled() ? "enabled" : "not configured"}`);
-  if (SKIP_VERIFY) console.warn("[server] ⚠  SKIP_EMAIL_VERIFY is on — accounts are usable without a code.");
   if (PROD && !process.env.DATA_DIR) {
     console.warn("[server] ⚠  DATA_DIR is not set. On Render, accounts are wiped on every deploy unless it points at a disk.");
   }
@@ -582,7 +579,7 @@ async function handle(ws, msg) {
       }
       if (isGuest(ws.userId)) return fail(ws, "Make an account to play ranked.");
       const acct = getAccount(ws.userId);
-      if (!acct || (!acct.emailVerified && !SKIP_VERIFY)) return send(ws, { t: "needVerify" });
+      if (!acct || !acct.emailVerified) return send(ws, { t: "needVerify" });
       if (inMatch.has(ws.userId)) return fail(ws, "Already in a match.");
       if (queue.has(ws.userId)) return;
       const profile = getProfile(ws.userId);
