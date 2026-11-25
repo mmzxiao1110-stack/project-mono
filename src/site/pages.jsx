@@ -73,6 +73,12 @@ export function About() {
    NEWS — sea green
    ============================================================ */
 const NEWS = [
+  { v: "v0.12.0", date: "NOV 2026", title: "A DREAMIER PLAY SCREEN", items: [
+    "PLAY is a little night sky over the sea: stars, shooting stars, light rays and bubbles, with floating glass cards.",
+    "Marathon: leave whenever you like and pick up where you left off (signed in).",
+    "Marathon uses your keys: Q / E turn, Space drops the piece where its shadow is.",
+    "Fixed: the shadow piece no longer shows on the board when the pointer is beside it.",
+  ] },
   { v: "v0.11.0", date: "NOV 2026", title: "A NEW PLAY SCREEN", items: [
     "PLAY opens a new screen: Marathon and Ranked up top, Turn Based, Private, Unranked and VS AI below.",
     "Marathon pieces can be turned: R, the turn button, or tap a picked piece.",

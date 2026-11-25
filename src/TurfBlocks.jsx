@@ -22,7 +22,7 @@ import {
 import { aiPickAction } from "../shared/ai.js";
 import {
   SIZE as M_SIZE, PIECES as M_PIECES, newMarathon, newMarathonSeed, placePiece as mPlace, fits as mFits,
-  fitsAnywhere as mFitsAnywhere, levelOf as mLevelOf, encodeMoves, TUNING as M_TUNING, shapeOf as mShape,
+  fitsAnywhere as mFitsAnywhere, levelOf as mLevelOf, encodeMoves, decodeMoves, TUNING as M_TUNING, shapeOf as mShape,
 } from "../shared/marathon.js";
 import { encodeAction, encodeTurn } from "../shared/notation.js";
 import { REPLAY_VERSION, buildFrames, exportReplay, importReplay } from "../shared/replay.js";
@@ -3056,7 +3056,7 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
       {modal === "SETTINGS" && <SettingsModal name={name} rename={rename} status={status} theme={theme} setTheme={setTheme} onClose={() => setModal(null)} />}
       {modal === "STATS" && <StatsModal profile={profile} status={status} onClose={() => setModal(null)} />}
       {modal === "PLAY" && (
-        <PlayModal status={status} authed={authed} verified={verified} placed={placed} rank={rank} tr={tr}
+        <PlayModal theme={theme} status={status} authed={authed} verified={verified} placed={placed} rank={rank} tr={tr}
           onClose={() => setModal(null)}
           onPick={(t) => {
             if (t === "MATCHMAKING") {
@@ -3072,59 +3072,234 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
   );
 }
 
+/* ============================================================
+   PLAY — every way to play, in a little underwater night sky
+   ============================================================ */
 /**
- * PLAY: every way to play. Two columns of coloured glass: the solo side
- * (MARATHON, then TURN BASED and PRIVATE) and the competitive side (RANKED,
- * then UNRANKED and VS AI). The two main modes are the big panes.
+ * The PLAY screen's backdrop: a pixel scene drawn live. Deep space at the
+ * top (twinkling stars, now and then a shooting star) dithers down through
+ * a nebula into the sea (slow light rays, bubbles rising). ~12 fps.
  */
+function DreamCanvas({ theme }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const cv = ref.current;
+    if (!cv) return;
+    const ctx = cv.getContext("2d", { alpha: false });
+    const PIX = 3; // one scene pixel = 3 layout pixels (zoomed with the popup)
+    let W = 1, H = 1, img = null;
+    const size = () => {
+      const r = cv.parentElement.getBoundingClientRect();
+      const zoom = r.width / (cv.parentElement.offsetWidth || 1) || 1;
+      W = Math.max(1, Math.ceil(cv.parentElement.offsetWidth / PIX));
+      H = Math.max(1, Math.ceil(cv.parentElement.offsetHeight / PIX));
+      cv.width = W; cv.height = H;
+      cv.style.width = `${W * PIX}px`; cv.style.height = `${H * PIX}px`;
+      img = ctx.createImageData(W, H);
+      return zoom;
+    };
+    size();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(size) : null;
+    ro?.observe(cv.parentElement);
+
+    const space = mixRgb(rgbOf(theme.ground), [0, 0, 10], 0.35);
+    const nebula = rgbOf(theme.special);        // lavender, by default
+    const sea = rgbOf(theme.you);               // teal
+    const deep = mixRgb(rgbOf(theme.ground), sea, 0.18);
+    const BANDS = [space, mixRgb(space, nebula, 0.16), mixRgb(space, nebula, 0.27), mixRgb(mixRgb(space, nebula, 0.3), sea, 0.3), mixRgb(deep, sea, 0.32), mixRgb(deep, sea, 0.22), deep];
+    const stars = Array.from({ length: 70 }, () => ({ x: Math.random(), y: Math.random() * 0.5, p: Math.random() * 6.3, s: 0.6 + Math.random() * 1.6, big: Math.random() < 0.12 }));
+    const bubbles = Array.from({ length: 22 }, () => ({ x: Math.random(), y: 0.5 + Math.random() * 0.55, v: 0.02 + Math.random() * 0.035, p: Math.random() * 6.3, big: Math.random() < 0.35 }));
+    const cream = rgbOf(theme.text);
+    let shoot = null;
+
+    const put = (x, y, c, a) => {
+      x = Math.round(x); y = Math.round(y);
+      if (x < 0 || y < 0 || x >= W || y >= H) return;
+      const o = (y * W + x) * 4, d = img.data;
+      d[o] += (c[0] - d[o]) * a; d[o + 1] += (c[1] - d[o + 1]) * a; d[o + 2] += (c[2] - d[o + 2]) * a;
+    };
+    const draw = (t) => {
+      const s = t / 1000, d = img.data;
+      for (let y = 0; y < H; y++) {
+        const fy = (y / Math.max(1, H - 1)) * (BANDS.length - 1);
+        for (let x = 0; x < W; x++) {
+          const th = BAYER[(y & 3) * 4 + (x & 3)];
+          const wave = y > H * 0.45 ? Math.sin(x * 0.18 + s * 1.1 + y * 0.05) * 0.35 : Math.sin(x * 0.07 - s * 0.3) * 0.2;
+          const bi = Math.max(0, Math.min(BANDS.length - 1, Math.floor(fy + wave + th)));
+          let c = BANDS[bi];
+          // Light rays falling into the water, drifting slowly.
+          if (y > H * 0.48) {
+            const ray = Math.sin((x + y * 0.55) * 0.12 + s * 0.4) + Math.sin((x - y * 0.3) * 0.05 - s * 0.25);
+            if (ray > 1.15 + th * 0.4) c = mixRgb(c, cream, 0.09);
+          }
+          const o = (y * W + x) * 4;
+          d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = 255;
+        }
+      }
+      for (const st of stars) {
+        const tw = (Math.sin(st.p + s * st.s) + 1) / 2;
+        const x = st.x * W, y = st.y * H;
+        put(x, y, cream, 0.25 + 0.6 * tw);
+        if (st.big && tw > 0.6) { put(x - 1, y, cream, 0.3); put(x + 1, y, cream, 0.3); put(x, y - 1, cream, 0.3); put(x, y + 1, cream, 0.3); }
+      }
+      if (shoot) {
+        for (let k = 0; k < 9; k++) put(shoot.x - k * 1.6, shoot.y - k * 0.6, cream, 0.8 - k * 0.09);
+      }
+      for (const b of bubbles) {
+        const x = b.x * W + Math.sin(b.p + s * 1.7) * 1.5, y = b.y * H;
+        if (b.big) { put(x, y - 1, cream, 0.35); put(x - 1, y, cream, 0.35); put(x + 1, y, cream, 0.25); put(x, y + 1, cream, 0.2); }
+        else put(x, y, cream, 0.35);
+      }
+      ctx.putImageData(img, 0, 0);
+    };
+    draw(performance.now());
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (!theme.motion || reduced) return () => ro?.disconnect();
+    let raf, last = 0;
+    const loop = (t) => {
+      raf = requestAnimationFrame(loop);
+      if (t - last < 80 || document.hidden) return;
+      const dt = Math.min(0.3, (t - last) / 1000); last = t;
+      for (const b of bubbles) { b.y -= b.v * dt; if (b.y < 0.46) { b.y = 1.03; b.x = Math.random(); } }
+      if (shoot) { shoot.x += 70 * dt; shoot.y += 26 * dt; if (shoot.x > W + 12) shoot = null; }
+      else if (Math.random() < dt * 0.12) shoot = { x: Math.random() * W * 0.5, y: Math.random() * H * 0.2 };
+      draw(t);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => { cancelAnimationFrame(raf); ro?.disconnect(); };
+  }, [theme.ground, theme.you, theme.special, theme.text, theme.motion]);
+  return <canvas ref={ref} aria-hidden="true" style={{ position: "absolute", left: 0, top: 0, imageRendering: "pixelated", pointerEvents: "none" }} />;
+}
+
 const MODE_INK = { ranked: "#7CC7BF", unranked: "#B4A3EE", ai: "#EAD6A4", marathon: "#F2B880", turns: "#EC93B8", private: "#A3D98C" };
-function ModeCard({ big = false, ink, icon: Icon, title, sub, note, onClick, disabled }) {
+
+/** Marathon's little scene: a stack on a tiny board, a block dropping onto it. */
+function MarathonArt({ ink }) {
+  const cells = [[4, 0], [4, 1], [4, 2], [4, 4], [3, 0], [3, 1], [3, 4], [2, 0]];
+  const sq = 10;
+  return (
+    <div className="relative shrink-0" style={{ width: 5 * sq + 4, height: 5 * sq + 4 }} aria-hidden="true">
+      {cells.map(([r, c], i) => (
+        <span key={i} className="absolute" style={{ left: c * (sq + 1), top: r * (sq + 1), width: sq, height: sq,
+          background: i % 3 === 0 ? ink : i % 3 === 1 ? MODE_INK.turns : MODE_INK.ranked,
+          boxShadow: "inset 2px 2px 0 rgba(255,255,255,.45), inset -2px -2px 0 rgba(0,0,0,.25)" }} />
+      ))}
+      {/* The falling piece. */}
+      <span className="absolute tb-drop-in" style={{ left: 3 * (sq + 1), top: 0, width: sq, height: sq * 2 + 1 }}>
+        <span className="absolute" style={{ left: 0, top: 0, width: sq, height: sq, background: "var(--tb-text)", boxShadow: "inset -2px -2px 0 rgba(0,0,0,.2)" }} />
+        <span className="absolute" style={{ left: 0, top: sq + 1, width: sq, height: sq, background: "var(--tb-text)", boxShadow: "inset -2px -2px 0 rgba(0,0,0,.2)" }} />
+      </span>
+    </div>
+  );
+}
+
+/** Ranked's little scene: the trophy, with sparkles winking around it. */
+function RankedArt({ ink }) {
+  const sparks = [[4, 2, "0s"], [46, 8, ".5s"], [8, 40, "1s"], [42, 38, "1.5s"]];
+  return (
+    <div className="relative shrink-0" style={{ width: 54, height: 54 }} aria-hidden="true">
+      <span className="absolute" style={{ left: 9, top: 9 }}><Trophy style={{ color: ink, width: "calc(var(--p) * 18)", height: "calc(var(--p) * 18)" }} /></span>
+      {sparks.map(([x, y, d], i) => (
+        <span key={i} className="absolute tb-twinkle" style={{ left: x, top: y, width: 6, height: 6, animationDelay: d,
+          background: "radial-gradient(circle, var(--tb-text) 30%, transparent 32%), linear-gradient(var(--tb-text), var(--tb-text)) center / 2px 6px no-repeat, linear-gradient(var(--tb-text), var(--tb-text)) center / 6px 2px no-repeat" }} />
+      ))}
+    </div>
+  );
+}
+
+/** A mode, as a pane of tinted glass that floats a little; light sweeps it on hover. */
+function ModeCard({ big = false, ink, icon: Icon, art = null, title, sub, note, onClick, disabled, delay = 0 }) {
   const fill = (n) => `color-mix(in srgb, ${ink} ${n}%, transparent)`;
-  const px2 = "calc(var(--p) * 18)";
   return (
     <button onClick={onClick} disabled={disabled} aria-label={title}
-      className="w-full h-full text-left flex flex-col disabled:opacity-35"
+      className="tb-card tb-float relative w-full h-full text-left flex flex-col overflow-hidden disabled:opacity-35"
       style={{
-        minHeight: big ? 150 : 64, padding: big ? "14px 14px 12px" : "9px 11px", gap: big ? 8 : 4,
-        borderWidth: "var(--p)", borderStyle: "solid", borderColor: fill(big ? 85 : 60), clipPath: CLIP,
-        background: `linear-gradient(180deg, ${fill(big ? 32 : 20)}, ${fill(big ? 14 : 9)})`,
-        boxShadow: `inset 0 var(--p) 0 ${fill(70)}, inset 0 calc(var(--p) * -1) 0 rgba(0,0,0,.3)`,
+        animationDelay: `${delay}ms`,
+        minHeight: big ? 176 : 112, padding: big ? "14px 14px 12px" : "12px 10px 10px", gap: big ? 6 : 4,
+        borderWidth: "var(--p)", borderStyle: "solid", borderColor: fill(big ? 90 : 70), clipPath: CLIP,
+        // Tinted glass that darkens toward the bottom, so the words always read.
+        background: `linear-gradient(170deg, ${fill(big ? 34 : 26)} 0%, color-mix(in srgb, ${ink} 10%, color-mix(in srgb, var(--tb-ground) 45%, transparent)) 50%, color-mix(in srgb, var(--tb-ground) 72%, transparent) 100%)`,
+        textShadow: "var(--p) var(--p) 0 rgba(0,0,0,.55)",
+        boxShadow: `inset 0 var(--p) 0 ${fill(80)}, inset var(--p) 0 0 ${fill(40)}, inset 0 calc(var(--p) * -1) 0 rgba(0,0,0,.35), 0 0 18px ${fill(25)}`,
       }}>
+      {/* The glint: a pixel streak in the corner, and the sweep on hover. */}
+      <span aria-hidden="true" className="absolute" style={{ left: 6, top: 6, width: 10, height: 2, background: "rgba(255,255,255,.55)" }} />
+      <span aria-hidden="true" className="absolute" style={{ left: 6, top: 8, width: 2, height: 6, background: "rgba(255,255,255,.4)" }} />
+      <span aria-hidden="true" className="tb-sheen absolute inset-y-0" style={{ width: 28, left: -40, background: "linear-gradient(90deg, transparent, rgba(255,255,255,.22), transparent)" }} />
       {big ? (
         <>
-          <Icon style={{ color: ink, width: px2, height: px2 }} />
+          <span className="flex justify-between items-start">{art}<span className="tb-t" style={{ color: fill(95) }}>{note}</span></span>
           <span className="flex-1" />
           <PixelWord text={title} from="var(--tb-text)" to={ink} />
+          <span className="tb-t" style={{ color: UI.text, opacity: 0.85 }}>{sub}</span>
         </>
       ) : (
-        <span className="flex items-center gap-2 min-w-0"><Icon style={{ color: ink }} /><span className="tb-t" style={{ color: ink }}>{title}</span></span>
+        <>
+          <Icon style={{ color: ink, width: "calc(var(--p) * 18)", height: "calc(var(--p) * 18)" }} />
+          <span className="flex-1" />
+          <span className="tb-t" style={{ color: ink }}>{title}</span>
+          <span className="tb-t" style={{ color: UI.text, opacity: 0.75 }}>{sub}</span>
+        </>
       )}
-      <span className="tb-t" style={{ color: UI.text, opacity: 0.8 }}>{sub}</span>
-      {note && <span className="tb-t" style={{ color: ink }}>{note}</span>}
     </button>
   );
 }
 
-function PlayModal({ status, authed, verified, placed, rank, tr, onPick, onClose }) {
+function PlayModal({ theme, status, authed, verified, placed, rank, tr, onPick, onClose }) {
+  const phone = useCompact();
+  useEffect(() => { sky.paused++; sfx.open(); music.duck(true); return () => { sky.paused--; music.duck(false); }; }, []);
+  useEffect(() => { const k = (e) => e.key === "Escape" && onClose(); window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, [onClose]);
   const online = status === "online";
+  const count = useOnline();
   const best = Math.max(Number(store.get("tb:marathonBest")) || 0, net.profile?.marathon?.best || 0);
+  const open = net.profile?.marathonOpen;
   const off = online ? null : "needs the server";
-  // Rows, so each pair lines up: solo modes on the left, competitive on the right.
+  const rankedInk = authed && verified && placed ? rank.color : MODE_INK.ranked;
   return (
-    <Popup title="PLAY" onClose={onClose} maxW={640} glassy>
-      <div className="pt-4 pb-1 grid grid-cols-2 gap-3">
-        <ModeCard big ink={MODE_INK.marathon} icon={Stack} title="MARATHON" sub="solo high score on a 7×7 board"
-          note={best ? `best ${best.toLocaleString("en-US")}` : "how far can you go?"} onClick={() => onPick("MARATHON")} />
-        <ModeCard big ink={authed && verified && placed ? rank.color : MODE_INK.ranked} icon={Trophy} title="RANKED"
-          sub={!online ? "needs the server" : !authed ? "account required" : !verified ? "verify your email first" : placed ? "rated 1v1 matches" : "10 games to a rank"}
-          note={online && authed && verified ? (placed ? `${rank.name} · ${tr} TR` : "unplaced") : null}
-          disabled={!online} onClick={() => onPick("MATCHMAKING")} />
-        <ModeCard ink={MODE_INK.turns} icon={People} title="TURN BASED" sub="two players, one device" onClick={() => onPick("TURNBASED")} />
-        <ModeCard ink={MODE_INK.unranked} icon={Wifi} title="UNRANKED" sub={off || "anyone, guests too"} disabled={!online} onClick={() => onPick("UNRANKED")} />
-        <ModeCard ink={MODE_INK.private} icon={Lock} title="PRIVATE" sub={off || "a room code for a friend"} disabled={!online} onClick={() => onPick("PRIVATE")} />
-        <ModeCard ink={MODE_INK.ai} icon={Robot} title="VS AI" sub="strength 1 to 10" onClick={() => onPick("DIFFICULTY")} />
-      </div>
-    </Popup>
+    <div className="fixed inset-0 z-40 flex items-center justify-center tb-fade" onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      style={{ padding: "clamp(12px, 4vw, 48px)", background: "repeating-conic-gradient(rgba(0,0,0,.45) 0 25%, rgba(0,0,0,.2) 0 50%) 0 0 / calc(var(--p) * 2) calc(var(--p) * 2)" }}>
+      <PxContext.Provider value={BASE_P}>
+        <div className="tb-pop tb-scale relative w-full overflow-hidden" role="dialog" aria-label="Play"
+          style={{ maxWidth: 680, maxHeight: "100%", overflowY: "auto", ...sk("color-mix(in srgb, var(--tb-text) 70%, transparent)"), background: "var(--tb-ground)" }}>
+          <DreamCanvas theme={theme} />
+          <div className="relative px-4 pb-4">
+            <div className="flex items-center justify-between pt-4 pb-3">
+              <span style={{ width: 34 }} />
+              <div className="flex flex-col items-center gap-1">
+                <PixelWord text="PLAY" from="var(--tb-text)" to="var(--tb-special)" />
+                <span className="tb-t" style={{ color: UI.text, opacity: 0.6 }}>{!online ? "offline · marathon, turn based and vs ai still work" : count ? `${count} ${count === 1 ? "person" : "people"} online` : "choose a mode"}</span>
+              </div>
+              <button onClick={onClose} aria-label="Close" className="p-2" style={{ color: UI.text, width: 34 }}><X /></button>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {/* The two main modes. */}
+              <ModeCard big ink={MODE_INK.marathon} art={<MarathonArt ink={MODE_INK.marathon} />} title="MARATHON" delay={0}
+                sub={open ? `resume your run · ${open.score.toLocaleString("en-US")}` : "solo high score on a 7×7 board"}
+                note={best ? `BEST ${best.toLocaleString("en-US")}` : "NEW"} onClick={() => onPick("MARATHON")} />
+              <ModeCard big ink={rankedInk} art={<RankedArt ink={rankedInk} />} title="RANKED" delay={400}
+                sub={!online ? "needs the server" : !authed ? "account required" : !verified ? "verify your email first" : placed ? "rated 1v1 matches" : "10 games to a rank"}
+                note={online && authed && verified ? (placed ? `${rank.name} · ${tr}` : "UNPLACED") : null}
+                disabled={!online} onClick={() => onPick("MATCHMAKING")} />
+              {/* Under each, its two companions: side by side on a wide screen, stacked on a phone. */}
+              {(() => {
+                const turnBased = <ModeCard ink={MODE_INK.turns} icon={People} title="TURN BASED" sub="2 players, 1 device" delay={200} onClick={() => onPick("TURNBASED")} />;
+                const priv = <ModeCard ink={MODE_INK.private} icon={Lock} title="PRIVATE" sub={off || "room code"} delay={700} disabled={!online} onClick={() => onPick("PRIVATE")} />;
+                const unranked = <ModeCard ink={MODE_INK.unranked} icon={Wifi} title="UNRANKED" sub={off || "anyone, guests too"} delay={500} disabled={!online} onClick={() => onPick("UNRANKED")} />;
+                const ai = <ModeCard ink={MODE_INK.ai} icon={Robot} title="VS AI" sub="strength 1–10" delay={900} onClick={() => onPick("DIFFICULTY")} />;
+                return phone ? (
+                  <>{turnBased}{unranked}{priv}{ai}</>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 gap-3">{turnBased}{priv}</div>
+                    <div className="grid grid-cols-2 gap-3">{unranked}{ai}</div>
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      </PxContext.Provider>
+    </div>
   );
 }
 
@@ -3342,10 +3517,18 @@ function MarathonGame({ theme, onExit }) {
 
   useEffect(() => {
     let done = false;
-    const begin = (seed, official) => { if (done) return; done = true; setGame({ st: newMarathon(seed), seed, official }); };
+    const begin = (seed, official, saved = null) => {
+      if (done) return; done = true;
+      const st0 = newMarathon(seed);
+      // Coming back to a game you left: replay its moves to where you were.
+      const moves = saved ? decodeMoves(saved) || [] : [];
+      for (const m of moves) if (!mPlace(st0, m[0], m[1], m[2], m[3] ?? 0)) break;
+      movesRef.current = moves.slice(0, st0.moves);
+      setGame({ st: st0, seed, official, resumedAt: moves.length ? st0.moves : null });
+    };
     const canPost = net.status === "online" && net.auth === "authed" && net.profile?.emailVerified;
     if (!canPost) { begin(newMarathonSeed(), false); return; }
-    const off = net.on("marathonSeed", (seed) => begin(seed, true));
+    const off = net.on("marathonSeed", (m) => begin(m.seed, true, m.resume ? m.moves : null));
     net.marathonStart();
     const t = setTimeout(() => begin(newMarathonSeed(), false), 2500); // no answer: play offline
     return () => { off(); clearTimeout(t); };
@@ -3375,8 +3558,9 @@ function MarathonGame({ theme, onExit }) {
     const p = mShape(st.hand[sel], rot);
     const lift = ptr.touch ? 3 * cell * scale : 0;
     const x = (ptr.x - rect.left) / scale, y = (ptr.y - lift - rect.top) / scale;
+    // Only over the board itself: beside it, nothing is shown (or placed).
+    if (x < 0 || y < 0 || x >= boardW || y >= boardW) return null;
     const c0 = Math.floor(x / (cell + g)) - Math.floor((p.w - 1) / 2), r0 = Math.floor(y / (cell + g)) - Math.floor((p.h - 1) / 2);
-    if (x < -cell * 2 || y < -cell * 2 || x > boardW + cell * 2 || y > boardW + cell * 2) return null;
     return { r: r0, c: c0, ok: mFits(st.board, st.hand[sel], r0, c0, rot), cells: p.cells.map(([dr, dc]) => [r0 + dr, c0 + dc]) };
   }, [st, sel, ptr, cell, g, boardW, rots]);
 
@@ -3414,6 +3598,7 @@ function MarathonGame({ theme, onExit }) {
     setGame({ ...game, st: next });
     setSel(null); setPtr(null);
     if (next.over) finish("stuck", next);
+    else if (game.official && next.moves % 5 === 0) net.marathonSave(game.seed, encodeMoves(movesRef.current)); // quietly, in case the tab closes
     return true;
   };
 
@@ -3422,15 +3607,17 @@ function MarathonGame({ theme, onExit }) {
     if (sel === null) return;
     const move = (e) => {
       const rect = boardRef.current?.getBoundingClientRect() || null;
-      setPtr((p) => ({ x: e.clientX, y: e.clientY, rect, touch: e.pointerType !== "mouse", drag: p?.drag || (p && Math.hypot(e.clientX - p.sx, e.clientY - p.sy) > 6), sx: p?.sx ?? e.clientX, sy: p?.sy ?? e.clientY }));
+      // It's a drag only while the button (or finger) is still down after picking up.
+      setPtr((p) => ({ ...p, x: e.clientX, y: e.clientY, rect, touch: e.pointerType !== "mouse", drag: p?.drag || (!!p?.down && Math.hypot(e.clientX - p.sx, e.clientY - p.sy) > 6), sx: p?.sx ?? e.clientX, sy: p?.sy ?? e.clientY }));
     };
     window.addEventListener("pointermove", move);
     return () => window.removeEventListener("pointermove", move);
   }, [sel]);
   const release = () => {
     if (sel === null || !ptr) return;
-    if (ptr.drag && ghost) { if (!place(sel, ghost.r, ghost.c)) { if (ptr.touch) { setSel(null); setPtr(null); } } }
-    else if (ptr.drag && ptr.touch) { setSel(null); setPtr(null); }
+    if (ptr.drag && ghost) { if (!place(sel, ghost.r, ghost.c)) { if (ptr.touch) { setSel(null); setPtr(null); } else setPtr((p) => ({ ...p, down: false, drag: false })); } }
+    else if (ptr.drag) { if (ptr.touch) { setSel(null); setPtr(null); } else setPtr((p) => ({ ...p, down: false, drag: false })); }
+    else setPtr((p) => (p ? { ...p, down: false } : p));
   };
   useEffect(() => {
     if (sel === null) return;
@@ -3439,18 +3626,22 @@ function MarathonGame({ theme, onExit }) {
   });
 
   // Turning: R, the turn button, or tapping the piece you already picked.
-  const turn = (slot) => {
+  const turn = (slot, dir = 1) => {
     if (slot === null || slot === undefined) return;
-    setRots((rs) => rs.map((x, i) => (i === slot ? (x + 1) % 4 : x)));
-    sfx.rotate(1);
+    setRots((rs) => rs.map((x, i) => (i === slot ? (x + dir + 4) % 4 : x)));
+    sfx.rotate(dir);
   };
-  // Keys: 1–3 pick a piece, R turns it, Esc puts it down.
+  // Keys: 1–3 pick a piece; your rotate keys (Q / E by default) and R turn it;
+  // your lock-in key (Space) drops it where the shadow is; Esc puts it down.
   useEffect(() => {
     const onKey = (e) => {
       const t = e.target;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
       if (["1", "2", "3"].includes(e.key) && st && !over) { const i = Number(e.key) - 1; setSel(i); sfx.pick(); setPtr((p) => p || null); }
-      if ((e.key === "r" || e.key === "R") && st && !over) { e.preventDefault(); turn(sel ?? 0); if (sel === null) setSel(0); }
+      const a = actionFor(e.key);
+      const dir = a === "ccw" ? -1 : a === "cw" || e.key === "r" || e.key === "R" ? 1 : 0;
+      if (dir && st && !over) { e.preventDefault(); turn(sel ?? 0, dir); if (sel === null) setSel(0); }
+      if (a === "commit" && st && !over && sel !== null && ghost) { e.preventDefault(); place(sel, ghost.r, ghost.c); }
       if (e.key === "Escape") { setSel(null); setPtr(null); }
     };
     window.addEventListener("keydown", onKey);
@@ -3463,7 +3654,18 @@ function MarathonGame({ theme, onExit }) {
     if (sel === slot && !(ptr && ptr.drag)) { turn(slot); setPtr({ x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, rect: boardRef.current?.getBoundingClientRect() || null, touch: e.pointerType !== "mouse", drag: false }); return; }
     setSel(slot);
     sfx.pick();
-    setPtr({ x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, rect: boardRef.current?.getBoundingClientRect() || null, touch: e.pointerType !== "mouse", drag: false });
+    setPtr({ x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, rect: boardRef.current?.getBoundingClientRect() || null, touch: e.pointerType !== "mouse", drag: false, down: true });
+  };
+  // Leave: signed in, the game is kept on the server to come back to;
+  // otherwise it's gone, so ask first.
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  const leave = () => {
+    if (!st || over) return;
+    if (game.official) {
+      if (st.moves) net.marathonSave(game.seed, encodeMoves(movesRef.current));
+      sfx.back();
+      onExit();
+    } else setConfirmLeave(true);
   };
   const onBoardDown = (e) => {
     if (sel === null || !ghost) return;
@@ -3486,7 +3688,7 @@ function MarathonGame({ theme, onExit }) {
   const ghostKeys = new Set((ghost?.cells || []).map(([r, c]) => r * M_SIZE + c));
   const hint = st && !over ? (sel === null
     ? (compact ? "tap a piece to turn it, drag it onto the board" : "pick a piece: click or drag, or press 1–3")
-    : (compact ? "tap it again to turn it" : "R or click it again to turn it")) : "";
+    : (compact ? "tap it again to turn it" : "Q / E or click it again to turn it · Space drops it")) : "";
   const slotPx = slotArt * P;
   const tray = st && (
     <div className={`flex ${compact ? "flex-row" : "flex-col"} items-center`} style={{ gap: 3 * P, ...(compact ? { width: boardW, justifyContent: "space-between" } : { height: boardW }) }}>
@@ -3506,6 +3708,7 @@ function MarathonGame({ theme, onExit }) {
       {!compact && <div className="flex-1" />}
       <div className={`flex ${compact ? "flex-row" : "flex-col"} items-center`} style={{ gap: 3 * P }}>
         <Bubble w={railD} h={railD} label="Turn piece (R)" onClick={() => { if (sel === null) setSel(0); turn(sel ?? 0); }} disabled={over}><RotateCw /></Bubble>
+        <Bubble w={railD} h={railD} label={game?.official ? "Leave (saved)" : "Leave"} onClick={leave} disabled={over}><LogOut /></Bubble>
         <ForfeitButton compact={compact} disabled={over} onConfirm={() => { sfx.forfeit(); finish("forfeit", st); }} />
       </div>
     </div>
@@ -3573,6 +3776,22 @@ function MarathonGame({ theme, onExit }) {
           <div style={{ flex: 2, minHeight: 4 * P }} />
         </div>
       </div>
+      {confirmLeave && (
+        <Popup title="LEAVE?" onClose={() => setConfirmLeave(false)} maxW={330}>
+          <div className="pt-4 pb-1">
+            <div className="tb-t mb-5" style={{ color: UI.dim }}>Only signed-in games are saved to come back to. This one will be lost.</div>
+            <div className="flex gap-2">
+              <button onClick={() => setConfirmLeave(false)} className="flex-1 tb-t" style={{ height: 44, ...sk(UI.line), color: UI.dim }}>KEEP PLAYING</button>
+              <button onClick={() => { setConfirmLeave(false); onExit(); }} className="flex-1 tb-t" style={{ height: 44, ...skFill(UI.text), color: UI.bad }}>LEAVE</button>
+            </div>
+          </div>
+        </Popup>
+      )}
+      {game?.resumedAt && st && st.moves === game.resumedAt && !over && (
+        <div className="fixed left-1/2 tb-t tb-fade pointer-events-none" style={{ top: "calc(env(safe-area-inset-top, 0px) + 12px)", transform: "translateX(-50%)", color: GOLD, zIndex: 20 }}>
+          WELCOME BACK · RESUMED AT {st.score.toLocaleString("en-US")}
+        </div>
+      )}
       {/* The piece in hand follows the pointer while dragging. */}
       {st && sel !== null && ptr?.drag && (
         <div className="fixed pointer-events-none" style={{ left: ptr.x, top: ptr.y - (ptr.touch ? 3 * cell : 0), transform: "translate(-50%, -50%)", zIndex: 50, opacity: ghost?.ok ? 0.35 : 0.85 }}>
@@ -5005,8 +5224,18 @@ export default function TurfBlocks() {
       .tb-fade { animation: tbFade .18s steps(3) both; }
       /* Popups open like a window on an old screen: a quick stepped scale-in. */
       @keyframes tbPop { from { opacity: 0; transform: scale(.9) } to { opacity: 1; transform: none } }
+      /* PLAY: cards float a pixel up and down; light sweeps a card under the pointer. */
+      @keyframes tbFloat { 0%,100% { transform: none } 50% { transform: translateY(calc(var(--p) * -1)) } }
+      .tb-float { animation: tbFloat 2.4s steps(1) infinite; }
+      .tb-card:not(:disabled):hover { filter: brightness(1.15); }
+      @keyframes tbSheen { from { left: -40px } to { left: calc(100% + 40px) } }
+      .tb-card:not(:disabled):hover .tb-sheen { animation: tbSheen .9s steps(9) 1; }
+      @keyframes tbTwinkle { 0%,100% { opacity: 0; transform: scale(.4) } 50% { opacity: 1; transform: scale(1) } }
+      .tb-twinkle { animation: tbTwinkle 2s steps(4) infinite; }
+      @keyframes tbDropIn { 0% { transform: translateY(-14px); opacity: 0 } 15% { opacity: 1 } 60%,100% { transform: translateY(22px); opacity: 1 } }
+      .tb-drop-in { animation: tbDropIn 2.6s steps(6) infinite; }
       .tb-pop { animation: tbPop .2s steps(4) both; }
-      ${theme.motion ? "" : ".tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-bob,.tb-runner,.tb-line,.tb-vanish,.tb-rise { animation: none !important }"}
+      ${theme.motion ? "" : ".tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-bob,.tb-runner,.tb-line,.tb-vanish,.tb-rise,.tb-float,.tb-twinkle,.tb-drop-in,.tb-sheen { animation: none !important }"}
       @media (prefers-reduced-motion: reduce) {
         .tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-bob,.tb-runner,.tb-line,.tb-rise { animation: none }
       }
