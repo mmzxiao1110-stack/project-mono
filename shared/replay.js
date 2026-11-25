@@ -18,7 +18,21 @@ import {
 import { RULES } from "./rules.js";
 import { decodeAction, splitTurn } from "./notation.js";
 
-export const REPLAY_VERSION = 1;
+// 2: pins are a toggle on a placement ("T.e3.R+"), a charge per delete turn.
+// 1: pins were stamps over your own squares, 2 pins per delete turn.
+export const REPLAY_VERSION = 2;
+
+/** The rules each older replay was played under, so it replays as it happened. */
+const RULES_OF = { 1: { pinToggle: false, pinsPerDeleteTurn: 2, pinCap: 8 } };
+
+/** Runs `fn` under the rules replay version `v` was recorded with. */
+function underRulesOf(v, fn) {
+  const old = RULES_OF[v];
+  if (!old) return fn();
+  const saved = Object.fromEntries(Object.keys(old).map((k) => [k, RULES[k]]));
+  Object.assign(RULES, old);
+  try { return fn(); } finally { Object.assign(RULES, saved); }
+}
 
 export function startState(seeds) {
   return {
@@ -69,6 +83,10 @@ export function playTurn(st, rawA, rawB) {
  * doesn't parse (a damaged or foreign replay).
  */
 export function buildFrames(rec) {
+  return underRulesOf(rec.v, () => buildFramesNow(rec));
+}
+
+function buildFramesNow(rec) {
   let st = startState(rec.seeds);
   const view = (s) => ({
     turn: s.turn, board: s.board, pins: s.pins, meters: s.meters, ot: s.ot, score: scoreOf(s.board),
@@ -107,6 +125,6 @@ export function importReplay(code) {
   const b64 = m[1].replace(/\s+/g, "");
   const json = typeof atob === "function" ? decodeURIComponent(escape(atob(b64))) : globalThis.Buffer.from(b64, "base64").toString("utf8");
   const rec = JSON.parse(json);
-  if (!rec || rec.v !== REPLAY_VERSION || !rec.seeds || !Array.isArray(rec.turns)) throw new Error("That replay is damaged or from another version.");
+  if (!rec || !(rec.v === REPLAY_VERSION || RULES_OF[rec.v]) || !rec.seeds || !Array.isArray(rec.turns)) throw new Error("That replay is damaged or from another version.");
   return rec;
 }

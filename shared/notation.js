@@ -10,9 +10,10 @@
  *     T.e3.R        place a T at e3, turned right
  *     xS.f8.L       delete: stamp an S at f8, turned left
  *     -             pass
- * A pin stamp rides along with "+":
- *     T.e3.R+O.d1.0     place, and pin with an O at d1
- *     -+O.d1.0          pass, and pin
+ * A pinned placement ends in "+":
+ *     T.e3.R+           place a T at e3, turned right, pinned
+ * (Older games, from when pins were stamps, wrote the stamp after the "+":
+ *     T.e3.R+O.d1.0     place, and pin with an O at d1)
  * A turn is both players' actions, bottom player first:
  *     12. T.e3.R+O.d1.0 / xS.f8.L
  *
@@ -60,6 +61,7 @@ export function encodeAction(move, blockId) {
   let main = "-";
   if (move && (move.type === "place" || (!move.type && move.cells))) main = stampText(move.cells, blockId) || "-";
   else if (move && move.type === "delete") main = "x" + (stampText(move.cells, blockId) || "?");
+  if (move && move.pin && main !== "-" && !main.startsWith("x")) main += "+";
   if (move && move.pins && move.pins.length) {
     const p = stampText(move.pins, blockId);
     if (p) main += "+" + p;
@@ -79,9 +81,10 @@ export function decodeAction(text, blockId) {
     return absCells(rotateN(BLOCKS[blockId].cells, ROT.indexOf(m[3])), [r, c]);
   };
   const pins = pinPart ? stamp(pinPart) : null;
+  const pin = t.endsWith("+"); // "T.e3.R+": a pinned placement
   if (mainPart === "-" || mainPart === "") return pins ? { type: "pass", pins } : null;
   if (mainPart.startsWith("x")) return { type: "delete", cells: stamp(mainPart.slice(1)), ...(pins ? { pins } : null) };
-  return { type: "place", cells: stamp(mainPart), blockId, ...(pins ? { pins } : null) };
+  return { type: "place", cells: stamp(mainPart), blockId, ...(pins ? { pins } : null), ...(pin ? { pin: true } : null) };
 }
 
 /** A whole turn: "T.e3.R / xS.f8.L" (bottom player first). */

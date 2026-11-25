@@ -290,8 +290,8 @@ class Net {
     this.bumpAuth();
   }
 
-  move({ turn, handIdx, rot, pos, pins }) {
-    this.send({ t: "move", turn, handIdx, rot, pos, ...(pins ? { pins } : null) });
+  move({ turn, handIdx, rot, pos, pins, pin }) {
+    this.send({ t: "move", turn, handIdx, rot, pos, ...(pins ? { pins } : null), ...(pin ? { pin: true } : null) });
   }
 
   /** Delete 1–4 connected squares; may carry free pins. */

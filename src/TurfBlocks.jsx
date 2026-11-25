@@ -1051,7 +1051,7 @@ function BoardGrid({
   board, cell, ink, ghostKeys, ghostLegal, ghostInk, contestedKeys,
   boardRef, onPointerDown, theme, youSide = "A", ghostGolden = false,
   pendingKeys = null, pendingInk = null,
-  pins = null, traceKeys = null, traceKind = null, traceOk = false, stagedKeys = null,
+  pins = null, traceKeys = null, traceKind = null, traceOk = false, stagedKeys = null, ghostPinned = false,
   otFlash = null, marks = null,
 }) {
   const P = usePx();
@@ -1136,6 +1136,10 @@ function BoardGrid({
                   color={ghostLegal ? ghostInk : UI.bad}
                   
                   style={{ position: "absolute", inset: 0 }} />
+              )}
+              {isGhost && ghostPinned && (
+                // PIN is on: the piece will land pinned.
+                <span aria-hidden="true" style={{ position: "absolute", inset: 0, pointerEvents: "none", background: CHESS, opacity: ghostLegal ? 0.7 : 0.3 }} />
               )}
               {v && pins?.[r]?.[c] && (
                 <span aria-hidden="true" style={{ position: "absolute", inset: 0, pointerEvents: "none", background: CHESS, boxShadow: `inset 0 0 0 ${P}px rgba(255,255,255,.45)` }} />
@@ -2765,7 +2769,9 @@ function HowToModal({ colors, loadout, onClose }) {
           <span className="flex items-center gap-1.5 tb-t"><Pin /> 3</span>
         </div>
       ),
-      body: RULES.stamp
+      body: RULES.pinToggle
+        ? "Instead of placing, you can DELETE: press 2 and your piece becomes a stamp — put it anywhere and everything under it is wiped, yours or theirs. But every turn your opponent deletes earns you a pin charge. Press 3 to switch PIN on: the piece you place next lands pinned. Pinned squares can't be deleted — but a full line still wipes them."
+        : RULES.stamp
         ? `Instead of placing, you can DELETE: press 2 and your piece becomes a stamp — put it anywhere and everything under it is wiped, yours or theirs. But any delete gives your opponent ${RULES.pinsPerDeleteTurn || "a"} pins. Press 3 to PIN: stamp your piece over your own squares (one pin each), then place as usual. Pinned squares can't be deleted — but a full line still wipes them.`
         : `Instead of placing, you can DELETE up to ${RULES.deleteMax} connected squares — anyone's. Press 2 and drag across them. But every square you delete gives your opponent a pin. ${RULES.pinIsFree ? "Pins ride along with your move:" : "Pinning takes your turn:"} press 3 and drag over your own squares to make them permanent — deletes can't touch them${RULES.pinsSurviveClears ? ", nor can line clears" : ", though a full line still wipes them"}.`,
     }] : []),
@@ -3237,7 +3243,7 @@ function revealSound(moves, { contested = [], lines, shrink = null }) {
   sfx.reveal({
     placed: ms.filter((m) => kind(m) === "place").length,
     deleted: ms.filter((m) => kind(m) === "delete").length,
-    pinned: ms.filter((m) => m.pins && m.pins.length).length,
+    pinned: ms.filter((m) => m.pin || (m.pins && m.pins.length)).length,
     contested: contested.length,
     lines: lines ? (lines.rows?.length || 0) + (lines.cols?.length || 0) : 0,
     shrink,
@@ -3289,6 +3295,12 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   const act = useActions({ board, pins, owner: player, meter: meters[player], enabled: inPlay, boardRef: pl.boardRef, onLeavePlace: RULES.stamp ? undefined : pl.reset });
   const stamp = useStamp({ board, pins, owner: player, meter: meters[player], act, pl });
   useGameSfx({ pl, act, canAct: inPlay, turnKey: `${turn}${player}` });
+  // PIN switched on: the piece you place next lands pinned (spends a charge).
+  // Tied to the turn it was switched on in, so it switches itself off after.
+  const [pinFor, setPinFor] = useState(null);
+  const pinKey = `${turn}${player}`;
+  const pinOn = pinFor === pinKey;
+  const setPinOn = (on) => setPinFor(on ? pinKey : null);
   useGameMusic({ choice: theme.track, over: phase === "DONE", ot });
   useEffect(() => {
     if (reveal) revealSound([reveal.a, reveal.b], { contested: reveal.contested, lines: reveal.lines, shrink: otFlash });
@@ -3369,6 +3381,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
     if (player === "A") handOver(move); else finish(pendingA, move);
     pl.reset();
     act.reset();
+    setPinOn(false);
   };
   const commit = () => {
     if (!inPlay) return;
@@ -3388,14 +3401,27 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
       return;
     }
     if (pl.sel.handIdx === null || !pl.ghost || !pl.ghostLegal) { sfx.illegal(); return; }
-    send({ type: "place", cells: pl.ghost, value: BLOCKS[piece].cells.length, blockId: piece, ...extra });
+    if (pinOn) sfx.pinStage();
+    send({ type: "place", cells: pl.ghost, value: BLOCKS[piece].cells.length, blockId: piece, ...extra, ...(pinOn ? { pin: true } : null) });
   };
 
   // Passing spends the current piece without placing it (free pins still land).
   const discard = () => send(extra ? { type: "pass", ...extra } : null);
 
-  const onMode = (m) => { act.setMode(m); if (RULES.stamp || m === "place" || m === act.mode) setTimeout(() => pl.select(0), 0); };
-  useGameKeys(pl, { enabled: inPlay, onCommit: commit, onDiscard: discard, onMode, mode: act.mode });
+  const onMode = (m) => {
+    if (RULES.pinToggle && m === "pin") {
+      if (!pinOn && meters[player] < 1) { sfx.illegal(); return; }
+      if (pinOn) sfx.toggle(false); else sfx.mode("pin");
+      setPinOn(!pinOn);
+      if (act.mode !== "place") act.setMode("place");
+      setTimeout(() => pl.select(0), 0);
+      return;
+    }
+    if (RULES.pinToggle && m === "delete") setPinOn(false);
+    act.setMode(m); if (RULES.stamp || m === "place" || m === act.mode) setTimeout(() => pl.select(0), 0);
+  };
+  const shownMode = pinOn && act.mode === "place" ? "pin" : act.mode;
+  useGameKeys(pl, { enabled: inPlay, onCommit: commit, onDiscard: discard, onMode, mode: shownMode });
 
   // Each turn starts with the piece already in hand: under the cursor with a
   // mouse, on the nearest legal square on a touch screen.
@@ -3468,7 +3494,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
     ink: INK[player], turn, ot, bag: currentPass(decks[cur]),
     onRotate: () => pl.rotate(1), onCommit: commit, onDiscard: discard,
     canRotate: inPlay && act.mode === "place" && pl.sel.handIdx !== null, canCommit, canDiscard: inPlay,
-    mode: act.mode, onMode, meter: meters[player], canMode: inPlay,
+    mode: shownMode, onMode, meter: meters[player], canMode: inPlay,
     forfeit: {
       disabled: phase === "DONE",
       onConfirm: () => { sfx.forfeit(); pl.reset(); setForfeitBy(solo ? "A" : player); setPhase("DONE"); },
@@ -3504,7 +3530,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
                   pendingKeys={phase === "AI_THINK" && pendingA ? new Set(pendingA.cells.map(([r, c]) => key(r, c))) : null}
                   pendingInk={INK.A}
                   ghostKeys={stamp.on ? EMPTY_SET : pl.ghostKeys} ghostLegal={pl.ghostLegal}
-                  ghostInk={INK[player]}
+                  ghostInk={INK[player]} ghostPinned={pinOn && act.mode === "place"}
                   contestedKeys={contestedKeys} boardRef={pl.boardRef}
                   onPointerDown={(e) => (act.mode === "place" || RULES.stamp ? pl.onBoardPointerDown(e, commit) : act.onPointerDown(e))}
                   otFlash={phase === "REVEAL" ? otFlash : null}
@@ -3601,6 +3627,9 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   const act = useActions({ board, pins, owner: you, meter, enabled: canAct, boardRef: pl.boardRef, flip, onLeavePlace: RULES.stamp ? undefined : pl.reset });
   const stamp = useStamp({ board, pins, owner: you, meter, act, pl });
   useGameSfx({ pl, act, canAct, turnKey: m?.turn });
+  const [pinFor, setPinFor] = useState(null);
+  const pinOn = pinFor !== null && pinFor === m?.turn;
+  const setPinOn = (on) => setPinFor(on ? m?.turn : null);
   useGameMusic({ choice: theme.track, over: !!m?.over, ot: !!m?.ot });
   useEffect(() => {
     const rv = m?.reveal;
@@ -3657,9 +3686,11 @@ function NetGame({ colors, theme, onResult, onAbort }) {
     } else {
       if (!pl.ghostLegal || pl.sel.handIdx === null) { sfx.illegal(); return; }
       sfx.lockIn("place");
+      if (pinOn) sfx.pinStage();
       // Show the block where it went (dotted, not yet real) until the turn resolves.
       setPlaced({ turn: m.turn, cells: pl.ghost, handIdx: pl.sel.handIdx });
-      net.move({ turn: m.turn, handIdx: pl.sel.handIdx, rot: ((pl.sel.rot % 4) + 4) % 4, pos: pl.sel.pos, pins: pinsOut });
+      net.move({ turn: m.turn, handIdx: pl.sel.handIdx, rot: ((pl.sel.rot % 4) + 4) % 4, pos: pl.sel.pos, pins: pinsOut, pin: pinOn });
+      setPinOn(false);
     }
     pl.reset();
     act.reset();
@@ -3676,8 +3707,20 @@ function NetGame({ colors, theme, onResult, onAbort }) {
     act.reset();
   };
 
-  const onMode = (md) => { act.setMode(md); if (RULES.stamp || md === "place" || md === act.mode) setTimeout(() => pl.select(0), 0); };
-  useGameKeys(pl, { enabled: canAct, onCommit: commit, onDiscard: discard, onMode, mode: act.mode });
+  const onMode = (md) => {
+    if (RULES.pinToggle && md === "pin") {
+      if (!pinOn && meter < 1) { sfx.illegal(); return; }
+      if (pinOn) sfx.toggle(false); else sfx.mode("pin");
+      setPinOn(!pinOn);
+      if (act.mode !== "place") act.setMode("place");
+      setTimeout(() => pl.select(0), 0);
+      return;
+    }
+    if (RULES.pinToggle && md === "delete") setPinOn(false);
+    act.setMode(md); if (RULES.stamp || md === "place" || md === act.mode) setTimeout(() => pl.select(0), 0);
+  };
+  const shownMode = pinOn && act.mode === "place" ? "pin" : act.mode;
+  useGameKeys(pl, { enabled: canAct, onCommit: commit, onDiscard: discard, onMode, mode: shownMode });
 
   // Each turn starts with the piece already in hand (see LocalGame).
   useEffect(() => {
@@ -3700,7 +3743,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
     ink: colors.you, turn: m.turn, ot: !!m.ot, bag: m.pass || 1,
     onRotate: () => pl.rotate(1), onCommit: commit, onDiscard: discard,
     canRotate: canAct && act.mode === "place" && pl.sel.handIdx !== null, canCommit, canDiscard: canAct,
-    mode: act.mode, onMode, meter, canMode: canAct,
+    mode: shownMode, onMode, meter, canMode: canAct,
     waiting: !!m.submitted && !m.reveal,
     timer: graceLeft !== null ? (
       <NumBox value={graceLeft} color={GOLD} label={`Reconnect: ${graceLeft}s`} />
@@ -3741,7 +3784,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
                 <div className="relative" style={{ transform: flip ? "rotate(180deg)" : "none" }}>
                   <BoardGrid
                     board={board} cell={cell} ink={INK} theme={theme} youSide={you}
-                    ghostKeys={stamp.on ? EMPTY_SET : pl.ghostKeys} ghostLegal={pl.ghostLegal} ghostInk={colors.you}
+                    ghostKeys={stamp.on ? EMPTY_SET : pl.ghostKeys} ghostLegal={pl.ghostLegal} ghostInk={colors.you} ghostPinned={pinOn && act.mode === "place"}
                     pendingKeys={pendingKeys} pendingInk={colors.you}
                     contestedKeys={contestedKeys} boardRef={pl.boardRef}
                     onPointerDown={(e) => (act.mode === "place" || RULES.stamp ? pl.onBoardPointerDown(e, commit) : act.onPointerDown(e))}

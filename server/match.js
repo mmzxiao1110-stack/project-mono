@@ -208,7 +208,7 @@ export class Match {
     const cells = absCells(shape, [r, c]);
     if (!isLegal(this.board, cells, side)) return "illegal placement";
 
-    return this.accept(side, { type: "place", blockId, cells, value: BLOCKS[blockId].cells.length }, msg.pins);
+    return this.accept(side, { type: "place", blockId, cells, value: BLOCKS[blockId].cells.length, ...(msg.pin === true ? { pin: true } : null) }, msg.pins);
   }
 
   /** Delete 1–4 connected squares (anyone's, never pinned), or pin (when pinning is a turn of its own). */
@@ -285,7 +285,7 @@ export class Match {
       seat.deck = advanceDeck(seat.deck, seat.loadout);
     }
 
-    const pub = (m) => (m ? { type: m.type || "place", blockId: m.blockId, cells: m.cells, pins: m.pins || null } : null);
+    const pub = (m) => (m ? { type: m.type || "place", blockId: m.blockId, cells: m.cells, pins: m.pins || null, pin: !!m.pin } : null);
     const moves = { A: pub(this.pending.A), B: pub(this.pending.B) };
 
     // Scoring checks: the last turn, then (in overtime) every few turns.
