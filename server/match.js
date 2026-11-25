@@ -256,6 +256,13 @@ export class Match {
     return null;
   }
 
+  /** A chat line from `side`, to both players (the sender sees it echoed). */
+  chat(side, text) {
+    const msg = { t: "chat", side, name: this.seats[side].profile.name, text, at: Date.now() };
+    this.send("A", msg);
+    this.send("B", msg);
+  }
+
   applyDiscard(side) {
     this.pending[side] = null; // null = passed, undefined = still thinking
     this.raw[side] = null;
@@ -351,7 +358,10 @@ export class Match {
       date: Date.now(),
       mode: this.rated ? "ranked" : this.room ? "private" : "unranked",
       you: side,
-      players: { A: { name: this.seats.A.profile.name }, B: { name: this.seats.B.profile.name } },
+      players: {
+        A: { name: this.seats.A.profile.name, ...(this.seats.A.profile.guest ? { guest: true } : null) },
+        B: { name: this.seats.B.profile.name, ...(this.seats.B.profile.guest ? { guest: true } : null) },
+      },
       seeds: this.seeds,
       turns: this.log,
       result: { a: score.a, b: score.b, reason: this.endReason || "turns", forfeitBy: forfeitBy || null },
@@ -442,6 +452,7 @@ export class Match {
             won, drew,
             delta: tr - Math.round(before.r),
             seconds,
+            at: Date.now(),
             score: [mine, theirs],
           },
           ...st.recent,

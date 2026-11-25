@@ -299,6 +299,12 @@ class Net {
     this.send({ t: "delete", turn, cells, ...(pins ? { pins } : null) });
   }
 
+  /** A line of chat to your opponent (the server filters it and echoes it back). */
+  chat(text) {
+    const t = String(text || "").trim().slice(0, 120);
+    if (t) this.send({ t: "chat", text: t });
+  }
+
   forfeit() {
     this.send({ t: "forfeit" });
   }
@@ -466,6 +472,8 @@ class Net {
           over: null,
           oppDropped: false,
           resumed: !!m.resumed,
+          chat: [],           // this match's chat, oldest first (never stored on the server)
+          chatError: null,
         };
         this.emit("match", this.match);
         break;
@@ -523,6 +531,14 @@ class Net {
           this.profile = { ...this.profile, ...m.profile };
           this.emit("profile", this.profile);
         }
+        break;
+
+      case "chat":
+        if (this.match) this.patch({ chat: [...(this.match.chat || []), { side: m.side, name: m.name, text: m.text, at: m.at, got: Date.now() }].slice(-60), chatError: null });
+        break;
+
+      case "chatError":
+        if (this.match) this.patch({ chatError: m.msg });
         break;
 
       case "oppDropped":

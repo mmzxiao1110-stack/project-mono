@@ -303,5 +303,8 @@ export function flush() {
   save();
 }
 
+/** Every stored profile (for the leaderboard and player search). Read-only use. */
+export const allProfiles = () => Object.values(db.profiles);
+
 export const countAccounts = () => Object.keys(db.accounts).length;
 export const dataFile = () => FILE;

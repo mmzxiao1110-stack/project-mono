@@ -3,7 +3,11 @@ import {
   RotateCw, Check, SkipForward, ChevronLeft, Settings2, X,
   BarChart3, Wifi, WifiOff, UserRound, LogOut,
   Palette, Lock, MailCheck, ShieldAlert, BookOpen, ChevronRight, Eraser, Pin, Film, Play, Pause, First,
+  Chat, Terminal as TerminalIcon, Info, News as NewsIcon, Download as DownloadIcon, Help as HelpIcon,
 } from "./pixelIcons.jsx";
+import { PlayerRecord } from "./site/terminal.jsx";
+import { apiGet } from "./site/api.js";
+import { ACCENTS } from "./site/colors.js";
 
 /* The rules live in one place and the server imports the same file. */
 import {
@@ -22,6 +26,8 @@ import {
 } from "../shared/glicko.js";
 import { net, SERVER_URL, IS_SECURE, GOOGLE_CLIENT_ID } from "./net.js";
 import { FX } from "./tuning.js";
+import { SkyCanvas, sky, rgbOf, mixRgb, BAYER } from "./sky.jsx";
+import { VERSION_LABEL } from "./version.js";
 import { sfx, setVolume, installUiSounds } from "./sfx.js";
 import { music, TRACKS, GAME_TRACKS, nextGameTrack } from "./music.js";
 import { RULES } from "../shared/rules.js";
@@ -713,144 +719,8 @@ function useGameKeys(pl, { enabled, onCommit, onDiscard, onMode, mode = "place" 
   }, []);
 }
 
-/* ============================================================
-   PIXEL SKY — the animated background behind every screen
-   ============================================================ */
-/**
- * `paused` counts open popups (their frosted glass would otherwise re-blur
- * a moving picture every frame); `slow` is set during matches, when the
- * sky should stay out of the way.
- */
-const sky = { paused: 0, slow: false };
-
-/**
- * A night sky in the style of Celeste's later chapters, drawn pixel by
- * pixel at the screen's pixel size: colour bands from deep top to warmer
- * horizon with ordered dithering between them, two dithered nebulae in the
- * theme's colours drifting slowly, pastel stars twinkling and a little wind.
- * About 10 fps, half that in a match, paused while hidden or under a popup.
- */
-// Pastel star colours, shared by the sky and the dream-block board.
-const rgbOf = (hex) => { const n = parseInt(String(hex).replace("#", ""), 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
-const mixRgb = (a, b, t) => [0, 1, 2].map((i) => Math.round(a[i] + (b[i] - a[i]) * t));
-const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map((v) => (v + 0.5) / 16);
-
-/** The sky is drawn in pixels this many times the UI pixel, so it reads soft and far away. */
-const SKY_SCALE = 2;
-
-/**
- * The backdrop: deep water in space. Dithered bands of colour that ripple
- * like water, two slow glows drifting through, and a few bubbles rising.
- * Drawn at low resolution and scaled up with hard edges.
- */
 function PixelSky({ theme }) {
-  const ref = useRef(null);
-  const P = usePx() * SKY_SCALE;
-  const { ground, you, special, panel, motion } = theme;
-
-  useEffect(() => {
-    const cv = ref.current;
-    if (!cv) return;
-    const ctx = cv.getContext("2d", { alpha: false });
-    let W = 1, H = 1, img = null;
-    const size = () => {
-      W = Math.max(1, Math.ceil(window.innerWidth / P));
-      H = Math.max(1, Math.ceil(window.innerHeight / P));
-      cv.width = W; cv.height = H;
-      cv.style.width = `${W * P}px`; cv.style.height = `${H * P}px`;
-      img = ctx.createImageData(W, H);
-    };
-    size();
-    window.addEventListener("resize", size);
-
-    // Bands, top to bottom: deep dark down to a lavender haze.
-    const g = rgbOf(ground), pa = rgbOf(panel), yo = rgbOf(you), sp = rgbOf(special);
-    const BANDS = 9;
-    const band = Array.from({ length: BANDS }, (_, i) => {
-      const t = i / (BANDS - 1);
-      return t < 0.55 ? mixRgb(mixRgb(g, [0, 0, 0], 0.3), pa, t / 0.55) : mixRgb(pa, mixRgb(pa, yo, 0.45), (t - 0.55) / 0.45);
-    });
-    const glows = [
-      { c: yo, x: 0.28, y: 0.35, r: 0.42, vx: 0.004, vy: 0.002 },
-      { c: sp, x: 0.72, y: 0.65, r: 0.38, vx: -0.003, vy: -0.0025 },
-    ];
-    const bubbles = Array.from({ length: 9 }, () => ({
-      x: Math.random(), y: Math.random(), v: 0.012 + Math.random() * 0.02, p: Math.random() * 6.28, big: Math.random() < 0.4,
-    }));
-    const cream = rgbOf("#F2E8D2");
-
-    const put = (x, y, c, a) => {
-      if (x < 0 || y < 0 || x >= W || y >= H) return;
-      const o = (y * W + x) * 4, d = img.data;
-      d[o] += (c[0] - d[o]) * a; d[o + 1] += (c[1] - d[o + 1]) * a; d[o + 2] += (c[2] - d[o + 2]) * a;
-    };
-
-    const draw = (t) => {
-      const d = img.data;
-      const s = t * 0.001;
-      // Per-column wave, worked out once a frame.
-      const wave = new Float32Array(W);
-      for (let x = 0; x < W; x++) wave[x] = Math.sin(x * 0.16 + s * 1.3) * 0.32 + Math.sin(x * 0.05 - s * 0.7) * 0.28;
-      for (let y = 0; y < H; y++) {
-        const fy0 = (y / Math.max(1, H - 1)) * (BANDS - 1);
-        for (let x = 0; x < W; x++) {
-          const th = BAYER[(y & 3) * 4 + (x & 3)];
-          // The band edge rides the wave, with a dithered step between neighbours.
-          const bi = Math.max(0, Math.min(BANDS - 1, Math.floor(fy0 + wave[x] + th)));
-          let c = band[bi];
-          for (const n of glows) {
-            const dx = (x / W - n.x) * (W / Math.max(W, H)), dy = (y / H - n.y) * (H / Math.max(W, H));
-            const v = 1 - Math.sqrt(dx * dx + dy * dy) / n.r;
-            if (v <= 0) continue;
-            const lvl = Math.floor(v * 3 + th);
-            if (lvl > 0) c = mixRgb(c, n.c, Math.min(3, lvl) * 0.1);
-          }
-          const o = (y * W + x) * 4;
-          d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = 255;
-        }
-      }
-      for (const b of bubbles) {
-        const x = Math.floor(b.x * W + Math.sin(b.p + s * 1.6) * 1.5), y = Math.floor(b.y * H);
-        if (b.big) {
-          put(x, y - 1, cream, 0.22); put(x - 1, y, cream, 0.22); put(x + 1, y, cream, 0.16); put(x, y + 1, cream, 0.16);
-          put(x - 1, y - 1, cream, 0.1);
-        } else put(x, y, cream, 0.2);
-      }
-      ctx.putImageData(img, 0, 0);
-    };
-
-    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    // Draw one frame right away: a colour change (or resize) resets the canvas,
-    // and while a popup has the sky paused the loop below wouldn't repaint it.
-    draw(performance.now());
-    if (!motion || reduced) { return () => window.removeEventListener("resize", size); }
-
-    let raf, last = 0;
-    const loop = (t) => {
-      raf = requestAnimationFrame(loop);
-      const every = sky.slow ? 160 : 80;
-      if (t - last < every || sky.paused > 0 || document.hidden) return;
-      const dt = Math.min(0.3, (t - last) / 1000);
-      last = t;
-      for (const n of glows) {
-        n.x += n.vx * dt; n.y += n.vy * dt;
-        if (n.x < 0.1 || n.x > 0.9) n.vx *= -1;
-        if (n.y < 0.15 || n.y > 0.85) n.vy *= -1;
-      }
-      for (const b of bubbles) {
-        b.y -= b.v * dt;
-        if (b.y < -0.02) { b.y = 1.02; b.x = Math.random(); }
-      }
-      draw(t);
-    };
-    raf = requestAnimationFrame(loop);
-    return () => { cancelAnimationFrame(raf); window.removeEventListener("resize", size); };
-  }, [ground, you, special, panel, motion, P]);
-
-  return (
-    <canvas ref={ref} aria-hidden="true"
-      style={{ position: "fixed", left: 0, top: 0, imageRendering: "pixelated", zIndex: 0, pointerEvents: "none" }} />
-  );
+  return <SkyCanvas theme={theme} px={usePx()} />;
 }
 
 /* ============================================================
@@ -1314,12 +1184,16 @@ function PiecePane({ id, size, ink, dir, dim = 1, lit = false, ...rest }) {
  * One side's tag beside the forecast: name, rank and rating (when they have
  * one), and pins. Phones get just the rating and pins.
  */
-function PlayerTag({ name, ink, meter, rating, right = false, compact = false, busy = false }) {
+function PlayerTag({ name, ink, meter, rating, right = false, compact = false, busy = false, onOpen = null }) {
   const P = usePx();
   const tr = rating ? Math.round(rating) : null;
   const rank = tr !== null ? RANKS[rankIndexFor(tr)] : null;
+  // With a profile to show, the whole tag is a button.
+  const Tag = onOpen ? "button" : "div";
   return (
-    <div className={`flex flex-col min-w-0 flex-1 ${right ? "items-end text-right" : "items-start"} ${busy ? "tb-pulse" : ""}`} style={{ gap: P }}>
+    <Tag {...(onOpen ? { onClick: onOpen, "aria-label": `${name}: profile`, title: "View profile" } : null)}
+      className={`flex flex-col min-w-0 flex-1 ${right ? "items-end text-right" : "items-start"} ${busy ? "tb-pulse" : ""}`}
+      style={{ gap: P, ...(onOpen ? { background: "none", border: "none", padding: 0, color: "inherit" } : null) }}>
       {!compact && <div className="tb-t truncate max-w-full" style={{ color: ink }}>{name}</div>}
       {rank && (
         <div className={`flex items-center tb-t tabular-nums ${right ? "flex-row-reverse" : ""}`} style={{ gap: 2 * P, color: UI.dim }}>
@@ -1331,7 +1205,7 @@ function PlayerTag({ name, ink, meter, rating, right = false, compact = false, b
           <Pin />{meter}
         </span>
       )}
-    </div>
+    </Tag>
   );
 }
 
@@ -1357,7 +1231,7 @@ function GameTitle({ mode }) {
   return (
     <div className="flex flex-col items-center shrink-0" style={{ gap: 2 * P }}>
       <PixelLogo small />
-      <div className="tb-t" style={{ color: UI.text, opacity: 0.35, letterSpacing: 2 * P }}>({mode})</div>
+      <div className="tb-t" style={{ color: UI.text, opacity: 0.35, letterSpacing: 2 * P }}>({mode}) <span style={{ letterSpacing: 0, opacity: 0.8 }}>{VERSION_LABEL}</span></div>
     </div>
   );
 }
@@ -1706,6 +1580,138 @@ function Popup({ title, onClose, children, pinned, maxW = 430 }) {
         <div className="tb-scroll flex-1 min-h-0 overflow-y-auto px-4 pb-5">{children}</div>
       </div>
       </PxContext.Provider>
+    </div>
+  );
+}
+
+/* ============================================================
+   PROFILES — a player's record, from the same API as T-Terminal
+   ============================================================ */
+function ProfilePopup({ name, guest = false, onClose }) {
+  const P = usePx();
+  // The popup can follow links to other players (their recent opponents).
+  const [who, setWho] = useState(name);
+  const [res, setRes] = useState({ who: null });
+  const isGuest = guest && who === name;
+  useEffect(() => {
+    if (isGuest) return;
+    let live = true;
+    apiGet(`/api/player/${encodeURIComponent(who)}`)
+      .then((data) => live && setRes({ who, data }))
+      .catch((e) => live && setRes({ who, error: e.message }));
+    return () => { live = false; };
+  }, [who, isGuest]);
+  const loading = !isGuest && res.who !== who;
+  return (
+    <Popup title="PLAYER" onClose={onClose} maxW={460}>
+      <div className="pt-4 pb-1 flex flex-col" style={{ gap: 4 * P }}>
+        {who !== name && (
+          <button onClick={() => setWho(name)} className="tb-t text-left flex items-center gap-1" style={{ color: UI.dim }}>
+            <ChevronLeft /> BACK TO {name.toUpperCase()}
+          </button>
+        )}
+        {isGuest ? (
+          <div className="tb-t" style={{ color: UI.dim }}>
+            <span style={{ color: UI.text }}>{name}</span> is playing as a guest. Guests don't have a record.
+          </div>
+        ) : loading ? (
+          <div className="tb-t tb-pulse" style={{ color: UI.dim }}>LOADING…</div>
+        ) : res.error ? (
+          <div className="tb-t" style={{ color: UI.dim }}>{res.error}</div>
+        ) : (
+          <PlayerRecord p={res.data} onOpen={setWho} />
+        )}
+        {!isGuest && (
+          // A new tab: never pull someone out of a match.
+          <a href={`/terminal#/player/${encodeURIComponent(who)}`} target="_blank" rel="noopener"
+            className="tb-t flex items-center justify-center gap-2 no-underline" style={{ height: 40, ...skFill(ACCENTS.terminal), color: UI.text }}>
+            <span style={{ color: ACCENTS.terminal, display: "flex" }}><TerminalIcon /></span> OPEN IN T-TERMINAL
+          </a>
+        )}
+      </div>
+    </Popup>
+  );
+}
+
+/* ============================================================
+   CHAT — online matches only; relayed by the server, never stored
+   ============================================================ */
+const CHAT_MAX = 120;
+function ChatDock({ m, colors }) {
+  const P = usePx();
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [muted, setMuted] = useState(() => store.get("tb:chatMuted") === "1");
+  const [seen, setSeen] = useState(0);
+  const listRef = useRef(null);
+  const chat = m.chat || [];
+  const theirs = chat.filter((l) => l.side !== m.you);
+  const shown = muted ? chat.filter((l) => l.side === m.you) : chat;
+  const unread = open || muted ? 0 : Math.max(0, theirs.length - seen);
+  const latest = theirs[theirs.length - 1];
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+  // A new line from them pops up for a few seconds while the panel's shut.
+  const toast = !open && !muted && latest && now - latest.got < 5000 ? latest : null;
+
+  const lastCount = useRef(theirs.length);
+  useEffect(() => {
+    if (theirs.length > lastCount.current && !muted) sfx.chat();
+    lastCount.current = theirs.length;
+  }, [theirs.length, muted]);
+  useEffect(() => { if (open && listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight; }, [open, shown.length]);
+
+  const toggle = () => { setSeen(theirs.length); setOpen(!open); };
+  const send = () => { const t = draft.trim(); if (!t) return; net.chat(t); setDraft(""); };
+  const setMute = (v) => { setMuted(v); store.set("tb:chatMuted", v ? "1" : ""); };
+  const inkOf = (side) => (side === m.you ? colors.you : colors.rival);
+
+  return (
+    <div className="fixed z-30 flex flex-col items-end" style={{ top: "calc(env(safe-area-inset-top, 0px) + 10px)", right: "calc(env(safe-area-inset-right, 0px) + 10px)", gap: 2 * P }}>
+      <button onClick={toggle} aria-label={open ? "Close chat" : `Chat${unread ? ` (${unread} new)` : ""}`} aria-expanded={open}
+        className="relative flex items-center justify-center" style={{ width: 13 * P, height: 13 * P, ...glass(open ? UI.text : UI.line), color: unread ? UI.text : UI.dim }}>
+        <Chat />
+        {unread > 0 && (
+          <span className="absolute tb-t tb-b tabular-nums" style={{ right: -P, top: -2 * P, color: GOLD, textShadow: `${P}px ${P}px 0 rgba(0,0,0,.6)` }}>{unread}</span>
+        )}
+      </button>
+      {toast && (
+        <button onClick={toggle} className="tb-t text-left tb-fade" style={{ maxWidth: "min(300px, 80vw)", padding: `${2 * P}px ${3 * P}px`, ...glass(colors.rival), color: UI.text }}>
+          <span style={{ color: colors.rival }}>{toast.name}: </span>{toast.text}
+        </button>
+      )}
+      {open && (
+        <div className="tb-fade flex flex-col" style={{ width: "min(360px, calc(100vw - 20px))", height: "min(60vh, 440px)", padding: 3 * P, gap: 2 * P,
+          background: "color-mix(in srgb, var(--tb-panel-solid) 88%, transparent)", ...sk(UI.line) }}>
+          <div className="flex items-center justify-between" style={{ gap: 2 * P }}>
+            <span className="tb-t" style={{ color: UI.text }}>CHAT</span>
+            <button onClick={() => setMute(!muted)} className="tb-t" aria-pressed={muted} title="Hide your opponent's messages" style={{ color: muted ? GOLD : UI.dim }}>
+              {muted ? "MUTED" : "MUTE"}
+            </button>
+          </div>
+          {/* The rules, always in view. */}
+          <div className="tb-t" style={{ color: UI.dim, opacity: 0.8 }}>
+            Be respectful to everyone.
+          </div>
+          <div ref={listRef} className="tb-scroll flex-1 min-h-0 overflow-y-auto flex flex-col" style={{ gap: P }}>
+            {!shown.length && <div className="tb-t" style={{ color: UI.dim, opacity: 0.6 }}>{muted ? "Their messages are hidden." : "No messages yet. Say good luck!"}</div>}
+            {shown.map((l, i) => (
+              <div key={i} className="tb-t" style={{ wordBreak: "break-word" }}>
+                <span style={{ color: inkOf(l.side) }}>{l.side === m.you ? "YOU" : l.name}: </span>
+                <span style={{ color: UI.text }}>{l.text}</span>
+              </div>
+            ))}
+          </div>
+          {m.chatError && <div className="tb-t" style={{ color: GOLD }}>{m.chatError}</div>}
+          <form className="flex" style={{ gap: 2 * P }} onSubmit={(e) => { e.preventDefault(); send(); }}>
+            <input value={draft} onChange={(e) => setDraft(e.target.value.slice(0, CHAT_MAX))} maxLength={CHAT_MAX} autoFocus
+              onKeyDown={(e) => { if (e.key === "Escape") toggle(); }}
+              placeholder="gl hf…" aria-label="Chat message" className="tb-t flex-1 min-w-0 px-2"
+              style={{ height: 15 * P, ...glass(UI.line), color: UI.text, outline: "none" }} />
+            <button type="submit" disabled={!draft.trim()} className="tb-t px-2 disabled:opacity-40" style={{ height: 15 * P, ...skFill(UI.text), color: UI.text }}>SEND</button>
+          </form>
+        </div>
+      )}
     </div>
   );
 }
@@ -2931,6 +2937,7 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
         <div className="text-center mb-9">
           <PixelLogo />
           <PixelRule />
+          <div className="tb-t mt-2" style={{ color: UI.dim, opacity: 0.6 }}>{VERSION_LABEL}</div>
         </div>
 
         <button
@@ -2983,12 +2990,20 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
         </div>
 
         <div className="flex gap-2.5 mb-2.5">
-          <button onClick={() => { onPick("DIFFICULTY"); }} className="flex-1 rounded flex items-center justify-center" style={{ height: 44, ...glass(UI.line) }}>
-            <span className="tb-t">SP</span>
-          </button>
-          <button onClick={() => { onPick("HOTSEAT"); }} className="flex-1 rounded flex items-center justify-center" style={{ height: 44, ...glass(UI.line) }}>
-            <span className="tb-t">TAKE TURNS</span>
-          </button>
+          {/* Offline play takes the left half; T-TERMINAL, the player hub, the right. */}
+          <div className="flex-1 flex gap-2.5 min-w-0">
+            <button onClick={() => { onPick("DIFFICULTY"); }} aria-label="Single player" className="flex-1 rounded flex items-center justify-center min-w-0" style={{ height: 44, ...glass(UI.line) }}>
+              <span className="tb-t">SP</span>
+            </button>
+            <button onClick={() => { onPick("HOTSEAT"); }} aria-label="Take turns" className="flex-1 rounded flex items-center justify-center min-w-0" style={{ height: 44, ...glass(UI.line) }}>
+              <span className="tb-t text-center">TAKE<br />TURNS</span>
+            </button>
+          </div>
+          <a href="/terminal" className="flex-1 rounded flex items-center justify-center gap-2 no-underline"
+            style={{ height: 44, ...skFill(ACCENTS.terminal), color: UI.text }}>
+            <span style={{ color: ACCENTS.terminal, display: "flex" }}><TerminalIcon /></span>
+            <span className="tb-t">T-TERMINAL</span>
+          </a>
         </div>
 
         <div className="flex justify-between">
@@ -3022,6 +3037,17 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
               <Settings2 size={17} style={{ color: UI.dim }} />
             </button>
           </div>
+        </div>
+
+        {/* The site: each page in its own colour. */}
+        <div className="grid grid-cols-4 gap-2.5 mt-2.5">
+          {[["about", "ABOUT", Info], ["news", "NEWS", NewsIcon], ["download", "APP", DownloadIcon], ["help", "HELP", HelpIcon]].map(([k, label, Icon]) => (
+            <a key={k} href={`/${k}`} className="rounded flex flex-col items-center justify-center gap-1 no-underline"
+              style={{ height: 50, ...glass(`color-mix(in srgb, ${ACCENTS[k]} 55%, transparent)`), color: ACCENTS[k] }}>
+              <Icon />
+              <span className="tb-t">{label}</span>
+            </a>
+          ))}
         </div>
       </Scaled>
 
@@ -3588,6 +3614,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [m]);
   const [err, setErr] = useState(null);
+  const [profileOf, setProfileOf] = useState(null); // { name, guest } — a player's profile popup
   // What you locked in this turn, shown until the reveal replaces it.
   const [placed, setPlaced] = useState(null);
   const [now, setNow] = useState(Date.now());
@@ -3770,10 +3797,12 @@ function NetGame({ colors, theme, onResult, onAbort }) {
                   selected={pl.sel.handIdx === 0} dragging={pl.dragging || pl.holding}
                   onPress={pl.onCardPointerDown} disabled={!canAct} spent={!!pending} />
               )}
-              left={{ name: "YOU", ink: colors.you, meter, rating: net.profile?.guest ? null : net.profile?.rating?.r }}
+              left={{ name: "YOU", ink: colors.you, meter, rating: net.profile?.guest ? null : net.profile?.rating?.r,
+                onOpen: net.profile?.name ? () => setProfileOf({ name: net.profile.name, guest: !!net.profile.guest }) : null }}
               right={{
                 name: err || `${m.opponent.name}${m.oppReady ? " ✓" : ""}`, ink: err ? UI.bad : colors.rival,
                 meter: m.meters?.opp ?? 0, rating: m.opponent.guest ? null : m.opponent.rating, busy: !!m.oppReady,
+                onOpen: () => setProfileOf({ name: m.opponent.name, guest: !!m.opponent.guest }),
               }}
             />
             {compact && <HMeter a={myScore} b={theirScore} inkA={colors.you} inkB={colors.rival} width={boardW} />}
@@ -3826,6 +3855,8 @@ function NetGame({ colors, theme, onResult, onAbort }) {
           <div style={{ flex: 3, minHeight: 4 * P }} />
         </div>
       </div>
+      <ChatDock m={m} colors={colors} />
+      {profileOf && <ProfilePopup name={profileOf.name} guest={profileOf.guest} onClose={() => setProfileOf(null)} />}
     </div>
   );
 }
@@ -4204,6 +4235,7 @@ const SPEEDS = [0.5, 1, 2, 4];
 function ReplayViewer({ id, theme, colors, onBack }) {
   const P = usePx();
   const rec = useMemo(() => replays.get(id), [id]);
+  const [profileOf, setProfileOf] = useState(null); // { name, guest } — a player's profile popup
   const { frames, error } = useMemo(() => (rec ? buildFrames(rec) : { frames: [], error: "Replay not found." }), [rec]);
   const last = Math.max(0, frames.length - 1);
   const [t, setT] = useState(last ? 0 : 0);
@@ -4249,6 +4281,10 @@ function ReplayViewer({ id, theme, colors, onBack }) {
   const { meName, themName } = replaySides(rec);
   const INK = { A: rec.you === "B" ? colors.rival : colors.you, B: rec.you === "B" ? colors.you : colors.rival, S: colors.special };
   const nameA = rec.you === "B" ? themName : meName, nameB = rec.you === "B" ? meName : themName;
+  // Online games name real players: tap a tag for their profile.
+  const online = ["ranked", "unranked", "private"].includes(rec.mode);
+  const openerFor = (side) => (online && rec.players?.[side]?.name
+    ? () => setProfileOf({ name: rec.players[side].name, guest: !!rec.players[side].guest }) : null);
 
   // What changed on this turn: placed squares, deletes, new pins — outlined in the mover's colour.
   const marks = new Map();
@@ -4310,8 +4346,8 @@ function ReplayViewer({ id, theme, colors, onBack }) {
         <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center">
           <div className="flex flex-col items-center" style={{ gap: 3 * P }}>
             <TopBar width={groupW} compact pane={pane} ink={INK.A} now={f.pieces.A} queue={f.queues.A}
-              left={{ name: nameA, ink: INK.A, meter: f.meters.A }}
-              right={{ name: nameB, ink: INK.B, meter: f.meters.B }} />
+              left={{ name: nameA, ink: INK.A, meter: f.meters.A, onOpen: openerFor("A") }}
+              right={{ name: nameB, ink: INK.B, meter: f.meters.B, onOpen: openerFor("B") }} />
             <HMeter a={f.score.a} b={f.score.b} inkA={INK.A} inkB={INK.B} width={boardW} />
             <div className="relative" style={{ width: boardW, height: boardH }}>
               <BoardGrid board={f.board} pins={f.pins} cell={cell} ink={INK} theme={theme}
@@ -4348,6 +4384,7 @@ function ReplayViewer({ id, theme, colors, onBack }) {
           {error && <div className="tb-t" style={{ color: UI.bad }}>{error}</div>}
         </div>
       </div>
+      {profileOf && <ProfilePopup name={profileOf.name} guest={profileOf.guest} onClose={() => setProfileOf(null)} />}
     </div>
   );
 }
