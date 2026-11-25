@@ -23,6 +23,7 @@ import {
 import { net, SERVER_URL, IS_SECURE, GOOGLE_CLIENT_ID } from "./net.js";
 import { FX } from "./tuning.js";
 import { sfx, setVolume, installUiSounds } from "./sfx.js";
+import { music, TRACKS, GAME_TRACKS, nextGameTrack } from "./music.js";
 import { RULES } from "../shared/rules.js";
 import {
   PRESETS, INKS, STROKES, GRID_GAPS,
@@ -1667,7 +1668,7 @@ function AmbientField({ colors, theme, paused }) {
 }
 
 function Popup({ title, onClose, children, pinned, maxW = 430 }) {
-  useEffect(() => { sky.paused++; sfx.open(); return () => { sky.paused--; }; }, []);
+  useEffect(() => { sky.paused++; sfx.open(); music.duck(true); return () => { sky.paused--; music.duck(false); }; }, []);
   return (
     <div
       className="fixed inset-0 z-40 flex items-center justify-center tb-fade"
@@ -1732,6 +1733,24 @@ function SettingsModal({ name, rename, status, theme, setTheme, onClose }) {
           <PixelSlider min={0} max={10} value={theme.sound ?? 7} onChange={(v) => set({ sound: v })} ink={UI.text} label="Volume" style={{ width: 150 }} />
           <span className="tb-t tabular-nums text-right" style={{ width: 30, color: theme.sound ? UI.text : UI.dim }}>{theme.sound ? theme.sound : "OFF"}</span>
         </Row>
+        <Row label="MUSIC">
+          <PixelSlider min={0} max={10} value={theme.music ?? 5} onChange={(v) => set({ music: v })} ink={UI.text} label="Music" style={{ width: 150 }} />
+          <span className="tb-t tabular-nums text-right" style={{ width: 30, color: theme.music ? UI.text : UI.dim }}>{theme.music ? theme.music : "OFF"}</span>
+        </Row>
+        <div className="py-2.5" style={{ ...RULE_BELOW }}>
+          <div className="tb-t mb-2" style={{ color: UI.dim }}>IN-GAME MUSIC</div>
+          <div className="flex flex-wrap gap-1.5">
+            {["mix", ...GAME_TRACKS].map((k) => {
+              const on = (theme.track || "mix") === k;
+              return (
+                <button key={k} onClick={() => set({ track: k })} aria-pressed={on} className="tb-t px-2"
+                  style={{ height: 30, ...(on ? skFill(UI.text) : glass(UI.line)), color: on ? UI.text : UI.dim }}>
+                  {k === "mix" ? "TAKE TURNS" : TRACKS[k].title}
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <div className="mb-7" />
 
         {HAS_KEYBOARD && <ControlsSection />}
@@ -3224,6 +3243,13 @@ function revealSound(moves, { contested = [], lines, shrink = null }) {
     shrink,
   });
 }
+/** A match's music: a piece of its own, louder in overtime, gone when it ends. */
+function useGameMusic({ choice, over, ot }) {
+  const first = useRef(choice);
+  useEffect(() => { music.play(nextGameTrack(first.current)); }, []);
+  useEffect(() => { if (over) music.stop(); }, [over]);
+  useEffect(() => { music.setIntensity(ot ? 1 : 0); }, [ot]);
+}
 const lockKind = (raw) => (!raw || raw.type === "pass" ? "pass" : raw.type === "delete" ? "delete" : "place");
 
 function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart }) {
@@ -3263,6 +3289,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   const act = useActions({ board, pins, owner: player, meter: meters[player], enabled: inPlay, boardRef: pl.boardRef, onLeavePlace: RULES.stamp ? undefined : pl.reset });
   const stamp = useStamp({ board, pins, owner: player, meter: meters[player], act, pl });
   useGameSfx({ pl, act, canAct: inPlay, turnKey: `${turn}${player}` });
+  useGameMusic({ choice: theme.track, over: phase === "DONE", ot });
   useEffect(() => {
     if (reveal) revealSound([reveal.a, reveal.b], { contested: reveal.contested, lines: reveal.lines, shrink: otFlash });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3574,6 +3601,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   const act = useActions({ board, pins, owner: you, meter, enabled: canAct, boardRef: pl.boardRef, flip, onLeavePlace: RULES.stamp ? undefined : pl.reset });
   const stamp = useStamp({ board, pins, owner: you, meter, act, pl });
   useGameSfx({ pl, act, canAct, turnKey: m?.turn });
+  useGameMusic({ choice: theme.track, over: !!m?.over, ot: !!m?.ot });
   useEffect(() => {
     const rv = m?.reveal;
     if (rv) revealSound([rv.moves?.A, rv.moves?.B], { contested: rv.contested, lines: rv.lines, shrink: m.shrunk ? (m.otStarted ? "OVERTIME" : "SHRINK") : null });
@@ -4403,6 +4431,7 @@ export default function TurfBlocks() {
   const [theme, setThemeState] = useState(loadTheme);
   useEffect(() => { installUiSounds(); }, []);
   useEffect(() => { setVolume(theme.sound ?? 7); }, [theme.sound]);
+  useEffect(() => { music.setVolume(theme.music ?? 5); }, [theme.music]);
   // One pixel size for everything, from the screen: ~2 px on phones, 3 on
   // laptops, up to 5 on big monitors, so text stays readable and the board fits.
   // One pixel size for everything: 2 on phones and small windows, 3 on
@@ -4464,6 +4493,13 @@ export default function TurfBlocks() {
   });
   const rename = (n) => { const v = n.trim().slice(0, 16); if (v && v !== net.profile?.name) net.setName(v); };
   const logout = () => { store.set("tb:token", ""); net.logout(); setScreen("MENU"); };
+
+  // The menu has its own music; each match brings its own (see useGameMusic);
+  // the result screen is left to its fanfare.
+  useEffect(() => {
+    if (["MENU", "DIFFICULTY", "REPLAYS", "REPLAY", "UNRANKED", "PRIVATE", "MATCHMAKING"].includes(screen)) music.play("menu");
+    else if (screen === "RESULT") music.stop();
+  }, [screen]);
 
   const shell = (
     <style>{`

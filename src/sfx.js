@@ -17,6 +17,8 @@ let ctx = null;
 let out = null;        // everything dry goes here
 let send = null;       // …and this feeds the echo and the reverb
 let master = null;
+let sfxVol = null;     // the effects' own volume, ahead of the shared mixer
+let comp = null;       // the mixer everything ends in (music too)
 let volume = 0.7;      // 0..1 (the slider is 0..10)
 let pulse12 = null, pulse25 = null;
 let noiseBuf = null;
@@ -79,9 +81,11 @@ function ensure() {
   }
 
   master = ctx.createGain();
-  master.gain.value = curve(volume);
+  master.gain.value = 0.9;
+  sfxVol = ctx.createGain();
+  sfxVol.gain.value = curve(volume);
 
-  const comp = ctx.createDynamicsCompressor();
+  comp = ctx.createDynamicsCompressor();
   comp.threshold.value = -16;
   comp.knee.value = 10;
   comp.ratio.value = 4;
@@ -102,7 +106,7 @@ function ensure() {
   crushMix.gain.value = 0.22;
   out.connect(water);
   out.connect(crush); crush.connect(crushMix); crushMix.connect(water);
-  water.connect(comp);
+  water.connect(sfxVol);
 
   // Space: a watery echo into a long, dark reverb.
   send = ctx.createGain();
@@ -126,26 +130,47 @@ function ensure() {
   const echoOut = ctx.createGain();
   echoOut.gain.value = 0.22;
   dly.connect(echoOut);
-  wet.connect(comp);
-  echoOut.connect(comp);
+  wet.connect(sfxVol);
+  echoOut.connect(sfxVol);
 
+  sfxVol.connect(comp);
   comp.connect(master);
   master.connect(ctx.destination);
   return ctx;
 }
 
-const curve = (v) => (v <= 0 ? 0 : Math.pow(v, 1.6) * 0.9);
+const curve = (v) => (v <= 0 ? 0 : Math.pow(v, 1.6));
+
+/** The shared audio core, for the music: the context, the mixer, the wave shapes. */
+export function core() {
+  const c = ensure();
+  if (!c) return null;
+  return { ctx: c, mix: comp, pulse12, pulse25, noiseBuf, makeReverb };
+}
+
+/** Runs `cb` once audio is allowed to play (now, if it already is). */
+const readyCbs = new Set();
+export function onAudioReady(cb) {
+  if (ctx && ctx.state === "running") { cb(); return () => {}; }
+  readyCbs.add(cb);
+  return () => readyCbs.delete(cb);
+}
+function fireReady() {
+  for (const cb of [...readyCbs]) { readyCbs.delete(cb); try { cb(); } catch { /* keep the others */ } }
+}
 
 /** Browsers start audio only after a tap or key. Called from those. */
 export function unlock() {
   const c = ensure();
-  if (c && c.state === "suspended") c.resume().catch(() => {});
+  if (!c) return;
+  if (c.state === "suspended") c.resume().then(fireReady).catch(() => {});
+  else if (c.state === "running") fireReady();
 }
 
 /** 0..10, the settings slider. */
 export function setVolume(v) {
   volume = Math.max(0, Math.min(10, Number(v) || 0)) / 10;
-  if (master && ctx) master.gain.setTargetAtTime(curve(volume), ctx.currentTime, 0.02);
+  if (sfxVol && ctx) sfxVol.gain.setTargetAtTime(curve(volume), ctx.currentTime, 0.02);
 }
 
 function ready() {
