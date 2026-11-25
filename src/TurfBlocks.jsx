@@ -3078,8 +3078,9 @@ function DreamCanvas({ theme }) {
     const PIX = 3; // one scene pixel = 3 layout pixels (zoomed with the popup)
     let W = 1, H = 1, img = null;
     const size = () => {
+      // Rounded down: a canvas a pixel taller than its box would make the box scroll.
       W = Math.max(1, Math.ceil(cv.parentElement.offsetWidth / PIX));
-      H = Math.max(1, Math.ceil(cv.parentElement.scrollHeight / PIX));
+      H = Math.max(1, Math.floor(cv.parentElement.clientHeight / PIX));
       cv.width = W; cv.height = H;
       cv.style.width = `${W * PIX}px`; cv.style.height = `${H * PIX}px`;
       img = ctx.createImageData(W, H);

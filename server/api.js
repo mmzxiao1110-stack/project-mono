@@ -95,53 +95,57 @@ function reply(res, code, body) {
   res.end(JSON.stringify(body));
 }
 
-/** Answers /api/… requests; returns false for anything else. */
-export function apiHandler(req, res) {
-  const url = new URL(req.url || "/", "http://x");
-  if (!url.pathname.startsWith("/api/")) return false;
-  if (req.method !== "GET" && req.method !== "HEAD") { reply(res, 405, { error: "read only" }); return true; }
-  if (!apiLimit.take(clientIp(req))) { reply(res, 429, { error: "slow down" }); return true; }
+/**
+ * An /api/… request, whatever the host: { status, body }. `url` is a URL,
+ * `ip` the caller's address (for the rate limit).
+ */
+export function apiRoute(method, url, ip) {
+  if (method !== "GET" && method !== "HEAD") return { status: 405, body: { error: "read only" } };
+  if (!apiLimit.take(ip)) return { status: 429, body: { error: "slow down" } };
   const c = ladder();
   const parts = url.pathname.split("/").filter(Boolean); // ["api", ...]
 
   if (parts[1] === "overview") {
     const spread = RANKS.map((r) => ({ rank: r.name, color: r.color, players: 0 }));
     for (const p of c.ladder) spread[rankIndexFor(tr(p))].players++;
-    reply(res, 200, {
+    return { status: 200, body: {
       players: c.listed.length, ranked: c.ladder.length, online: onlineNow(),
       spread, top: c.ladder.slice(0, 5).map((p) => row(p, c)),
       marathon: c.marathon.slice(0, 5).map((p) => mrow(p, c)),
-    });
-    return true;
+    } };
   }
   if (parts[1] === "leaderboard") {
     const page = Math.max(1, Math.min(10_000, Number(url.searchParams.get("page")) || 1));
     const slice = c.ladder.slice((page - 1) * PAGE, page * PAGE);
-    reply(res, 200, { page, pages: Math.max(1, Math.ceil(c.ladder.length / PAGE)), total: c.ladder.length, players: slice.map((p) => row(p, c)) });
-    return true;
+    return { status: 200, body: { page, pages: Math.max(1, Math.ceil(c.ladder.length / PAGE)), total: c.ladder.length, players: slice.map((p) => row(p, c)) } };
   }
   if (parts[1] === "marathon") {
     const page = Math.max(1, Math.min(10_000, Number(url.searchParams.get("page")) || 1));
     const slice = c.marathon.slice((page - 1) * PAGE, page * PAGE);
-    reply(res, 200, { page, pages: Math.max(1, Math.ceil(c.marathon.length / PAGE)), total: c.marathon.length, players: slice.map((p) => mrow(p, c)) });
-    return true;
+    return { status: 200, body: { page, pages: Math.max(1, Math.ceil(c.marathon.length / PAGE)), total: c.marathon.length, players: slice.map((p) => mrow(p, c)) } };
   }
   if (parts[1] === "search") {
     const q = String(url.searchParams.get("q") || "").trim().toLowerCase().slice(0, 32);
-    if (!q) { reply(res, 200, { players: [] }); return true; }
+    if (!q) { return { status: 200, body: { players: [] } }; }
     const hits = c.listed.filter((p) => p.name.toLowerCase().includes(q));
     hits.sort((a, b) => (b.name.toLowerCase().startsWith(q) - a.name.toLowerCase().startsWith(q)) || tr(b) - tr(a));
-    reply(res, 200, { players: hits.slice(0, 20).map((p) => row(p, c)) });
-    return true;
+    return { status: 200, body: { players: hits.slice(0, 20).map((p) => row(p, c)) } };
   }
   if (parts[1] === "player" && parts[2]) {
     let name = "";
     try { name = decodeURIComponent(parts[2]).slice(0, 32).toLowerCase(); } catch { /* bad escape */ }
     const p = c.byName.get(name);
-    if (!p) { reply(res, 404, { error: "No player by that name." }); return true; }
-    reply(res, 200, card(p, c));
-    return true;
+    if (!p) { return { status: 404, body: { error: "No player by that name." } }; }
+    return { status: 200, body: card(p, c) };
   }
-  reply(res, 404, { error: "Unknown endpoint." });
+  return { status: 404, body: { error: "Unknown endpoint." } };
+}
+
+/** Node: answers /api/… requests on a plain http server; returns false for anything else. */
+export function apiHandler(req, res) {
+  const url = new URL(req.url || "/", "http://x");
+  if (!url.pathname.startsWith("/api/")) return false;
+  const { status, body } = apiRoute(req.method, url, clientIp(req));
+  reply(res, status, body);
   return true;
 }

@@ -5,6 +5,7 @@
  * server. They reset on restart; that's fine — they exist to blunt floods,
  * not to keep score.
  */
+import { unref } from "./timers.js";
 
 /**
  * Token buckets. `take(key)` spends one token and says whether there was
@@ -15,10 +16,11 @@ export class Limiter {
     this.burst = burst;
     this.rate = perMinute / 60_000;
     this.buckets = new Map();
-    setInterval(() => this.sweep(), 10 * 60_000).unref();
+    this.sweeper = null; // started on first use (no timers at load: Cloudflare forbids them)
   }
 
   refill(key) {
+    if (!this.sweeper) this.sweeper = unref(setInterval(() => this.sweep(), 10 * 60_000));
     const now = Date.now();
     let b = this.buckets.get(key);
     if (!b) { b = { tokens: this.burst, at: now }; this.buckets.set(key, b); }
@@ -75,6 +77,9 @@ export const MAX_SOCKETS_PER_IP = 8;
  *   unset             no proxy (local): the socket address; headers ignored,
  *                     since anyone could write them
  */
+/** The visitor's address from Cloudflare's header (when the server runs on Cloudflare itself). */
+export const cfIp = (headers) => (headers.get("cf-connecting-ip") || "").trim() || "unknown";
+
 export function clientIp(req) {
   const hops = Number(process.env.TRUST_PROXY) || 0;
   if (hops > 0) {

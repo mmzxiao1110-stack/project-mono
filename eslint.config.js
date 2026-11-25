@@ -23,4 +23,9 @@ export default defineConfig([
     files: ['server/**/*.js'],
     languageOptions: { globals: globals.node },
   },
+  {
+    // The Cloudflare Worker: browser-style globals plus WebSocketPair.
+    files: ['cloudflare/**/*.js'],
+    languageOptions: { globals: { ...globals.serviceworker, WebSocketPair: 'readonly' } },
+  },
 ])

@@ -7,7 +7,7 @@ import { RANKS } from "../../shared/glicko.js";
  */
 export function apiBase() {
   const env = typeof import.meta !== "undefined" ? import.meta.env?.VITE_SERVER_URL : null;
-  if (env) return env.replace(/^ws/, "http").replace(/\/$/, "");
+  if (env) return env.replace(/^ws/, "http").replace(/\/ws\/?$/, "").replace(/\/$/, "");
   if (typeof location === "undefined") return "";
   return import.meta.env?.DEV ? `${location.protocol}//${location.hostname}:8787` : "";
 }

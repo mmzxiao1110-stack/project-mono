@@ -8,12 +8,13 @@
  * Without a key, codes are printed to the server console: right for local
  * development, and the server refuses to run that way in production (see index.js).
  */
-const { RESEND_API_KEY, MAIL_FROM } = process.env;
-
-export const mailConfigured = () => !!RESEND_API_KEY;
-
-if (RESEND_API_KEY) console.log(`[mail] sending through Resend as ${MAIL_FROM || "(MAIL_FROM not set!)"}`);
-else console.log("[mail] RESEND_API_KEY not set — codes will print here instead of being emailed");
+// Read when used, not at load: on Cloudflare the settings arrive with the request.
+const env = () => (typeof process !== "undefined" && process.env) || {};
+export const mailConfigured = () => !!env().RESEND_API_KEY;
+export function describeMail() {
+  const { RESEND_API_KEY, MAIL_FROM } = env();
+  return RESEND_API_KEY ? `sending through Resend as ${MAIL_FROM || "(MAIL_FROM not set!)"}` : "RESEND_API_KEY not set — codes will print in the log instead of being emailed";
+}
 
 const PURPOSE = {
   verify: { subject: (c) => `${c} is your Tesella code`, line: "Here's the code to verify your email" },
@@ -26,6 +27,7 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};
 
 /** Sends a 5-digit code. Throws if Resend refuses it, so the caller can log it. */
 export async function sendCode(to, code, username, purpose = "verify") {
+  const { RESEND_API_KEY, MAIL_FROM } = env();
   const p = PURPOSE[purpose] || PURPOSE.verify;
   if (!RESEND_API_KEY) {
     console.log(`\n[mail] ── ${purpose} code for ${to}: ${code} ──\n`);

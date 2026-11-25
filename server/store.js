@@ -1,148 +1,65 @@
 /**
- * Accounts, sessions and profiles.
+ * Accounts, sessions and profiles: the in-memory model.
  *
- * Still a JSON file — zero dependencies, inspectable while debugging — but
- * written so it can't eat itself:
- *
- *   - Writes go to a temp file, are fsynced, then renamed over the real one.
- *     A rename is atomic, so a crash leaves either the old file or the new
- *     one on disk, never half of each.
- *   - Rolling backups (hourly, last 48 kept) sit next to it.
- *   - If the file can't be read, it is set aside (never overwritten) and the
- *     newest readable backup is restored in its place. If no backup reads
- *     either, the server refuses to start. The old behaviour — start empty
- *     and overwrite the file two seconds later — turned one bad write into
- *     every account gone.
+ * This module only holds the data and reports every change; where it's kept
+ * is up to a persister:
+ *   server/filestore.js   Node (Render, local): one JSON file, atomic writes,
+ *                         rolling backups
+ *   cloudflare/game.js    Cloudflare: the Durable Object's own storage,
+ *                         record by record
+ * attachStore(db, onChange) hands it the loaded data and a callback that's
+ * told (table, key) whenever a record is created, changed or deleted.
  *
  * Every lookup table is a null-prototype object, so a username like
  * "__proto__" or "constructor" is just a key, not a trip into Object.prototype.
- *
- * The file lives in DATA_DIR (default: this folder). On Render, point DATA_DIR
- * at the persistent disk or every deploy starts from nothing.
  */
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { newRating } from "../shared/glicko.js";
 import { newUserId, newToken } from "./auth.js";
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-export const DATA_DIR = path.resolve(process.env.DATA_DIR || HERE);
-const FILE = path.join(DATA_DIR, "data.json");
-const TMP = FILE + ".tmp";
-const BACKUP_DIR = path.join(DATA_DIR, "backups");
-const BACKUP_EVERY_MS = 60 * 60 * 1000;
-const BACKUPS_KEPT = 48;
 const SESSION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
-const TABLES = ["accounts", "usernames", "emails", "identities", "sessions", "profiles"];
+export const TABLES = ["accounts", "usernames", "emails", "identities", "sessions", "profiles"];
 
 const table = (src = {}) => Object.assign(Object.create(null), src);
 const has = (t, k) => Object.prototype.hasOwnProperty.call(t, k);
 
-function emptyDb() {
+export function emptyDb() {
   const db = {};
   for (const t of TABLES) db[t] = table();
   return db;
 }
 
-function parse(raw) {
-  const parsed = JSON.parse(raw);
+/** A db from plain objects (a parsed JSON file, or records read back one by one). */
+export function dbFrom(parsed) {
   const db = emptyDb();
-  for (const t of TABLES) Object.assign(db[t], parsed[t] || {});
+  for (const t of TABLES) Object.assign(db[t], (parsed && parsed[t]) || {});
   return db;
 }
 
-function load() {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  // A leftover temp file means a write was interrupted. The real file is
-  // still the last good copy, so the temp one is just discarded.
-  if (fs.existsSync(TMP)) fs.rmSync(TMP);
-  if (!fs.existsSync(FILE)) return emptyDb();
+let db = emptyDb();
+let onChange = () => {};
+let flusher = () => {};
+const mark = (t, k) => onChange(t, k);
 
-  const raw = fs.readFileSync(FILE, "utf8");
-  // A zero-byte file is a fresh install (the repo used to ship one), not damage.
-  if (!raw.trim()) return emptyDb();
-  try {
-    return parse(raw);
-  } catch (e) {
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const aside = path.join(DATA_DIR, `data.corrupt-${stamp}.json`);
-    fs.renameSync(FILE, aside);
-    console.error(`[store] ${FILE} is unreadable (${e.message}). Moved it to ${aside}.`);
-
-    const backups = fs.existsSync(BACKUP_DIR)
-      ? fs.readdirSync(BACKUP_DIR).filter((f) => f.startsWith("data-")).sort().reverse()
-      : [];
-    for (const f of backups) {
-      try {
-        const full = path.join(BACKUP_DIR, f);
-        const db = parse(fs.readFileSync(full, "utf8"));
-        fs.copyFileSync(full, FILE);
-        console.error(`[store] Restored ${f} — anything saved after that backup is lost.`);
-        return db;
-      } catch {
-        console.error(`[store] Backup ${f} is unreadable too, trying an older one.`);
-      }
-    }
-    console.error(`[store] No readable backup in ${BACKUP_DIR}. Refusing to start rather than lose accounts.`);
-    process.exit(1);
-  }
+/** Installs the loaded data and the change callback (and optionally a flush hook for shutdown). */
+export function attachStore(loaded, changed, flush = () => {}) {
+  db = loaded;
+  onChange = changed;
+  flusher = flush;
+  pruneSessions();
 }
 
-let db = load();
-let dirty = false;
-let writing = false;
+/** The whole db, for persisters that write it out in one piece. */
+export const snapshot = () => db;
+/** A record as stored now, or undefined if it was deleted. */
+export const recordOf = (t, k) => (has(db[t], k) ? db[t][k] : undefined);
 
-// Drop expired sessions at boot, and hourly after that.
-function pruneSessions() {
+/** Drops expired sessions (at start, then hourly by whoever hosts the store). */
+export function pruneSessions() {
   const now = Date.now();
   for (const [t, s] of Object.entries(db.sessions)) {
-    if (s.expires < now) { delete db.sessions[t]; dirty = true; }
+    if (s.expires < now) { delete db.sessions[t]; mark("sessions", t); }
   }
 }
-pruneSessions();
-setInterval(pruneSessions, 60 * 60 * 1000).unref();
-
-function writeAtomic(json) {
-  const fd = fs.openSync(TMP, "w");
-  try {
-    fs.writeSync(fd, json);
-    fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
-  }
-  fs.renameSync(TMP, FILE);
-}
-
-function save() {
-  if (!dirty || writing) return;
-  writing = true;
-  dirty = false;
-  try {
-    writeAtomic(JSON.stringify(db));
-  } catch (e) {
-    dirty = true; // try again next tick
-    console.error("[store] write failed:", e.message);
-  } finally {
-    writing = false;
-  }
-}
-setInterval(save, 2000).unref();
-
-function backup() {
-  if (!fs.existsSync(FILE)) return;
-  try {
-    fs.mkdirSync(BACKUP_DIR, { recursive: true });
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    fs.copyFileSync(FILE, path.join(BACKUP_DIR, `data-${stamp}.json`));
-    const old = fs.readdirSync(BACKUP_DIR).filter((f) => f.startsWith("data-")).sort();
-    for (const f of old.slice(0, Math.max(0, old.length - BACKUPS_KEPT))) fs.rmSync(path.join(BACKUP_DIR, f));
-  } catch (e) {
-    console.error("[store] backup failed:", e.message);
-  }
-}
-backup();
-setInterval(backup, BACKUP_EVERY_MS).unref();
 
 const emptyStats = () => ({
   games: 0, wins: 0, losses: 0,
@@ -185,7 +102,7 @@ export function nameTaken(name, exceptUserId = null) {
 
 export function linkIdentity(userId, provider, sub) {
   db.identities[`${provider}:${sub}`] = userId;
-  dirty = true;
+  mark("identities", `${provider}:${sub}`);
 }
 
 /** Google usernames come from the email local part; make it unique. */
@@ -202,7 +119,7 @@ export function freeUsername(base) {
 
 export function saveAccount(account) {
   db.accounts[account.userId] = account;
-  dirty = true;
+  mark("accounts", account.userId);
 }
 
 export const getAccount = (userId) => (userId && has(db.accounts, userId) ? db.accounts[userId] : null);
@@ -232,6 +149,9 @@ export function createAccount({ username, email, salt, hash, provider = "passwor
   db.accounts[userId] = account;
   db.usernames[lower(username)] = userId;
   if (mail) db.emails[mail] = userId;
+  mark("accounts", userId);
+  mark("usernames", lower(username));
+  if (mail) mark("emails", mail);
   db.profiles[userId] = {
     playerId: userId,
     name: username,
@@ -239,7 +159,7 @@ export function createAccount({ username, email, salt, hash, provider = "passwor
     stats: emptyStats(),
     createdAt: Date.now(),
   };
-  dirty = true;
+  mark("profiles", userId);
   return account;
 }
 
@@ -248,27 +168,26 @@ export function createAccount({ username, email, salt, hash, provider = "passwor
 export function createSession(userId) {
   const token = newToken();
   db.sessions[token] = { userId, expires: Date.now() + SESSION_MS };
-  dirty = true;
+  mark("sessions", token);
   return token;
 }
 
 export function resolveSession(token) {
   if (typeof token !== "string" || !has(db.sessions, token)) return null;
   const s = db.sessions[token];
-  if (s.expires < Date.now()) { delete db.sessions[token]; dirty = true; return null; }
+  if (s.expires < Date.now()) { delete db.sessions[token]; mark("sessions", token); return null; }
   return s.userId;
 }
 
 export function destroySession(token) {
-  if (typeof token === "string" && has(db.sessions, token)) { delete db.sessions[token]; dirty = true; }
+  if (typeof token === "string" && has(db.sessions, token)) { delete db.sessions[token]; mark("sessions", token); }
 }
 
 /** Signs a user out everywhere — used after a password reset. */
 export function destroySessionsFor(userId) {
   for (const [t, s] of Object.entries(db.sessions)) {
-    if (s.userId === userId) delete db.sessions[t];
+    if (s.userId === userId) { delete db.sessions[t]; mark("sessions", t); }
   }
-  dirty = true;
 }
 
 /* ---------- profiles ---------- */
@@ -283,7 +202,7 @@ export function getProfile(userId) {
       stats: emptyStats(),
       createdAt: Date.now(),
     };
-    dirty = true;
+    mark("profiles", userId);
   }
   const p = db.profiles[userId];
   if (!p.rating) p.rating = newRating();
@@ -293,18 +212,13 @@ export function getProfile(userId) {
 
 export function saveProfile(profile) {
   db.profiles[profile.playerId] = profile;
-  dirty = true;
+  mark("profiles", profile.playerId);
 }
 
-/** Synchronous final save, for shutdown. */
-export function flush() {
-  dirty = true;
-  writing = false;
-  save();
-}
+/** Final save, for shutdown (whatever the persister does). */
+export const flush = () => flusher();
 
 /** Every stored profile (for the leaderboard and player search). Read-only use. */
 export const allProfiles = () => Object.values(db.profiles);
 
 export const countAccounts = () => Object.keys(db.accounts).length;
-export const dataFile = () => FILE;
