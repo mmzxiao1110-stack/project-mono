@@ -22,6 +22,7 @@ import {
 } from "../shared/glicko.js";
 import { net, SERVER_URL, IS_SECURE, GOOGLE_CLIENT_ID } from "./net.js";
 import { FX } from "./tuning.js";
+import { sfx, setVolume, installUiSounds } from "./sfx.js";
 import { RULES } from "../shared/rules.js";
 import {
   PRESETS, INKS, STROKES, GRID_GAPS,
@@ -1666,7 +1667,7 @@ function AmbientField({ colors, theme, paused }) {
 }
 
 function Popup({ title, onClose, children, pinned, maxW = 430 }) {
-  useEffect(() => { sky.paused++; return () => { sky.paused--; }; }, []);
+  useEffect(() => { sky.paused++; sfx.open(); return () => { sky.paused--; }; }, []);
   return (
     <div
       className="fixed inset-0 z-40 flex items-center justify-center tb-fade"
@@ -1725,6 +1726,13 @@ function SettingsModal({ name, rename, status, theme, setTheme, onClose }) {
           className={`w-full rounded px-3 ${nameErr ? "mb-2" : "mb-7"} tb-t font-mono`}
           style={{ height: 44, background: UI.ground, ...sk(nameErr ? UI.badSoft : UI.line), color: UI.text, outline: "none" }} />
         {nameErr && <div className="tb-t mb-6" style={{ color: UI.bad }}>{nameErr}</div>}
+
+        <div className="tb-t mb-1" style={{ color: UI.dim }}>SOUND</div>
+        <Row label="VOLUME">
+          <PixelSlider min={0} max={10} value={theme.sound ?? 7} onChange={(v) => set({ sound: v })} ink={UI.text} label="Volume" style={{ width: 150 }} />
+          <span className="tb-t tabular-nums text-right" style={{ width: 30, color: theme.sound ? UI.text : UI.dim }}>{theme.sound ? theme.sound : "OFF"}</span>
+        </Row>
+        <div className="mb-7" />
 
         {HAS_KEYBOARD && <ControlsSection />}
 
@@ -2016,6 +2024,94 @@ function Row({ label, children }) {
     <div className="flex items-center justify-between gap-3 py-2.5" style={{ ...RULE_BELOW }}>
       <span className="tb-t shrink-0" style={{ color: UI.dim }}>{label}</span>
       <div className="flex items-center gap-1.5 flex-wrap justify-end">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * A slider drawn in pixels: a glass tube that fills with your colour, a glass
+ * bubble for the handle, a pixel notch under every step (when there are few).
+ * Snaps by whole pixels; drag, tap, or use the arrow keys.
+ */
+const THUMB_W = 7, THUMB_H = 11, TUBE_H = 5;
+function PixelSlider({ min = 0, max, step = 1, value, onChange, ink = UI.text, label, className = "", style }) {
+  const P = usePx();
+  const node = useRef(null);
+  const [sizeRef, size] = useSize();
+  const [drag, setDrag] = useState(false);
+  const [focus, setFocus] = useState(false);
+  const range = Math.max(step, max - min);
+  const steps = Math.round(range / step);
+  const cols = Math.max(THUMB_W + 2, Math.floor(size.w / P));
+  const travel = cols - THUMB_W;
+  const frac = Math.max(0, Math.min(1, (value - min) / range));
+  const tx = Math.round(frac * travel);
+  const mid = tx + Math.floor(THUMB_W / 2);
+  const ticks = steps <= 20;
+  const H = THUMB_H + (ticks ? 3 : 0);
+  const ty = Math.floor((THUMB_H - TUBE_H) / 2);
+
+  const set = (v) => {
+    const nv = Math.max(min, Math.min(max, min + Math.round((v - min) / step) * step));
+    if (nv === value) return;
+    sfx.slider((nv - min) / range);
+    onChange(nv);
+  };
+  const fromX = (clientX) => {
+    const el = node.current;
+    if (!el || !size.w) return;
+    const r = el.getBoundingClientRect();
+    const zoom = r.width / (cols * P || 1);           // menus are zoomed: measure in screen px
+    const th = THUMB_W * P * zoom;
+    const f = (clientX - r.left - th / 2) / Math.max(1, r.width - th);
+    set(min + Math.max(0, Math.min(1, f)) * range);
+  };
+  const onKey = (e) => {
+    const big = Math.max(step, Math.round(range / 10 / step) * step);
+    const d = { ArrowLeft: -step, ArrowDown: -step, ArrowRight: step, ArrowUp: step, PageDown: -big, PageUp: big }[e.key];
+    if (d) { e.preventDefault(); set(value + d); }
+    else if (e.key === "Home") { e.preventDefault(); set(min); }
+    else if (e.key === "End") { e.preventDefault(); set(max); }
+  };
+
+  // Rows of the tube: the corners cut one pixel, like every other pane.
+  const tube = [[0, 1, cols - 1], [1, 0, cols], [2, 0, cols], [3, 0, cols], [4, 1, cols - 1]];
+  const inkMix = (pct) => `color-mix(in srgb, ${ink} ${pct}%, transparent)`;
+  return (
+    <div ref={(n) => { node.current = n; sizeRef(n); }}
+      role="slider" tabIndex={0} aria-label={label} aria-valuemin={min} aria-valuemax={max} aria-valuenow={value}
+      className={`relative select-none ${className}`}
+      style={{ height: H * P, touchAction: "none", cursor: drag ? "grabbing" : "pointer", outline: "none", ...style }}
+      onKeyDown={onKey} onFocus={() => setFocus(true)} onBlur={() => setFocus(false)}
+      onPointerDown={(e) => { e.currentTarget.setPointerCapture?.(e.pointerId); setDrag(true); fromX(e.clientX); }}
+      onPointerMove={(e) => { if (drag) fromX(e.clientX); }}
+      onPointerUp={() => setDrag(false)} onPointerCancel={() => setDrag(false)}>
+      {size.w > 0 && (
+        <svg aria-hidden="true" width={cols * P} height={H * P} viewBox={`0 0 ${cols} ${H}`} shapeRendering="crispEdges"
+          style={{ position: "absolute", left: 0, top: 0, pointerEvents: "none" }}>
+          {/* The glass tube. */}
+          {tube.map(([y, a, b]) => <rect key={`t${y}`} x={a} y={ty + y} width={b - a} height={1} style={{ fill: "color-mix(in srgb, var(--tb-text) 9%, transparent)" }} />)}
+          <rect x={1} y={ty} width={cols - 2} height={1} style={{ fill: "color-mix(in srgb, var(--tb-text) 26%, transparent)" }} />
+          <rect x={1} y={ty + TUBE_H - 1} width={cols - 2} height={1} fill="rgba(0,0,0,.3)" />
+          {/* Filled up to the handle, with bubbles drifting in it. */}
+          <rect x={1} y={ty + 1} width={Math.max(0, mid - 1)} height={TUBE_H - 2} style={{ fill: inkMix(55) }} />
+          <rect x={1} y={ty + 1} width={Math.max(0, mid - 1)} height={1} style={{ fill: `color-mix(in srgb, ${ink} 70%, white)` }} />
+          {Array.from({ length: Math.max(0, Math.floor((mid - 3) / 5)) }, (_, i) => (
+            <rect key={`b${i}`} x={3 + i * 5} y={ty + 2 + (i % 2)} width={1} height={1} fill="rgba(255,255,255,.45)" />
+          ))}
+          {/* A notch under every step. */}
+          {ticks && Array.from({ length: steps + 1 }, (_, i) => {
+            const x = Math.round((i / steps) * travel) + Math.floor(THUMB_W / 2);
+            return <rect key={`k${i}`} x={x} y={THUMB_H + 1} width={1} height={i === 0 || i === steps ? 2 : 1}
+              style={{ fill: x <= mid ? inkMix(80) : "color-mix(in srgb, var(--tb-text) 30%, transparent)" }} />;
+          })}
+        </svg>
+      )}
+      {size.w > 0 && (
+        <div className="absolute pointer-events-none" style={{ left: tx * P, top: drag ? -P : 0, width: THUMB_W * P, height: THUMB_H * P }}>
+          <BubbleShape w={THUMB_W} h={THUMB_H} tint={focus || drag ? UI.text : ink} fill={drag ? 60 : 42} />
+        </div>
+      )}
     </div>
   );
 }
@@ -2936,8 +3032,7 @@ function Difficulty({ onStart, onBack, colors }) {
           <span className="tb-t" style={{ color: UI.dim }}>AI</span>
           <span className="tb-t tb-b tabular-nums" style={{ color: colors.rival, textShadow: `${P}px ${P}px 0 rgba(0,0,0,.45)` }}>{lv}</span>
         </div>
-        <input type="range" min={1} max={LEVELS.length} step={1} value={lv} onChange={(e) => setLv(Number(e.target.value))}
-          aria-label="AI strength" className="w-full mb-2" style={{ accentColor: colors.rival }} />
+        <PixelSlider min={1} max={LEVELS.length} value={lv} onChange={setLv} ink={colors.rival} label="AI strength" className="w-full mb-2" />
         <div className="flex justify-between tb-t mb-6" style={{ color: UI.dim, opacity: 0.7 }}>
           <span>1</span><span>{LEVELS.length}</span>
         </div>
@@ -2960,6 +3055,7 @@ const LONELY_AFTER_S = 30;
 function Matchmaking({ profile, loadout, colors, onCancel, onPlayAi, unranked = false }) {
   const search = useSearch();
   const found = useFound();
+  useEffect(() => { if (found) sfx.matchFound(); }, [found]);
   const status = useStatus();
 
   useEffect(() => {
@@ -3088,6 +3184,48 @@ function ForfeitButton({ onConfirm, ranked = false, disabled = false, compact = 
 /* ============================================================
    LOCAL GAME — hotseat and solo. Client owns everything.
    ============================================================ */
+/* ============================================================
+   GAME SOUNDS — what the hands do (turn, slide, pick up, switch modes)
+   and what the board does when a turn resolves.
+   ============================================================ */
+function useGameSfx({ pl, act, canAct, turnKey }) {
+  const prev = useRef({ rot: 0, idx: null, pos: null, mode: act.mode, staged: null, dragging: false });
+  useEffect(() => {
+    const p = prev.current;
+    const { rot, handIdx, pos } = pl.sel;
+    if (canAct) {
+      if (handIdx !== null && p.idx !== null && rot !== p.rot) sfx.rotate(rot > p.rot ? 1 : -1);
+      const pk = pos ? `${pos[0]},${pos[1]}` : null;
+      if (pk && p.pos && pk !== p.pos && handIdx !== null) sfx.move(RULES.stamp && act.mode !== "place" ? true : pl.ghostLegal);
+      if (pl.dragging && !p.dragging) sfx.pick();
+      if (act.staged && act.staged !== p.staged) sfx.pinStage();
+      else if (act.mode !== p.mode && !sfx.recent("lockIn", 250)) sfx.mode(act.mode);
+    }
+    prev.current = { rot, idx: handIdx, pos: pos ? `${pos[0]},${pos[1]}` : null, mode: act.mode, staged: act.staged, dragging: pl.dragging };
+  });
+  // Your move: a ping (after the reveal has had its moment).
+  useEffect(() => {
+    if (!canAct) return;
+    const t = setTimeout(() => sfx.yourTurn(), 120);
+    return () => clearTimeout(t);
+  }, [canAct, turnKey]);
+}
+
+/** A resolved turn, as the sound engine wants it. */
+function revealSound(moves, { contested = [], lines, shrink = null }) {
+  const ms = moves.filter(Boolean);
+  const kind = (m) => m.type || "place";
+  sfx.reveal({
+    placed: ms.filter((m) => kind(m) === "place").length,
+    deleted: ms.filter((m) => kind(m) === "delete").length,
+    pinned: ms.filter((m) => m.pins && m.pins.length).length,
+    contested: contested.length,
+    lines: lines ? (lines.rows?.length || 0) + (lines.cols?.length || 0) : 0,
+    shrink,
+  });
+}
+const lockKind = (raw) => (!raw || raw.type === "pass" ? "pass" : raw.type === "delete" ? "delete" : "place");
+
 function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart }) {
   useEffect(() => { sky.slow = true; return () => { sky.slow = false; }; }, []);
   const solo = mode === "SOLO";
@@ -3124,6 +3262,11 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   const pl = usePlacement({ board, owner: player, hand, enabled: inPlay });
   const act = useActions({ board, pins, owner: player, meter: meters[player], enabled: inPlay, boardRef: pl.boardRef, onLeavePlace: RULES.stamp ? undefined : pl.reset });
   const stamp = useStamp({ board, pins, owner: player, meter: meters[player], act, pl });
+  useGameSfx({ pl, act, canAct: inPlay, turnKey: `${turn}${player}` });
+  useEffect(() => {
+    if (reveal) revealSound([reveal.a, reveal.b], { contested: reveal.contested, lines: reveal.lines, shrink: otFlash });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reveal]);
   const contestedKeys = useMemo(() => new Set((reveal ? reveal.contested : []).map(([r, c]) => key(r, c))), [reveal]);
   const stuck = useMemo(() => (inPlay ? !hasAnyMove(board, hand, player) : false), [board, hand, player, inPlay]);
 
@@ -3191,7 +3334,8 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   const send = (raw) => {
     // Stamps arrive as footprints; the engine turns them into what they hit.
     const { move, error } = normalizeAction(board, pins, meters[player], player, piece, raw);
-    if (error) return;
+    if (error) { sfx.illegal(); return; }
+    sfx.lockIn(lockKind(raw));
     if (player === "A") rawARef.current = { raw, piece };
     else logRef.current.push(encodeTurn(encodeAction(rawARef.current?.raw, rawARef.current?.piece), encodeAction(raw, piece)));
     advance(player);
@@ -3200,8 +3344,9 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
     act.reset();
   };
   const commit = () => {
+    if (!inPlay) return;
     if (stamp.on) {
-      if (!stamp.ok) return;
+      if (!stamp.ok) { sfx.illegal(); return; }
       if (act.mode === "delete") send({ type: "delete", cells: stamp.foot, ...extra });
       else { act.setStaged(stamp.foot); act.setMode("place"); }
       return;
@@ -3215,7 +3360,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
       if (RULES.pinIsFree) { act.confirmPins(); pl.select(0); } else send({ type: "pin", cells: act.trace });
       return;
     }
-    if (pl.sel.handIdx === null || !pl.ghost || !pl.ghostLegal) return;
+    if (pl.sel.handIdx === null || !pl.ghost || !pl.ghostLegal) { sfx.illegal(); return; }
     send({ type: "place", cells: pl.ghost, value: BLOCKS[piece].cells.length, blockId: piece, ...extra });
   };
 
@@ -3299,7 +3444,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
     mode: act.mode, onMode, meter: meters[player], canMode: inPlay,
     forfeit: {
       disabled: phase === "DONE",
-      onConfirm: () => { pl.reset(); setForfeitBy(solo ? "A" : player); setPhase("DONE"); },
+      onConfirm: () => { sfx.forfeit(); pl.reset(); setForfeitBy(solo ? "A" : player); setPhase("DONE"); },
     },
   };
 
@@ -3396,7 +3541,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   const [stageRef, stage] = useSize();
 
   useEffect(() => {
-    const offE = net.on("error", (e) => { setErr(e); setTimeout(() => setErr(null), 2500); });
+    const offE = net.on("error", (e) => { sfx.error(); setErr(e); setTimeout(() => setErr(null), 2500); });
     const tick = setInterval(() => setNow(Date.now()), 250);
     return () => { offE(); clearInterval(tick); };
   }, []);
@@ -3428,6 +3573,16 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   const meter = m?.meters?.me ?? 0;
   const act = useActions({ board, pins, owner: you, meter, enabled: canAct, boardRef: pl.boardRef, flip, onLeavePlace: RULES.stamp ? undefined : pl.reset });
   const stamp = useStamp({ board, pins, owner: you, meter, act, pl });
+  useGameSfx({ pl, act, canAct, turnKey: m?.turn });
+  useEffect(() => {
+    const rv = m?.reveal;
+    if (rv) revealSound([rv.moves?.A, rv.moves?.B], { contested: rv.contested, lines: rv.lines, shrink: m.shrunk ? (m.otStarted ? "OVERTIME" : "SHRINK") : null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [m?.reveal]);
+  useEffect(() => { if (m?.oppReady) sfx.oppReady(); }, [m?.oppReady]);
+  // A private room has no matchmaking screen: the match itself is the arrival.
+  const arrival = useRef(!!m?.room && !m?.resumed);
+  useEffect(() => { if (arrival.current) sfx.matchFound(); }, []);
   const contestedKeys = useMemo(
     () => new Set((m?.reveal ? m.reveal.contested : []).map(([r, c]) => key(r, c))),
     [m?.reveal]
@@ -3443,6 +3598,8 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   const { g, side, cell, boardW, boardH, groupW, pane } = gameLayout(stage, theme, P, railD, compact);
 
   const secsLeft = m?.deadline ? Math.max(0, Math.ceil((m.deadline - now) / 1000)) : null;
+  // The last five seconds tick.
+  useEffect(() => { if (canAct && secsLeft !== null && secsLeft > 0 && secsLeft <= 5) sfx.tick(secsLeft); }, [secsLeft, canAct]);
   const graceLeft = m?.graceUntil ? Math.max(0, Math.ceil((m.graceUntil - now) / 1000)) : null;
 
   // Pins riding along with this move (when pinning is free).
@@ -3451,15 +3608,17 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   const commit = () => {
     if (!canAct) return;
     if (stamp.on) {
-      if (!stamp.ok) return;
+      if (!stamp.ok) { sfx.illegal(); return; }
       if (act.mode === "pin") { act.setStaged(stamp.foot); act.setMode("place"); return; }
+      sfx.lockIn("delete");
       setPlaced({ turn: m.turn, cells: [], handIdx: 0 });
       net.erase({ turn: m.turn, cells: stamp.foot, pins: pinsOut });
       pl.reset(); act.reset();
       return;
     }
     if (act.mode === "delete") {
-      if (!act.deleteValid) return;
+      if (!act.deleteValid) { sfx.illegal(); return; }
+      sfx.lockIn("delete");
       setPlaced({ turn: m.turn, cells: [], handIdx: 0 });
       net.erase({ turn: m.turn, cells: act.trace, pins: pinsOut });
     } else if (act.mode === "pin") {
@@ -3468,7 +3627,8 @@ function NetGame({ colors, theme, onResult, onAbort }) {
       setPlaced({ turn: m.turn, cells: [], handIdx: 0 });
       net.send({ t: "pin", turn: m.turn, cells: act.trace });
     } else {
-      if (!pl.ghostLegal || pl.sel.handIdx === null) return;
+      if (!pl.ghostLegal || pl.sel.handIdx === null) { sfx.illegal(); return; }
+      sfx.lockIn("place");
       // Show the block where it went (dotted, not yet real) until the turn resolves.
       setPlaced({ turn: m.turn, cells: pl.ghost, handIdx: pl.sel.handIdx });
       net.move({ turn: m.turn, handIdx: pl.sel.handIdx, rot: ((pl.sel.rot % 4) + 4) % 4, pos: pl.sel.pos, pins: pinsOut });
@@ -3481,6 +3641,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   const discard = () => {
     const idx = pl.sel.handIdx ?? hand.findIndex((id) => id !== undefined);
     if (idx < 0) return;
+    sfx.lockIn("pass");
     setPlaced({ turn: m.turn, cells: [], handIdx: idx });
     net.discard({ turn: m.turn, handIdx: idx, pins: pinsOut });
     pl.reset();
@@ -3518,7 +3679,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
     ) : theme.showTimer && secsLeft !== null ? (
       <NumBox value={secsLeft} color={secsLeft <= 5 ? UI.bad : GOLD} label={`${secsLeft}s left`} />
     ) : null,
-    forfeit: { ranked: m.rated !== false, disabled: !m || !!m.over, onConfirm: () => net.forfeit() },
+    forfeit: { ranked: m.rated !== false, disabled: !m || !!m.over, onConfirm: () => { sfx.forfeit(); net.forfeit(); } },
   };
 
   return (
@@ -3616,6 +3777,7 @@ function Wipe({ theme, onMiddle, onDone }) {
   const P = usePx();
   useEffect(() => {
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    sfx.wipe();
     if (!theme.motion || reduced) { onMiddle(); onDone(); return; }
     const cv = ref.current;
     const ctx = cv.getContext("2d");
@@ -3714,6 +3876,11 @@ function EndSide({ name, score, ink, won }) {
 
 function EndScreen({ verdict, ink, note, left, right, special = 0, children, actions }) {
   const P = usePx();
+  useEffect(() => {
+    const t = setTimeout(() => (verdict === "DRAW" ? sfx.draw() : verdict === "DEFEAT" ? sfx.lose() : sfx.win()), 150);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   return (
     <div className="tb-screen tb-safe w-full flex flex-col items-center justify-center px-6 font-mono" style={{ color: UI.text }}>
       <Scaled className="relative w-full" style={{ maxWidth: 400 }}>
@@ -4088,8 +4255,8 @@ function ReplayViewer({ id, theme, colors, onBack }) {
 
         {/* Transport: start · back · play · forward · end, speed, and a scrubber. */}
         <div className="shrink-0 flex flex-col items-center gap-2 pt-2 pb-3">
-          <input type="range" min={0} max={last} value={t} onChange={(e) => { setPlaying(false); setT(Number(e.target.value)); }}
-            aria-label="Turn" className="w-full" style={{ maxWidth: Math.max(groupW, 280), accentColor: "var(--tb-you)" }} />
+          <PixelSlider min={0} max={Math.max(1, last)} value={t} onChange={(v) => { setPlaying(false); setT(Math.min(last, v)); }}
+            ink={colors.you} label="Turn" className="w-full" style={{ maxWidth: Math.max(groupW, 280) }} />
           <div className="flex items-center justify-center flex-wrap" style={{ gap: 2 * P }}>
             <Bubble w={d} h={d} label="Start" onClick={() => { setPlaying(false); setT(0); }}><First /></Bubble>
             <Bubble w={d} h={d} label="Back one turn" onClick={() => step(-1)}><ChevronLeft /></Bubble>
@@ -4234,6 +4401,8 @@ export default function TurfBlocks() {
   const [seed, setSeed] = useState(0);
   const [loadout, setLoadoutState] = useState(loadLoadout);
   const [theme, setThemeState] = useState(loadTheme);
+  useEffect(() => { installUiSounds(); }, []);
+  useEffect(() => { setVolume(theme.sound ?? 7); }, [theme.sound]);
   // One pixel size for everything, from the screen: ~2 px on phones, 3 on
   // laptops, up to 5 on big monitors, so text stays readable and the board fits.
   // One pixel size for everything: 2 on phones and small windows, 3 on
