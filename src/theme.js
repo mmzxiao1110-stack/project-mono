@@ -83,6 +83,7 @@ export const defaultTheme = () => ({
   motion: true,
   haptics: true,
   showTimer: true,
+  sound: 7,          // 0 (off) to 10
 });
 
 function stripLabel(p) {
