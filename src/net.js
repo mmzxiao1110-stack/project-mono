@@ -425,6 +425,8 @@ class Net {
         break;
 
       case "online":
+        // Which server answered (older servers don't say).
+        if (m.host) this.serverHost = m.host;
         this.online = m.n;
         this.emit("online", m.n);
         break;

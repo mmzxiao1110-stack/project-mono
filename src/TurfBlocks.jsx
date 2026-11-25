@@ -1888,6 +1888,14 @@ function SettingsModal({ name, rename, status, theme, setTheme, onClose }) {
       </div>
     </>
   );
+  // Which server you're on: accounts live on one server, so two devices on
+  // different ones (an old address, a stale link) see different accounts.
+  const serverLine = status === "online" && (
+    <div className="tb-t mb-2" style={{ color: net.serverHost === "cloudflare" ? UI.dim : GOLD }}>
+      {net.serverHost === "cloudflare" ? "SERVER: CLOUDFLARE" : net.serverHost === "node" ? "SERVER: NODE (RENDER / LOCAL)" : "SERVER: OLD VERSION"}
+      {" · "}{typeof location !== "undefined" ? location.host : ""}
+    </div>
+  );
   const connection = wide ? (
     // Columns: just the essentials, on one line.
     <>
@@ -1899,6 +1907,11 @@ function SettingsModal({ name, rename, status, theme, setTheme, onClose }) {
         <span className="flex items-center gap-1.5" style={{ color: IS_SECURE ? UI.good : GOLD }} title={SERVER_URL}>
           {IS_SECURE ? <Lock size={12} /> : <ShieldAlert size={12} />}{IS_SECURE ? "ENCRYPTED" : "NOT ENCRYPTED"}
         </span>
+        {status === "online" && (
+          <span style={{ color: net.serverHost === "cloudflare" ? UI.dim : GOLD }} title={typeof location !== "undefined" ? location.host : ""}>
+            {net.serverHost === "cloudflare" ? "CLOUDFLARE" : net.serverHost === "node" ? "NODE SERVER" : "OLD SERVER"}
+          </span>
+        )}
       </div>
       <LegalLinks />
     </>
@@ -1909,6 +1922,7 @@ function SettingsModal({ name, rename, status, theme, setTheme, onClose }) {
         {status === "online" ? <Wifi size={12} /> : <WifiOff size={12} />}
         SERVER {status.toUpperCase()}
       </div>
+      {serverLine}
       <div className="flex items-center gap-2 tb-t mb-1.5" style={{ color: IS_SECURE ? UI.good : GOLD }}>
         {IS_SECURE ? <Lock size={12} /> : <ShieldAlert size={12} />}
         {IS_SECURE ? "ENCRYPTED (TLS)" : "NOT ENCRYPTED"}
@@ -1976,7 +1990,7 @@ function Sparkline({ values, color, height = 58 }) {
 
 function StatCell({ label, value, sub, color }) {
   return (
-    <div className="rounded p-2.5" style={{ ...glass(UI.line) }}>
+    <div className="rounded px-3 py-2.5 min-w-0 break-words" style={{ ...glass(UI.line) }}>
       <div className="tb-t mb-1.5" style={{ color: UI.dim }}>{label}</div>
       <div className="tb-t" style={{ color: color || UI.text }}>{value}</div>
       {sub && <div className="tb-t mt-1.5" style={{ color: UI.dim }}>{sub}</div>}
@@ -2096,7 +2110,7 @@ function StatsModal({ profile, status, onClose, onLogout }) {
     <div className={`grid ${wide ? "grid-cols-3" : "grid-cols-2"} gap-2 ${wide ? (trend ? "mt-3" : "") : "mt-4"}`}>
       <StatCell label="RECORD" value={`${st.wins}–${st.losses}`} sub={`${st.games} ${st.games === 1 ? "match" : "matches"}`} />
       <StatCell label="WIN RATE" value={`${winRate}%`} sub={st.games ? `${st.wins} ${st.wins === 1 ? "win" : "wins"}` : "no data"} color={winRate >= 50 ? UI.good : UI.text} />
-      <StatCell label="PEAK" value={st.peakRank !== null ? RANKS[st.peakRank].name : "–"} sub={st.peakRank !== null ? `${st.peakTr} TR` : "unplaced"} color={st.peakRank !== null ? RANKS[st.peakRank].color : UI.dim} />
+      <StatCell label="PEAK" value={st.peakRank !== null ? RANKS[st.peakRank].name : "–"} sub={st.peakRank !== null ? `${st.peakTr} TR` : "none"} color={st.peakRank !== null ? RANKS[st.peakRank].color : UI.dim} />
       <StatCell label="PLAYTIME" value={fmtTime(st.seconds)} sub={st.games ? `~${Math.round(st.seconds / st.games / 60)}m ${wide ? "each" : "per match"}` : "no data"} />
       <StatCell label="STREAK" value={st.streak > 0 ? `W${st.streak}` : st.streak < 0 ? `L${-st.streak}` : "–"} sub={`best W${st.bestStreak}`} color={st.streak > 0 ? UI.good : st.streak < 0 ? UI.bad : UI.text} />
       <StatCell label="AVG TURF" value={st.squares ? st.squares.toFixed(1) : "–"} sub={st.special ? `${st.special.toFixed(1)} special` : "no data"} />
@@ -3246,8 +3260,8 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
 
         {/* One big way in: PLAY opens the modes. */}
         <button onClick={() => setModal("PLAY")}
-          className="w-full rounded flex flex-col items-center justify-center gap-1 mb-2"
-          style={{ height: 66, ...skFill("var(--tb-you)") }}>
+          className="w-full rounded flex flex-col items-center justify-center gap-1.5 mb-2"
+          style={{ height: 76, paddingTop: 3, ...skFill("var(--tb-you)") }}>
           <PixelWord text="PLAY" from="var(--tb-text)" to="var(--tb-you)" />
           {status === "online" && online !== null ? (
             <span className="tb-t" style={{ color: UI.dim }}>{online === 1 ? "just you online right now" : `${online} people online`}</span>
