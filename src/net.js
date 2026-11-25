@@ -116,7 +116,7 @@ class Net {
       else this.raw({ t: "hello", token: this.token });
       // A dropped socket removes you from the server queue. If we still think
       // we're searching, get back in line rather than waiting on a dead entry.
-      if (this.queued && this.lastLoadout) this.raw({ t: "queue", loadout: this.lastLoadout });
+      if (this.queued && this.lastLoadout) this.raw({ t: "queue", loadout: this.lastLoadout, unranked: !!this.lastUnranked });
       const pending = this.outbox;
       this.outbox = [];
       pending.forEach((m) => this.raw(m));
@@ -166,14 +166,15 @@ class Net {
     this.outbox.push(obj);
   }
 
-  queue(loadout) {
+  queue(loadout, unranked = false) {
     this.queued = true;
     this.lastLoadout = loadout;
+    this.lastUnranked = unranked;
     this.search = { band: 40, elapsed: 0, queued: 1 };
     this.found = null;
     this.match = null;
     this.emit("search", this.search);
-    this.send({ t: "queue", loadout });
+    this.send({ t: "queue", loadout, unranked });
   }
 
   unqueue() {
@@ -448,6 +449,7 @@ class Net {
           opponent: m.opponent,
           loadout: m.loadout,
           turns: m.turns,
+          rated: m.rated !== false,
           turn: 0,
           board: null,
           hand: [],

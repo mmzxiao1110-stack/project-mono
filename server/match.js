@@ -120,6 +120,7 @@ export class Match {
       opponent: this.publicSeat(this.other(side)),
       loadout: this.seats[side].loadout,
       turns: TURNS,
+      rated: this.rated,
     }));
     this.sendTurn();
   }
@@ -458,6 +459,7 @@ export class Match {
       opponent: this.publicSeat(this.other(side)),
       loadout: this.seats[side].loadout,
       turns: TURNS,
+      rated: this.rated,
       resumed: true,
     });
     this.send(side, { ...this.turnMessage(side), alreadyMoved: this.pending[side] !== undefined });

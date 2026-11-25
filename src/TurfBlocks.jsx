@@ -825,7 +825,10 @@ function PixelSky({ theme }) {
     };
 
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    if (!motion || reduced) { draw(0); return () => window.removeEventListener("resize", size); }
+    // Draw one frame right away: a colour change (or resize) resets the canvas,
+    // and while a popup has the sky paused the loop below wouldn't repaint it.
+    draw(performance.now());
+    if (!motion || reduced) { return () => window.removeEventListener("resize", size); }
 
     let raf, last = 0;
     const loop = (t) => {
@@ -936,15 +939,18 @@ function Ink({ size, color, stroke, fluid = false, className, style }) {
   return <div aria-hidden="true" className={className} style={{ ...base, ...look, ...style }} />;
 }
 
+// The longest piece any glyph has to fit, in squares.
+const GLYPH_SPAN = Math.max(...BLOCKS.map((b) => { const { h, w } = boundsOf(b.cells); return Math.max(h, w); }));
+
 /** A block's silhouette, drawn in ink. Used on cards, in the deck and the tutorial. */
 function BlockGlyph({ blockId, box = 40, color, gap: _gap, glow = false }) {
   const P = usePx();
   const cells = BLOCKS[blockId].cells;
   const { h, w } = boundsOf(cells);
-  const span = Math.max(h, w);
-  // Whole pixels only: each square is k pixels with no gap — the tile rings separate them.
+  // Every glyph uses the same square size (sized for the longest piece), so an
+  // O isn't drawn with bigger squares than an I. Whole pixels, no gap.
   const gap = 0;
-  const size = Math.max(1, Math.floor(box / span / P)) * P;
+  const size = Math.max(1, Math.floor(box / GLYPH_SPAN / P)) * P;
   const filled = new Set(cells.map(([r, c]) => r * 100 + c));
   return (
     <div className={glow ? "tb-shine" : undefined} style={{
@@ -1734,31 +1740,6 @@ function SettingsModal({ name, rename, status, theme, setTheme, onClose }) {
 }
 
 /* ============================================================
-   DECK
-   ============================================================ */
-function DeckModal({ color, onClose }) {
-  return (
-    <Popup title="THE PIECES" onClose={onClose} maxW={380}>
-      <div className="pt-4 pb-1">
-        <div className="grid grid-cols-4 gap-2 mb-4">
-          {DEFAULT_LOADOUT.map((i) => BLOCKS[i]).map((b, j) => (
-            <div key={b.name} className="flex flex-col items-center justify-center gap-1.5 py-2" style={{ ...glass(UI.line) }}>
-              <BlockGlyph blockId={DEFAULT_LOADOUT[j]} box={30} color={color} />
-              <span className="tb-t" style={{ color: UI.dim }}>{b.name}</span>
-            </div>
-          ))}
-        </div>
-        <div className="tb-t" style={{ color: UI.dim }}>
-          The seven tetrominoes, dealt in bags like Tetris: each bag holds all seven, shuffled.
-          {RULES.stamp ? " Your piece is also your delete and pin stamp." : ""}
-          {RULES.sharedSequence ? " Both players get the same pieces in the same order." : ""}
-        </div>
-      </div>
-    </Popup>
-  );
-}
-
-/* ============================================================
    STATS
    ============================================================ */
 function Sparkline({ values, color, height = 58 }) {
@@ -1799,7 +1780,8 @@ function StatCell({ label, value, sub, color }) {
 function StatsModal({ profile, status, onClose }) {
   // No profile has two very different causes. Saying "offline" for both sent
   // people hunting a server problem when they simply weren't signed in.
-  if (!profile) {
+  // (Guests have a name but no ranked stats.)
+  if (!profile || !profile.stats) {
     const connected = status === "online";
     return (
       <Popup title="RANKED STATS" onClose={onClose}>
@@ -2484,6 +2466,17 @@ function VerifyModal({ profile, onClose }) {
    ACCOUNT — who you are
    ============================================================ */
 function AccountModal({ profile, onLogout, onClose }) {
+  if (profile && profile.guest) {
+    return (
+      <Popup title="ACCOUNT" onClose={onClose} maxW={380}>
+        <div className="pt-6 pb-2 text-center tb-t">
+          <div className="mb-2">Playing as <span style={{ color: "var(--tb-you)" }}>{profile.name}</span> (guest)</div>
+          <div className="mb-5" style={{ color: UI.dim }}>Guests can play private and unranked games. Make an account to play ranked.</div>
+          <button onClick={onLogout} className="tb-t px-5" style={{ height: 44, ...glass(UI.line), color: UI.dim }}>STOP BEING A GUEST</button>
+        </div>
+      </Popup>
+    );
+  }
   if (!profile) {
     return (
       <Popup title="ACCOUNT" onClose={onClose} maxW={380}>
@@ -2774,9 +2767,8 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
   const [modal, setModal] = useState(null);
   const authed = useAuth() === "authed";
   const verified = !!profile?.emailVerified;
-  const color = theme.you;
-  const tr = profile ? Math.round(profile.rating.r) : null;
-  const placed = profile && profile.stats.games >= PLACEMENT_GAMES;
+  const tr = profile?.rating ? Math.round(profile.rating.r) : null;
+  const placed = !!profile?.stats && profile.stats.games >= PLACEMENT_GAMES;
   const rank = tr !== null ? RANKS[rankIndexFor(tr)] : null;
   const online = useOnline();
   const notice = useNotice();
@@ -2827,13 +2819,12 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
         )}
 
         <div className="flex gap-2.5 mb-2.5">
-          {!authed && (
-            <button onClick={() => setModal("login")} disabled={status !== "online"}
-              className="flex-1 rounded flex items-center justify-center disabled:opacity-40"
-              style={{ height: 44, ...glass(UI.line) }}>
-              <span className="tb-t">LOGIN</span>
-            </button>
-          )}
+          {/* Unranked: quick games against anyone, guests too; ratings don't move. */}
+          <button onClick={() => onPick("UNRANKED")} disabled={status !== "online"}
+            className="flex-1 rounded flex items-center justify-center disabled:opacity-40"
+            style={{ height: 44, ...glass(UI.line) }}>
+            <span className="tb-t">UNRANKED</span>
+          </button>
           {/* Private 1v1 with a friend: a room code to share. Guests welcome. */}
           <button onClick={() => onPick("PRIVATE")} disabled={status !== "online"}
             className="flex-1 rounded flex items-center justify-center disabled:opacity-40"
@@ -2853,13 +2844,6 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
 
         <div className="flex justify-between">
           <div className="flex gap-2.5">
-            <button onClick={() => setModal("DECK")} aria-label="The pieces" className="flex items-center justify-center" style={{ width: 44, height: 44, ...skFill(color) }}>
-              <div style={{ display: "grid", gridTemplateColumns: "8px 8px", gap: 2 }}>
-                {[0, 1, 2, 3].map((i) => (
-                  <div key={i} style={{ background: i === 1 ? "transparent" : color, opacity: 0.85, height: 8 }} />
-                ))}
-              </div>
-            </button>
             <button onClick={() => setModal("HOWTO")} aria-label="How to play"
               className="rounded flex items-center justify-center"
               style={{ width: 44, height: 44, ...glass(UI.line) }}>
@@ -2872,7 +2856,7 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
             </button>
           </div>
           <div className="flex gap-2.5">
-            <button onClick={() => setModal(authed ? "ACCOUNT" : "login")} aria-label="Account"
+            <button onClick={() => setModal(authed || profile?.guest ? "ACCOUNT" : "login")} aria-label="Account"
               className="rounded flex items-center justify-center"
               style={{ width: 44, height: 44, ...glass(authed && verified ? UI.line : GOLD_SOFT) }}>
               <UserRound size={17} style={{ color: authed && verified ? UI.dim : GOLD }} />
@@ -2899,7 +2883,6 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
       )}
       {modal === "SETTINGS" && <SettingsModal name={name} rename={rename} status={status} theme={theme} setTheme={setTheme} onClose={() => setModal(null)} />}
       {modal === "STATS" && <StatsModal profile={profile} status={status} onClose={() => setModal(null)} />}
-      {modal === "DECK" && <DeckModal color={color} onClose={() => setModal(null)} />}
     </div>
   );
 }
@@ -2951,17 +2934,17 @@ const BAND_CAP = 600;
 // After this long with no opponent, offer the AI instead of a longer wait.
 const LONELY_AFTER_S = 30;
 
-function Matchmaking({ profile, loadout, colors, onCancel, onPlayAi }) {
+function Matchmaking({ profile, loadout, colors, onCancel, onPlayAi, unranked = false }) {
   const search = useSearch();
   const found = useFound();
   const status = useStatus();
 
   useEffect(() => {
-    net.queue(loadout);
+    net.queue(loadout, unranked);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const tr = Math.round(profile.rating.r);
+  const tr = profile?.rating ? Math.round(profile.rating.r) : 1500;
   const rank = RANKS[rankIndexFor(tr)];
   const oppRank = found ? RANKS[rankIndexFor(found.opponent.rating)] : null;
   const band = search?.band ?? 40;
@@ -2973,7 +2956,7 @@ function Matchmaking({ profile, loadout, colors, onCancel, onPlayAi }) {
         {!found ? (
           <>
             <div className="text-center mb-8">
-              <div className="tb-t tb-pulse mb-2" style={{ color: colors.you }}>SEARCHING</div>
+              <div className="tb-t tb-pulse mb-2" style={{ color: colors.you }}>{unranked ? "UNRANKED · SEARCHING" : "SEARCHING"}</div>
               <div className="tb-t tabular-nums">{elapsed.toFixed(1)}s</div>
             </div>
 
@@ -2996,7 +2979,7 @@ function Matchmaking({ profile, loadout, colors, onCancel, onPlayAi }) {
               <div className="text-center tb-t mt-2 flex items-center justify-center gap-1.5"
                 style={{ color: status === "online" ? UI.dim : GOLD }}>
                 {status !== "online" && <WifiOff size={11} />}
-                {tr} TR · {rank.name}
+                {unranked ? "ratings don't change" : `${tr} TR · ${rank.name}`}
               </div>
             </div>
 
@@ -3011,7 +2994,7 @@ function Matchmaking({ profile, loadout, colors, onCancel, onPlayAi }) {
             {elapsed >= LONELY_AFTER_S && (
               <div className="mb-3 tb-fade">
                 <div className="tb-t italic text-center mb-2" style={{ color: UI.dim }}>
-                  Quiet right now. Play the AI instead? Ranked can wait.
+                  Quiet right now. Play the AI instead?
                 </div>
                 <button onClick={() => { net.unqueue(); onPlayAi(); }} className="w-full tb-t"
                   style={{ height: 46, ...skFill(UI.text), color: UI.text }}>
@@ -3494,7 +3477,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
     ) : theme.showTimer && secsLeft !== null ? (
       <NumBox value={secsLeft} color={secsLeft <= 5 ? UI.bad : GOLD} label={`${secsLeft}s left`} />
     ) : null,
-    forfeit: { ranked: true, disabled: !m || !!m.over, onConfirm: () => net.forfeit() },
+    forfeit: { ranked: m.rated !== false, disabled: !m || !!m.over, onConfirm: () => net.forfeit() },
   };
 
   return (
@@ -3736,6 +3719,46 @@ const useRoom = () => useSyncExternalStore(subs.room, () => net.room);
 // Re-render on room errors / guest errors too (they ride the same event).
 const useRoomRev = () => { const [, bump] = useState(0); useEffect(() => net.on("room", () => bump((n) => n + 1)), []); };
 
+/** Step one for anyone without an account: a name, and you're a guest. */
+function GuestNameForm() {
+  useRoomRev();
+  const [guestName, setGuestName] = useState(() => net.guestInfo?.name || "");
+  const field = { height: 46, ...glass(UI.line), color: UI.text, background: "color-mix(in srgb, var(--tb-text) 6%, transparent)", outline: "none" };
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); if (guestName.trim()) net.playAsGuest(guestName.trim()); }} className="flex flex-col gap-2.5">
+      <div className="tb-t" style={{ color: UI.dim }}>Pick a name to play as a guest.</div>
+      <input value={guestName} onChange={(e) => setGuestName(e.target.value)} maxLength={16} autoFocus
+        placeholder="your name" className="tb-t px-3 w-full" style={field} aria-label="Guest name" />
+      {net.guestError && <div className="tb-t" style={{ color: UI.bad }}>{net.guestError}</div>}
+      <button type="submit" disabled={!guestName.trim()} className="tb-t disabled:opacity-40" style={{ height: 46, ...skFill(UI.text), color: UI.text }}>PLAY AS GUEST</button>
+      <div className="tb-t text-center" style={{ color: UI.dim, opacity: 0.8 }}>Have an account? Log in from the menu instead.</div>
+    </form>
+  );
+}
+
+/** Unranked: anyone (guests too) against whoever's searching. Ratings don't move. */
+function Unranked({ status, profile, loadout, colors, onBack, onPlayAi }) {
+  const auth = useAuth();
+  const P = usePx();
+  if (auth === "authed" || auth === "guest") {
+    return <Matchmaking unranked profile={profile} loadout={loadout} colors={colors} onCancel={onBack} onPlayAi={onPlayAi} />;
+  }
+  return (
+    <div className="tb-screen tb-safe w-full flex flex-col items-center justify-center px-5 font-mono" style={{ color: UI.text }}>
+      <Scaled className="w-full" style={{ maxWidth: 340 }}>
+        <div className="flex items-center justify-between mb-4">
+          <button onClick={onBack} className="flex items-center gap-1 tb-t py-2" style={{ color: UI.dim }}><ChevronLeft size={13} /> MENU</button>
+          <div className="tb-t" style={{ color: UI.dim }}>UNRANKED</div>
+        </div>
+        <div style={{ padding: 6 * P, ...glass(UI.line) }}>
+          {status === "online" ? <GuestNameForm /> : <div className="tb-t text-center py-6" style={{ color: UI.dim }}>Connecting to the server…</div>}
+        </div>
+        <div className="tb-t text-center mt-3" style={{ color: UI.dim, opacity: 0.75 }}>Unranked games don't change your rating.</div>
+      </Scaled>
+    </div>
+  );
+}
+
 /** The link a friend opens to land straight in your room. */
 const roomLink = (code) => `${location.origin}${location.pathname}?room=${code}`;
 
@@ -3745,7 +3768,6 @@ function PrivateRoom({ status, onBack, pendingCode, clearPending }) {
   const room = useRoom();
   const auth = useAuth();
   const profile = useProfile();
-  const [guestName, setGuestName] = useState(() => net.guestInfo?.name || "");
   const [code, setCode] = useState(pendingCode || "");
   const [copied, setCopied] = useState(false);
   const known = auth === "authed" || auth === "guest";
@@ -3765,16 +3787,7 @@ function PrivateRoom({ status, onBack, pendingCode, clearPending }) {
     body = <div className="tb-t text-center py-6" style={{ color: UI.dim }}>Connecting to the server…</div>;
   } else if (!known) {
     // Step 1: a name. Guests need nothing else.
-    body = (
-      <form onSubmit={(e) => { e.preventDefault(); if (guestName.trim()) net.playAsGuest(guestName.trim()); }} className="flex flex-col gap-2.5">
-        <div className="tb-t" style={{ color: UI.dim }}>Pick a name to play as a guest.</div>
-        <input value={guestName} onChange={(e) => setGuestName(e.target.value)} maxLength={16} autoFocus
-          placeholder="your name" className="tb-t px-3 w-full" style={field} aria-label="Guest name" />
-        {net.guestError && <div className="tb-t" style={{ color: UI.bad }}>{net.guestError}</div>}
-        <button type="submit" disabled={!guestName.trim()} className="tb-t disabled:opacity-40" style={big(true)}>PLAY AS GUEST</button>
-        <div className="tb-t text-center" style={{ color: UI.dim, opacity: 0.8 }}>Have an account? Log in from the menu instead.</div>
-      </form>
-    );
+    body = <GuestNameForm />;
   } else if (!room) {
     // Step 2: make a room, or join one.
     body = (
@@ -3857,10 +3870,11 @@ function Result(props) {
 
 /** Private rooms are unrated: the result, and a rematch. */
 function PrivateResult({ over, colors, onQueue, onMenu }) {
-  const { won, drew, forfeit, reason, myScore, oppScore, special, opponent } = over;
+  const { won, drew, forfeit, reason, myScore, oppScore, special, opponent, room } = over;
   const note = forfeit ? "opponent forfeited" : reason === "forfeit" ? "you forfeited"
     : reason === "locked" ? "board locked — no legal moves left"
-    : reason === "overtime" ? (drew ? "still tied at the centre" : "decided in overtime") : "private game · unrated";
+    : reason === "overtime" ? (drew ? "still tied at the centre" : "decided in overtime")
+    : room ? "private game · unrated" : "unranked";
   return (
     <EndScreen
       verdict={drew ? "DRAW" : won ? "VICTORY" : "DEFEAT"} ink={drew ? UI.text : won ? colors.you : colors.rival} note={note} special={special}
@@ -3868,7 +3882,7 @@ function PrivateResult({ over, colors, onQueue, onMenu }) {
       right={{ name: opponent.name, score: oppScore, ink: colors.rival }}
       actions={[
         { label: "MENU", onClick: onMenu },
-        { label: "REMATCH", onClick: onQueue, main: true },
+        { label: room ? "REMATCH" : "PLAY AGAIN", onClick: onQueue, main: true },
       ]}
     />
   );
@@ -4145,6 +4159,7 @@ export default function TurfBlocks() {
           if (t === "DIFFICULTY") setScreen("DIFFICULTY");
           else if (t === "MATCHMAKING") setScreen("MATCHMAKING");
           else if (t === "PRIVATE") setScreen("PRIVATE");
+          else if (t === "UNRANKED") setScreen("UNRANKED");
           else { setSeed((s) => s + 1); setScreen("HOTSEAT"); }
         }}
         loadout={loadout} setLoadout={setLoadout}
@@ -4158,6 +4173,11 @@ export default function TurfBlocks() {
       <Difficulty colors={colors}
         onBack={() => setScreen("MENU")}
         onStart={(lv) => { setAiLevel(lv); setSeed((s) => s + 1); setScreen("SOLO"); }} />
+    );
+  else if (screen === "UNRANKED")
+    view = (
+      <Unranked status={status} profile={profile} loadout={loadout} colors={colors}
+        onBack={() => setScreen("MENU")} onPlayAi={() => setScreen("DIFFICULTY")} />
     );
   else if (screen === "PRIVATE")
     view = (
@@ -4178,11 +4198,13 @@ export default function TurfBlocks() {
   else if (screen === "RESULT")
     view = (
       <Result over={over} colors={colors}
-        onMenu={() => { net.clearMatch(); if (over?.rated === false) net.leaveRoom(); setScreen("MENU"); }}
+        onMenu={() => { net.clearMatch(); if (over?.room) net.leaveRoom(); setScreen("MENU"); }}
         onQueue={() => {
           net.clearMatch();
           // Private: back to the room and ask for a rematch. Ranked: queue again.
-          if (over?.rated === false) { net.rematch(); setScreen("PRIVATE"); } else setScreen("MATCHMAKING");
+          if (over?.rated === false && over.room) { net.rematch(); setScreen("PRIVATE"); }
+          else if (over?.rated === false) setScreen("UNRANKED");
+          else setScreen("MATCHMAKING");
         }} />
     );
   else

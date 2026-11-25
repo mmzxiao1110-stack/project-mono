@@ -83,13 +83,14 @@ const publicProfile = (p, acct) => ({
   provider: acct ? acct.provider : "password",
 });
 
-const queue = new Queue((a, b, gap) => {
+/** Pairs two queued players into a match: ranked, or unranked (no rating change). */
+const pairUp = (rated) => (a, b, gap) => {
   const sa = sockets.get(a.playerId);
   const sb = sockets.get(b.playerId);
   if (!sa || !sb) {
     // Someone dropped between being paired and being told. Put the survivor back.
     const alive = sa ? a : sb ? b : null;
-    if (alive) { queue.add(alive); console.log(`[queue] re-queued ${alive.profile.name}`); }
+    if (alive) { (rated ? queue : casualQueue).add(alive); console.log(`[queue] re-queued ${alive.profile.name}`); }
     return;
   }
 
@@ -102,7 +103,8 @@ const queue = new Queue((a, b, gap) => {
       inMatch.delete(m.seats.A.profile.playerId);
       inMatch.delete(m.seats.B.profile.playerId);
       console.log(`[match] ${m.id} finished`);
-    }
+    },
+    { rated }
   );
   inMatch.set(a.profile.playerId, { match, side: "A" });
   inMatch.set(b.profile.playerId, { match, side: "B" });
@@ -116,7 +118,10 @@ const queue = new Queue((a, b, gap) => {
   );
 
   setTimeout(() => match.start(), 1400);
-});
+};
+const queue = new Queue(pairUp(true));         // ranked
+const casualQueue = new Queue(pairUp(false));  // unranked: anyone, guests included; ratings don't move
+const leaveQueues = (id) => { queue.remove(id); casualQueue.remove(id); };
 
 /* ---------- guests ----------
  * A guest is a name and a random id the browser keeps, nothing more. Guests
@@ -473,7 +478,7 @@ async function handle(ws, msg) {
 
     case "logout": {
       destroySession(str(msg.token, 128));
-      queue.remove(ws.userId);
+      leaveQueues(ws.userId);
       leaveRoom(ws.userId);
       if (isGuest(ws.userId)) guests.delete(ws.userId);
       sockets.delete(ws.userId);
@@ -520,7 +525,7 @@ async function handle(ws, msg) {
 
     case "createRoom": {
       if (inMatch.has(ws.userId)) return fail(ws, "Finish your match first.");
-      queue.remove(ws.userId);
+      leaveQueues(ws.userId);
       leaveRoom(ws.userId);
       const room = { code: newRoomCode(), host: ws.userId, guest: null, match: null, rematch: new Set(), touched: Date.now(), leaveTimer: null };
       rooms.set(room.code, room);
@@ -537,7 +542,7 @@ async function handle(ws, msg) {
       if (room.host === ws.userId) return tellRoom(room);
       if (room.guest && room.guest !== ws.userId) return send(ws, { t: "roomError", msg: "That room is already full." });
       if (inMatch.has(ws.userId)) return fail(ws, "Finish your match first.");
-      queue.remove(ws.userId);
+      leaveQueues(ws.userId);
       if (roomOf.get(ws.userId) !== code) leaveRoom(ws.userId);
       room.guest = ws.userId;
       roomOf.set(ws.userId, code);
@@ -560,6 +565,21 @@ async function handle(ws, msg) {
     }
 
     case "queue": {
+      if (msg.unranked) {
+        // Unranked: no account or verified email needed; ratings don't move.
+        if (inMatch.has(ws.userId)) return fail(ws, "Already in a match.");
+        if (casualQueue.has(ws.userId)) return;
+        leaveQueues(ws.userId);
+        leaveRoom(ws.userId);
+        const profile = profileOf(ws.userId);
+        const uid = ws.userId;
+        casualQueue.add({
+          playerId: uid, profile, rating: profile.rating, loadout: sanitizeLoadout(),
+          onProgress: (p) => sendTo(uid, { t: "searching", ...p }),
+        });
+        console.log(`[queue] + ${profile.name} (unranked) — ${casualQueue.size} waiting`);
+        break;
+      }
       if (isGuest(ws.userId)) return fail(ws, "Make an account to play ranked.");
       const acct = getAccount(ws.userId);
       if (!acct || (!acct.emailVerified && !SKIP_VERIFY)) return send(ws, { t: "needVerify" });
@@ -579,7 +599,7 @@ async function handle(ws, msg) {
     }
 
     case "unqueue":
-      queue.remove(ws.userId);
+      leaveQueues(ws.userId);
       break;
 
     case "move":
@@ -654,7 +674,7 @@ wss.on("connection", (ws, req) => {
     // may already have replaced it, and deleting would orphan the new session.
     if (sockets.get(id) !== ws) return;
     sockets.delete(id);
-    queue.remove(id);
+    leaveQueues(id);
     const active = inMatch.get(id);
     if (active) active.match.onDisconnect(active.side);
     // Out of a match, a room waits a little for a refresh or a flaky connection.
