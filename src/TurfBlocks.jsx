@@ -1551,17 +1551,64 @@ function AmbientField({ colors, theme, paused }) {
   );
 }
 
-function Popup({ title, onClose, children, pinned, maxW = 430, glassy = false }) {
-  useEffect(() => { sky.paused++; sfx.open(); music.duck(true); return () => { sky.paused--; music.duck(false); }; }, []);
+/**
+ * Popups open *in place of* the main menu when they're shown there: the menu's
+ * buttons go, and the popup's contents take their spot on a pane of glass over
+ * the same moving background. Anywhere else (in a game, in replays) they float
+ * over the screen on the same glass.
+ */
+const InlineCtx = createContext(false);
+
+/** Translucent white glass over whatever moves behind it, lit along the top. */
+const GLASS_PANE = {
+  ...sk("color-mix(in srgb, white 38%, transparent)"),
+  background:
+    "linear-gradient(180deg, rgba(255,255,255,.2), rgba(255,255,255,.1) 24%, rgba(255,255,255,.07)), " +
+    "linear-gradient(color-mix(in srgb, var(--tb-ground) 34%, transparent), color-mix(in srgb, var(--tb-ground) 46%, transparent))",
+  boxShadow: `inset 0 ${PX} 0 rgba(255,255,255,.5), inset ${PX} 0 0 rgba(255,255,255,.22), inset 0 calc(var(--p) * -1) 0 rgba(0,0,0,.3), inset calc(var(--p) * -1) 0 0 rgba(0,0,0,.16)`,
+  // Frosted: whatever moves behind it softens into colour.
+  backdropFilter: "blur(7px) saturate(1.15)", WebkitBackdropFilter: "blur(7px) saturate(1.15)",
+};
+
+/** The arrival: a light ripple runs down the glass and a few pixel bubbles drift up. Plays once. */
+function Arrival() {
+  const bubbles = useMemo(() => Array.from({ length: 11 }, (_, i) => ({
+    left: 6 + ((i * 37) % 88), size: 1 + (i % 3), delay: (i * 83) % 520, dur: 900 + ((i * 131) % 700),
+  })), []);
+  return (
+    <span aria-hidden="true" className="absolute inset-0 pointer-events-none overflow-hidden" style={{ zIndex: 2 }}>
+      <span className="tb-ripple absolute inset-x-0" />
+      {bubbles.map((b, i) => (
+        <span key={i} className="tb-bubble absolute" style={{
+          left: `${b.left}%`, bottom: 0, width: `calc(var(--p) * ${b.size})`, height: `calc(var(--p) * ${b.size})`,
+          animationDelay: `${b.delay}ms`, animationDuration: `${b.dur}ms`,
+        }} />
+      ))}
+    </span>
+  );
+}
+
+function Popup({ title, onClose, children, pinned, maxW = 430 }) {
+  const inline = useContext(InlineCtx);
+  useEffect(() => {
+    sfx.open();
+    if (inline) return undefined;
+    sky.paused++; music.duck(true);
+    return () => { sky.paused--; music.duck(false); };
+  }, [inline]);
+  useEffect(() => {
+    if (!inline) return undefined;
+    const k = (e) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, [inline, onClose]);
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center tb-fade"
+      className={`${inline ? "absolute" : "fixed tb-fade"} inset-0 z-40 flex items-center justify-center`}
       style={{
-        // A dimmed, see-through backdrop. The sky behind is paused while a
-        // popup is open (see PixelSky), so the frosted panel isn't re-blurring
-        // a moving picture every frame.
-        // Dimmed with a pixel dither rather than a blur.
-        background: "repeating-conic-gradient(rgba(0,0,0,.55) 0 25%, rgba(0,0,0,.25) 0 50%) 0 0 / calc(var(--p) * 2) calc(var(--p) * 2)",
+        // Over a game: dimmed with a pixel dither (the sky behind is paused).
+        // On the menu: nothing, the moving background shows round the glass.
+        background: inline ? "transparent" : "repeating-conic-gradient(rgba(0,0,0,.55) 0 25%, rgba(0,0,0,.25) 0 50%) 0 0 / calc(var(--p) * 2) calc(var(--p) * 2)",
         padding: "clamp(14px, 5vw, 56px) clamp(14px, 5vw, 56px)",
         paddingTop: "max(clamp(14px,5vw,56px), env(safe-area-inset-top,0px))",
         paddingBottom: "max(clamp(14px,5vw,56px), env(safe-area-inset-bottom,0px))",
@@ -1569,20 +1616,10 @@ function Popup({ title, onClose, children, pinned, maxW = 430, glassy = false })
       onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <PxContext.Provider value={BASE_P}>
-      <div
-        className="tb-pop tb-scale w-full flex flex-col overflow-hidden"
-        style={{
-          maxWidth: maxW,
-          maxHeight: "100%",
-          ...sk("var(--tb-text)"),
-          // Glassy: a clear pane over the sky, lit along the top, shaded below.
-          background: glassy
-            ? "linear-gradient(180deg, color-mix(in srgb, var(--tb-text) 12%, transparent), color-mix(in srgb, var(--tb-panel-solid) 35%, transparent) 40%, color-mix(in srgb, var(--tb-panel-solid) 55%, transparent))"
-            : "color-mix(in srgb, var(--tb-panel-solid) 92%, black)",
-          ...(glassy ? { boxShadow: `${BEVEL}, inset 0 calc(var(--p) * 2) 0 color-mix(in srgb, var(--tb-text) 18%, transparent)` } : null),
-        }}
-      >
-        <div className="flex items-center justify-between px-4 h-12 shrink-0 mx-2" style={RULE_BELOW}>
+      <div className="tb-dive tb-scale tb-calm relative w-full flex flex-col overflow-hidden"
+        style={{ maxWidth: maxW, maxHeight: "100%", ...GLASS_PANE, color: UI.text }}>
+        <Arrival />
+        <div className="flex items-center justify-between px-4 h-11 shrink-0 mx-2" style={RULE_BELOW}>
           <span className="tb-t" style={{ color: UI.text }}>{title}</span>
           <button onClick={onClose} style={{ color: UI.dim }} aria-label="Close" className="p-2 -mr-2"><X size={17} /></button>
         </div>
@@ -2964,12 +3001,12 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
 
   return (
     <div className="tb-screen tb-safe relative w-full flex items-center justify-center px-5 font-mono overflow-hidden" style={{ color: UI.text }}>
-      <AmbientField colors={colors} theme={theme} paused={!!modal} />
+      <AmbientField colors={colors} theme={theme} paused={false} />
       <div className="absolute inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse at 50% 46%, color-mix(in srgb, var(--tb-ground) 45%, transparent) 0%, color-mix(in srgb, var(--tb-ground) 20%, transparent) 50%, transparent 80%)" }} />
 
-      {/* Behind the PLAY glass only the sky shows, not the menu. */}
-      <Scaled className="relative w-full" style={{ maxWidth: 330, visibility: modal === "PLAY" ? "hidden" : "visible" }}>
-        <div className="text-center mb-9">
+      {/* While a panel is open the buttons step aside and it takes their place. */}
+      {!modal && <Scaled className="tb-dive tb-calm relative w-full" style={{ maxWidth: 316 }}>
+        <div className="text-center mb-7">
           <PixelLogo />
           <PixelRule />
           <div className="tb-t mt-2" style={{ color: UI.dim, opacity: 0.6 }}>{VERSION_LABEL}</div>
@@ -2977,8 +3014,8 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
 
         {/* One big way in: PLAY opens the modes. */}
         <button onClick={() => setModal("PLAY")}
-          className="w-full rounded flex flex-col items-center justify-center gap-1.5 mb-2.5"
-          style={{ height: 86, ...skFill("var(--tb-you)") }}>
+          className="w-full rounded flex flex-col items-center justify-center gap-1 mb-2"
+          style={{ height: 66, ...skFill("var(--tb-you)") }}>
           <PixelWord text="PLAY" from="var(--tb-text)" to="var(--tb-you)" />
           {status === "online" && online !== null ? (
             <span className="tb-t" style={{ color: UI.dim }}>{online === 1 ? "just you online right now" : `${online} people online`}</span>
@@ -2994,44 +3031,45 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
           </button>
         )}
 
-        <div className="flex gap-2.5 mb-2.5">
+        <div className="flex gap-2 mb-2">
           {/* Offline play takes the left half; T-TERMINAL, the player hub, the right. */}
           {/* Your account: who you're signed in as, or a way to sign in. */}
           <button onClick={() => setModal(authed || profile?.guest ? "ACCOUNT" : "login")} aria-label="Account"
             className="flex-1 rounded flex items-center justify-center gap-2 min-w-0 px-2"
-            style={{ height: 44, ...glass(authed && !verified ? GOLD_SOFT : UI.line) }}>
+            style={{ height: 38, ...glass(authed && !verified ? GOLD_SOFT : UI.line) }}>
             <span style={{ color: authed && verified ? UI.text : GOLD, display: "flex" }}><UserRound /></span>
             <span className="tb-t truncate">{authed ? (profile?.name || "ACCOUNT") : profile?.guest ? `${profile.name} (GUEST)` : "LOG IN"}</span>
           </button>
           <a href="/terminal" className="flex-1 rounded flex items-center justify-center gap-2 no-underline"
-            style={{ height: 44, ...skFill(ACCENTS.terminal), color: UI.text }}>
+            style={{ height: 38, ...skFill(ACCENTS.terminal), color: UI.text }}>
             <span style={{ color: ACCENTS.terminal, display: "flex" }}><TerminalIcon /></span>
             <span className="tb-t">T-TERMINAL</span>
           </a>
         </div>
 
         {/* Four, evenly: theme, replays, how to play, settings. */}
-        <div className="grid grid-cols-4 gap-2.5">
+        <div className="grid grid-cols-4 gap-2">
           {[["THEME", "Theme", Palette], ["REPLAYS", "Replays", Film], ["HOWTO", "How to play", BookOpen], ["SETTINGS", "Settings", Settings2]].map(([k, label, Icon]) => (
             <button key={k} onClick={() => (k === "REPLAYS" ? onPick("REPLAYS") : setModal(k))} aria-label={label}
-              className="rounded flex items-center justify-center" style={{ height: 44, ...glass(UI.line) }}>
-              <Icon size={17} style={{ color: UI.dim }} />
+              className="rounded flex items-center justify-center" style={{ height: 38, ...glass(UI.line) }}>
+              <Icon size={16} style={{ color: UI.dim }} />
             </button>
           ))}
         </div>
 
         {/* The site: each page in its own colour. */}
-        <div className="grid grid-cols-4 gap-2.5 mt-2.5">
+        <div className="grid grid-cols-4 gap-2 mt-2">
           {[["about", "ABOUT", Info], ["news", "NEWS", NewsIcon], ["download", "APP", DownloadIcon], ["help", "HELP", HelpIcon]].map(([k, label, Icon]) => (
             <a key={k} href={`/${k}`} className="rounded flex flex-col items-center justify-center gap-1 no-underline"
-              style={{ height: 50, ...glass(`color-mix(in srgb, ${ACCENTS[k]} 55%, transparent)`), color: ACCENTS[k] }}>
+              style={{ height: 44, ...glass(`color-mix(in srgb, ${ACCENTS[k]} 55%, transparent)`), color: ACCENTS[k] }}>
               <Icon />
               <span className="tb-t">{label}</span>
             </a>
           ))}
         </div>
-      </Scaled>
+      </Scaled>}
 
+      <InlineCtx.Provider value={true}>
       {(modal === "login" || modal === "signup") && (
         <AuthModal mode={modal} onClose={() => setModal(null)} onSwitch={setModal} />
       )}
@@ -3045,7 +3083,7 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
       {modal === "SETTINGS" && <SettingsModal name={name} rename={rename} status={status} theme={theme} setTheme={setTheme} onClose={() => setModal(null)} />}
       {modal === "STATS" && <StatsModal profile={profile} status={status} onClose={() => setModal(null)} />}
       {modal === "PLAY" && (
-        <PlayModal theme={theme} status={status} authed={authed} verified={verified} placed={placed} rank={rank} tr={tr}
+        <PlayModal status={status} authed={authed} verified={verified} placed={placed} rank={rank} tr={tr}
           onClose={() => setModal(null)}
           onPick={(t) => {
             if (t === "MATCHMAKING") {
@@ -3057,6 +3095,7 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
             onPick(t);
           }} />
       )}
+      </InlineCtx.Provider>
     </div>
   );
 }
@@ -3064,67 +3103,6 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
 /* ============================================================
    PLAY — every way to play, in a little underwater night sky
    ============================================================ */
-/**
- * The PLAY screen's backdrop: a pixel scene drawn live. Deep space at the
- * top (twinkling stars, now and then a shooting star) dithers down through
- * a nebula into the sea (slow light rays, bubbles rising). ~12 fps.
- */
-function DreamCanvas({ theme }) {
-  const ref = useRef(null);
-  useEffect(() => {
-    const cv = ref.current;
-    if (!cv) return;
-    const ctx = cv.getContext("2d", { alpha: false });
-    const PIX = 3; // one scene pixel = 3 layout pixels (zoomed with the popup)
-    let W = 1, H = 1, img = null;
-    const size = () => {
-      // Rounded down: a canvas a pixel taller than its box would make the box scroll.
-      W = Math.max(1, Math.ceil(cv.parentElement.offsetWidth / PIX));
-      H = Math.max(1, Math.floor(cv.parentElement.clientHeight / PIX));
-      cv.width = W; cv.height = H;
-      cv.style.width = `${W * PIX}px`; cv.style.height = `${H * PIX}px`;
-      img = ctx.createImageData(W, H);
-    };
-    size();
-    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(size) : null;
-    ro?.observe(cv.parentElement);
-
-    const nebula = rgbOf(theme.special);
-    const sea = rgbOf(theme.you);
-    const deep = mixRgb(rgbOf(theme.ground), sea, 0.18);
-    const light = rgbOf(theme.text);
-    // The sea's gradient from top to bottom: no dark space above it here.
-    const BANDS = [mixRgb(mixRgb(deep, nebula, 0.12), sea, 0.44), mixRgb(deep, sea, 0.38), mixRgb(deep, sea, 0.33), mixRgb(deep, sea, 0.28), mixRgb(deep, sea, 0.23), mixRgb(deep, sea, 0.17), deep];
-    const draw = (t) => {
-      const s2 = t / 1000, d = img.data;
-      for (let y = 0; y < H; y++) {
-        const fy = (y / Math.max(1, H - 1)) * (BANDS.length - 1);
-        for (let x = 0; x < W; x++) {
-          const th = BAYER[(y & 3) * 4 + (x & 3)];
-          const wave = Math.sin(x * 0.18 + s2 * 1.1 + y * 0.05) * 0.35;
-          let c = BANDS[Math.max(0, Math.min(BANDS.length - 1, Math.floor(fy + wave + th)))];
-          // Light rays falling into the water, drifting slowly.
-          {
-            const ray = Math.sin((x + y * 0.55) * 0.12 + s2 * 0.4) + Math.sin((x - y * 0.3) * 0.05 - s2 * 0.25);
-            if (ray > 1.15 + th * 0.4) c = mixRgb(c, light, 0.08);
-          }
-          const o = (y * W + x) * 4;
-          d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = 255;
-        }
-      }
-      ctx.putImageData(img, 0, 0);
-    };
-    draw(performance.now());
-    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    if (!theme.motion || reduced) return () => ro?.disconnect();
-    let raf, last = 0;
-    const loop = (t) => { raf = requestAnimationFrame(loop); if (t - last < 90 || document.hidden) return; last = t; draw(t); };
-    raf = requestAnimationFrame(loop);
-    return () => { cancelAnimationFrame(raf); ro?.disconnect(); };
-  }, [theme.ground, theme.you, theme.special, theme.text, theme.motion]);
-  return <canvas ref={ref} aria-hidden="true" style={{ position: "absolute", left: 0, top: 0, imageRendering: "pixelated", pointerEvents: "none" }} />;
-}
-
 const MODE_INK = { ranked: "#E8C95A", unranked: "#A9A7B4", ai: "#B9B6AC", marathon: "#8FD694", turns: "#EC93B8", private: "#A68BF0" };
 
 /** A mode: a pane of clear, lightly tinted glass, like a board square. Light sweeps it on hover. */
@@ -3135,7 +3113,7 @@ function ModeCard({ big = false, ink, icon: Icon, title, sub, note, onClick, dis
       className="tb-card tb-float relative w-full text-left flex flex-col overflow-hidden disabled:opacity-35"
       style={{
         animationDelay: `${delay}ms`,
-        minHeight: h, padding: big ? "14px 16px 13px" : "11px 12px 10px", gap: big ? 6 : 4,
+        minHeight: h, padding: big ? "10px 12px 9px" : "8px 10px 7px", gap: big ? 4 : 3,
         borderWidth: "var(--p)", borderStyle: "solid", borderColor: tint(big ? 75 : 55), clipPath: CLIP,
         // Clear glass: the sky shows through, faintly tinted, lit along the top.
         background: `color-mix(in srgb, ${ink} ${big ? 16 : 12}%, color-mix(in srgb, var(--tb-text) 8%, transparent))`,
@@ -3144,7 +3122,7 @@ function ModeCard({ big = false, ink, icon: Icon, title, sub, note, onClick, dis
       }}>
       <span aria-hidden="true" className="tb-sheen absolute inset-y-0" style={{ width: 28, left: -40, background: "linear-gradient(90deg, transparent, rgba(255,255,255,.22), transparent)" }} />
       <span className="flex justify-between items-start gap-2">
-        <Icon style={{ color: ink, ...(big ? { width: "calc(var(--p) * 18)", height: "calc(var(--p) * 18)" } : null) }} />
+        <Icon style={{ color: ink, ...(big ? { width: "calc(var(--p) * 13)", height: "calc(var(--p) * 13)" } : null) }} />
         {note && <span className="tb-t text-right" style={{ color: ink }}>{note}</span>}
       </span>
       <span className="flex-1" />
@@ -3154,9 +3132,9 @@ function ModeCard({ big = false, ink, icon: Icon, title, sub, note, onClick, dis
   );
 }
 
-function PlayModal({ theme, status, authed, verified, placed, rank, tr, onPick, onClose }) {
+function PlayModal({ status, authed, verified, placed, rank, tr, onPick, onClose }) {
   const phone = useCompact();
-  useEffect(() => { sky.paused++; sfx.open(); music.duck(true); return () => { sky.paused--; music.duck(false); }; }, []);
+  useEffect(() => { sfx.open(); }, []);
   useEffect(() => { const k = (e) => e.key === "Escape" && onClose(); window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, [onClose]);
   const online = status === "online";
   const count = useOnline();
@@ -3165,14 +3143,15 @@ function PlayModal({ theme, status, authed, verified, placed, rank, tr, onPick, 
   const off = online ? null : "needs the server";
   const rankedInk = MODE_INK.ranked;
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center tb-fade" onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
-      style={{ padding: "clamp(12px, 4vw, 48px)", background: "repeating-conic-gradient(rgba(0,0,0,.45) 0 25%, rgba(0,0,0,.2) 0 50%) 0 0 / calc(var(--p) * 2) calc(var(--p) * 2)" }}>
+    // In place of the menu's buttons: just the modes, on glass.
+    <div className="absolute inset-0 z-40 flex items-center justify-center" onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      style={{ padding: "clamp(12px, 4vw, 48px)" }}>
       <PxContext.Provider value={BASE_P}>
-        <div className="tb-pop tb-scale tb-scroll relative w-full overflow-hidden" role="dialog" aria-label="Play"
-          style={{ maxWidth: 680, maxHeight: "100%", overflowY: "auto", ...sk("color-mix(in srgb, var(--tb-text) 70%, transparent)"), background: "var(--tb-ground)" }}>
-          <DreamCanvas theme={theme} />
-          <div className="relative px-4 pb-4">
-            <div className="flex items-center justify-between pt-3 pb-2">
+        <div className="tb-dive tb-scale tb-calm tb-scroll relative w-full overflow-hidden" role="dialog" aria-label="Play"
+          style={{ maxWidth: 500, maxHeight: "100%", overflowY: "auto", ...GLASS_PANE }}>
+          <Arrival />
+          <div className="relative px-3.5 pb-3.5">
+            <div className="flex items-center justify-between pt-2.5 pb-1.5">
               <span style={{ width: 34 }} />
               <div className="flex flex-col items-center gap-1">
                 <PixelWord text="PLAY" from="var(--tb-text)" to="var(--tb-special)" />
@@ -3181,30 +3160,30 @@ function PlayModal({ theme, status, authed, verified, placed, rank, tr, onPick, 
               <button onClick={onClose} aria-label="Close" className="p-2" style={{ color: UI.text, width: 34 }}><X /></button>
             </div>
             {/* Two clusters, with room between them: offline on the left, online on the right. */}
-            <div className="flex items-start" style={{ gap: phone ? 14 : 26 }}>
-              <div className="flex flex-col min-w-0" style={{ flex: 1, gap: phone ? 10 : 12 }}>
+            <div className="flex items-start" style={{ gap: phone ? 10 : 18 }}>
+              <div className="flex flex-col min-w-0" style={{ flex: 1, gap: 8 }}>
                 <span className="tb-t" style={{ color: UI.text, opacity: 0.55 }}>OFFLINE</span>
-                <ModeCard big ink={MODE_INK.marathon} icon={Stack} title="MARATHON" h={phone ? 160 : 150} delay={0}
+                <ModeCard big ink={MODE_INK.marathon} icon={Stack} title="MARATHON" h={phone ? 118 : 108} delay={0}
                   sub={open ? `resume your run · ${open.score.toLocaleString("en-US")}` : "solo high score, 7×7"}
                   note={best ? `BEST ${best.toLocaleString("en-US")}` : null} onClick={() => onPick("MARATHON")} />
                 <div style={{ width: phone ? "100%" : "78%" }}>
-                  <ModeCard ink={MODE_INK.ai} icon={Robot} title="VS AI" sub="strength 1–10" h={phone ? 84 : 82} delay={800} onClick={() => onPick("DIFFICULTY")} />
+                  <ModeCard ink={MODE_INK.ai} icon={Robot} title="VS AI" sub="strength 1–10" h={phone ? 64 : 60} delay={800} onClick={() => onPick("DIFFICULTY")} />
                 </div>
                 {/* Pass-and-play only makes sense on one phone in two hands. */}
-                {phone && <ModeCard ink={MODE_INK.turns} icon={People} title="TURN BASED" sub="2 players, 1 device" h={84} delay={300} onClick={() => onPick("TURNBASED")} />}
+                {phone && <ModeCard ink={MODE_INK.turns} icon={People} title="TURN BASED" sub="2 players, 1 device" h={64} delay={300} onClick={() => onPick("TURNBASED")} />}
               </div>
-              <div className="flex flex-col min-w-0 items-end" style={{ flex: 1, gap: phone ? 10 : 12, marginTop: phone ? 0 : 16 }}>
+              <div className="flex flex-col min-w-0 items-end" style={{ flex: 1, gap: 8, marginTop: phone ? 0 : 12 }}>
                 <span className="tb-t text-right" style={{ color: UI.text, opacity: 0.55 }}>ONLINE</span>
-                <ModeCard big ink={rankedInk} icon={Trophy} title="RANKED" h={phone ? 160 : 150} delay={500}
+                <ModeCard big ink={rankedInk} icon={Trophy} title="RANKED" h={phone ? 118 : 108} delay={500}
                   sub={!online ? "needs the server" : !authed ? "account required" : !verified ? "verify your email" : placed ? "rated 1v1 matches" : "10 games to a rank"}
                   note={online && authed && verified ? (placed ? `${rank.name} · ${tr}` : "UNPLACED") : null}
                   disabled={!online} onClick={() => onPick("MATCHMAKING")} />
                 {/* Narrower and narrower down the side. */}
                 <div style={{ width: phone ? "100%" : "84%" }}>
-                  <ModeCard ink={MODE_INK.unranked} icon={Wifi} title="UNRANKED" sub={off || "anyone, guests too"} h={phone ? 84 : 70} delay={200} disabled={!online} onClick={() => onPick("UNRANKED")} />
+                  <ModeCard ink={MODE_INK.unranked} icon={Wifi} title="UNRANKED" sub={off || "anyone, guests too"} h={phone ? 64 : 54} delay={200} disabled={!online} onClick={() => onPick("UNRANKED")} />
                 </div>
                 <div style={{ width: phone ? "100%" : "64%" }}>
-                  <ModeCard ink={MODE_INK.private} icon={Lock} title="PRIVATE" sub={off || "a room code"} h={phone ? 84 : 70} delay={650} disabled={!online} onClick={() => onPick("PRIVATE")} />
+                  <ModeCard ink={MODE_INK.private} icon={Lock} title="PRIVATE" sub={off || "a room code"} h={phone ? 64 : 54} delay={650} disabled={!online} onClick={() => onPick("PRIVATE")} />
                 </div>
               </div>
             </div>
@@ -5153,12 +5132,32 @@ export default function TurfBlocks() {
       @keyframes tbDropIn { 0% { transform: translateY(-14px); opacity: 0 } 15% { opacity: 1 } 60%,100% { transform: translateY(22px); opacity: 1 } }
       .tb-drop-in { animation: tbDropIn 2.6s steps(6) infinite; }
       .tb-pop { animation: tbPop .2s steps(4) both; }
-      ${theme.motion ? "" : ".tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-bob,.tb-runner,.tb-line,.tb-vanish,.tb-rise,.tb-float,.tb-twinkle,.tb-drop-in,.tb-sheen { animation: none !important }"}
+      /* Panels surface like something rising through water: up out of a blur, brightening as they come. */
+      @keyframes tbDive {
+        0% { opacity: 0; transform: translateY(calc(var(--p) * 7)) scale(.975); filter: blur(4px) brightness(1.5) saturate(1.3) }
+        55% { opacity: 1; filter: blur(0) brightness(1.12) }
+        100% { opacity: 1; transform: none; filter: none }
+      }
+      .tb-dive { animation: tbDive .5s cubic-bezier(.16,.84,.3,1) both; }
+      /* A band of light runs down the glass once, like a caustic. */
+      @keyframes tbRipple { from { top: -30%; opacity: .9 } to { top: 110%; opacity: 0 } }
+      .tb-ripple { height: 26%; background: linear-gradient(180deg, transparent, rgba(255,255,255,.13) 45%, color-mix(in srgb, var(--tb-you) 20%, transparent) 55%, transparent); animation: tbRipple .8s cubic-bezier(.3,.6,.4,1) .05s both; }
+      /* Pixel bubbles drifting up and out, twinkling like stars. */
+      @keyframes tbBubble {
+        0% { transform: translateY(0); opacity: 0 }
+        15% { opacity: .9 }
+        100% { transform: translateY(calc(var(--p) * -60)); opacity: 0 }
+      }
+      .tb-bubble { background: color-mix(in srgb, white 75%, var(--tb-you)); box-shadow: 0 0 calc(var(--p) * 2) color-mix(in srgb, var(--tb-you) 70%, transparent); animation-name: tbBubble; animation-timing-function: steps(14); animation-fill-mode: both; }
+      ${theme.motion ? "" : ".tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-bob,.tb-runner,.tb-line,.tb-vanish,.tb-rise,.tb-float,.tb-twinkle,.tb-drop-in,.tb-sheen,.tb-dive { animation: none !important } .tb-ripple,.tb-bubble { display: none }"}
       @media (prefers-reduced-motion: reduce) {
-        .tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-bob,.tb-runner,.tb-line,.tb-rise { animation: none }
+        .tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-bob,.tb-runner,.tb-line,.tb-rise,.tb-dive { animation: none }
+        .tb-ripple,.tb-bubble { display: none }
       }
       /* Menus and popups: phone layout at BASE_P, zoomed by P / BASE_P (see Scaled). */
       .tb-scale { --p: ${BASE_P}px; zoom: var(--pz); }
+      /* The menu and its panels: a little smaller than everything else on big screens. */
+      .tb-scale.tb-calm { zoom: max(1, calc(var(--pz) * .8)); }
       /* Big screens: the game column gets room for a bigger board. */
       @media (min-width: 1000px) and (min-height: 760px) {
         .tb-col { max-width: 680px !important; }
