@@ -1552,12 +1552,13 @@ function AmbientField({ colors, theme, paused }) {
 }
 
 /**
- * Popups open *in place of* the main menu when they're shown there: the menu's
- * buttons go, and the popup's contents take their spot on a pane of glass over
- * the same moving background. Anywhere else (in a game, in replays) they float
- * over the screen on the same glass.
+ * On the main menu, popups aren't popups: the title stays, the buttons under
+ * it sink away, and the popup's contents rise into their place, straight on
+ * the menu's moving background, bobbing gently as if afloat. The menu
+ * provides { leaving } (true while they're sinking back out).
+ * Anywhere else (in a game, in replays) they float over the screen on glass.
  */
-const InlineCtx = createContext(false);
+const InlineCtx = createContext(null);
 
 /** Translucent white glass over whatever moves behind it, lit along the top. */
 const GLASS_PANE = {
@@ -1571,13 +1572,13 @@ const GLASS_PANE = {
 };
 
 /** The arrival: a light ripple runs down the glass and a few pixel bubbles drift up. Plays once. */
-function Arrival() {
+function Arrival({ ripple = true }) {
   const bubbles = useMemo(() => Array.from({ length: 11 }, (_, i) => ({
     left: 6 + ((i * 37) % 88), size: 1 + (i % 3), delay: (i * 83) % 520, dur: 900 + ((i * 131) % 700),
   })), []);
   return (
     <span aria-hidden="true" className="absolute inset-0 pointer-events-none overflow-hidden" style={{ zIndex: 2 }}>
-      <span className="tb-ripple absolute inset-x-0" />
+      {ripple && <span className="tb-ripple absolute inset-x-0" />}
       {bubbles.map((b, i) => (
         <span key={i} className="tb-bubble absolute" style={{
           left: `${b.left}%`, bottom: 0, width: `calc(var(--p) * ${b.size})`, height: `calc(var(--p) * ${b.size})`,
@@ -1588,8 +1589,38 @@ function Arrival() {
   );
 }
 
+/**
+ * The menu's stand-in for a popup: from where the buttons were down to the
+ * bottom of the screen, no box, just the contents. Each block rises in on its
+ * own beat and drifts on the water (see .tb-flow).
+ */
+function InlineFrame({ title, aside, onClose, maxW = 430, pinned, children, label }) {
+  const { leaving } = useContext(InlineCtx);
+  return (
+    <div className="absolute inset-x-0 bottom-0 z-40 flex justify-center" role="dialog" aria-label={label || title}
+      style={{ top: "var(--menu-top, 0px)", padding: "0 14px", paddingBottom: "max(14px, env(safe-area-inset-bottom, 0px))" }}
+      onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <PxContext.Provider value={BASE_P}>
+        <div className="tb-scale tb-calm relative w-full flex flex-col" style={{ maxWidth: maxW, maxHeight: "100%", color: UI.text }}>
+          {!leaving && <Arrival ripple={false} />}
+          <div className={`tb-flow${leaving ? " out" : ""} tb-scroll flex-1 min-h-0 overflow-y-auto overflow-x-hidden`} style={{ padding: "0 3px 10px" }}>
+            <div className="flex items-center justify-between gap-3 h-10 mb-1" style={RULE_BELOW}>
+              <button onClick={onClose} className="flex items-center gap-1.5 tb-t py-2 -ml-1 pr-2" style={{ color: UI.text }} aria-label="Back to menu">
+                <ChevronLeft size={15} style={{ color: UI.dim }} />{title}
+              </button>
+              {aside}
+            </div>
+            {pinned && <div className="pt-2">{pinned}</div>}
+            {children}
+          </div>
+        </div>
+      </PxContext.Provider>
+    </div>
+  );
+}
+
 function Popup({ title, onClose, children, pinned, maxW = 430 }) {
-  const inline = useContext(InlineCtx);
+  const inline = !!useContext(InlineCtx);
   useEffect(() => {
     sfx.open();
     if (inline) return undefined;
@@ -1602,13 +1633,13 @@ function Popup({ title, onClose, children, pinned, maxW = 430 }) {
     window.addEventListener("keydown", k);
     return () => window.removeEventListener("keydown", k);
   }, [inline, onClose]);
+  if (inline) return <InlineFrame title={title} onClose={onClose} maxW={maxW} pinned={pinned}>{children}</InlineFrame>;
   return (
     <div
-      className={`${inline ? "absolute" : "fixed tb-fade"} inset-0 z-40 flex items-center justify-center`}
+      className="fixed tb-fade inset-0 z-40 flex items-center justify-center"
       style={{
         // Over a game: dimmed with a pixel dither (the sky behind is paused).
-        // On the menu: nothing, the moving background shows round the glass.
-        background: inline ? "transparent" : "repeating-conic-gradient(rgba(0,0,0,.55) 0 25%, rgba(0,0,0,.25) 0 50%) 0 0 / calc(var(--p) * 2) calc(var(--p) * 2)",
+        background: "repeating-conic-gradient(rgba(0,0,0,.55) 0 25%, rgba(0,0,0,.25) 0 50%) 0 0 / calc(var(--p) * 2) calc(var(--p) * 2)",
         padding: "clamp(14px, 5vw, 56px) clamp(14px, 5vw, 56px)",
         paddingTop: "max(clamp(14px,5vw,56px), env(safe-area-inset-top,0px))",
         paddingBottom: "max(clamp(14px,5vw,56px), env(safe-area-inset-bottom,0px))",
@@ -2244,10 +2275,10 @@ function ThemeModal({ theme, setTheme, onClose }) {
   return (
     <Popup title="THEME" onClose={onClose} maxW={420}>
       {/* live preview */}
-      <div className="mt-3 mb-4 rounded p-3 flex justify-center" style={{ background: UI.ground, ...sk(UI.line) }}>
-        <div style={{ transform: "scale(1)", transformOrigin: "top center" }}>
+      <div className="mt-3 mb-4 flex justify-center">
+        <div>
           <BoardGrid
-            board={previewBoard} cell={15}
+            board={previewBoard} cell={12}
             ink={{ A: theme.you, B: theme.rival, S: theme.special }}
             theme={theme} youSide="A"
             ghostKeys={new Set()} ghostLegal={false} ghostInk={theme.you}
@@ -2989,8 +3020,34 @@ function PixelRule({ count = 18 }) {
     </div>
   );
 }
+const SINK_MS = 300;
+
 function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout, theme, setTheme }) {
-  const [modal, setModal] = useState(null);
+  const [modal, setShown] = useState(null);
+  // While true, whatever is showing under the title is sinking out.
+  const [leaving, setLeaving] = useState(false);
+  const swap = useRef(null);
+  const still = !theme.motion || (typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
+  const setModal = useCallback((next) => {
+    clearTimeout(swap.current);
+    if (still) { setShown(next); setLeaving(false); return; }
+    setLeaving(true);
+    swap.current = setTimeout(() => { setShown(next); setLeaving(false); }, SINK_MS);
+  }, [still]);
+  useEffect(() => () => clearTimeout(swap.current), []);
+
+  // Where the buttons start: the panels take over from there down.
+  const rootRef = useRef(null), slotRef = useRef(null);
+  useLayoutEffect(() => {
+    const root = rootRef.current, slot = slotRef.current;
+    if (!root || !slot) return undefined;
+    const place = () => root.style.setProperty("--menu-top", `${Math.round(slot.getBoundingClientRect().top - root.getBoundingClientRect().top)}px`);
+    place();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(place) : null;
+    ro?.observe(root); ro?.observe(slot);
+    window.addEventListener("resize", place);
+    return () => { ro?.disconnect(); window.removeEventListener("resize", place); };
+  }, []);
   const authed = useAuth() === "authed";
   const verified = !!profile?.emailVerified;
   const tr = profile?.rating ? Math.round(profile.rating.r) : null;
@@ -3000,17 +3057,24 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
   const notice = useNotice();
 
   return (
-    <div className="tb-screen tb-safe relative w-full flex items-center justify-center px-5 font-mono overflow-hidden" style={{ color: UI.text }}>
+    <div ref={rootRef} className="tb-screen tb-safe relative w-full flex items-center justify-center px-5 font-mono overflow-hidden" style={{ color: UI.text }}>
       <AmbientField colors={colors} theme={theme} paused={false} />
       <div className="absolute inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse at 50% 46%, color-mix(in srgb, var(--tb-ground) 45%, transparent) 0%, color-mix(in srgb, var(--tb-ground) 20%, transparent) 50%, transparent 80%)" }} />
 
-      {/* While a panel is open the buttons step aside and it takes their place. */}
-      {!modal && <Scaled className="tb-dive tb-calm relative w-full" style={{ maxWidth: 316 }}>
+      {/* Water over the sky while a panel is open: soft drifting light, no dark in it. */}
+      <div aria-hidden="true" className="tb-tide absolute inset-0 pointer-events-none" style={{ opacity: modal && !leaving ? 1 : 0 }} />
+
+      <Scaled className="tb-calm relative w-full" style={{ maxWidth: 316 }}>
+        {/* The title never moves; only what's under it changes. */}
         <div className="text-center mb-7">
           <PixelLogo />
           <PixelRule />
           <div className="tb-t mt-2" style={{ color: UI.dim, opacity: 0.6 }}>{VERSION_LABEL}</div>
         </div>
+
+        {/* The buttons. Hidden (not removed) while a panel is open, so the title stays put. */}
+        <div ref={slotRef} style={{ visibility: modal ? "hidden" : "visible" }}>
+        <div key={modal ? "away" : "here"} className={`tb-flow${leaving && !modal ? " out" : ""}`}>
 
         {/* One big way in: PLAY opens the modes. */}
         <button onClick={() => setModal("PLAY")}
@@ -3067,9 +3131,11 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
             </a>
           ))}
         </div>
-      </Scaled>}
+        </div>
+        </div>
+      </Scaled>
 
-      <InlineCtx.Provider value={true}>
+      <InlineCtx.Provider value={{ leaving }}>
       {(modal === "login" || modal === "signup") && (
         <AuthModal mode={modal} onClose={() => setModal(null)} onSwitch={setModal} />
       )}
@@ -3121,12 +3187,22 @@ function ModeCard({ big = false, ink, icon: Icon, title, sub, note, onClick, dis
         ...style,
       }}>
       <span aria-hidden="true" className="tb-sheen absolute inset-y-0" style={{ width: 28, left: -40, background: "linear-gradient(90deg, transparent, rgba(255,255,255,.22), transparent)" }} />
-      <span className="flex justify-between items-start gap-2">
-        <Icon style={{ color: ink, ...(big ? { width: "calc(var(--p) * 13)", height: "calc(var(--p) * 13)" } : null) }} />
-        {note && <span className="tb-t text-right" style={{ color: ink }}>{note}</span>}
-      </span>
-      <span className="flex-1" />
-      {big ? <PixelWord text={title} from="var(--tb-text)" to={ink} /> : <span className="tb-t" style={{ color: ink }}>{title}</span>}
+      {big ? (
+        <>
+          <span className="flex justify-between items-start gap-2">
+            <Icon style={{ color: ink, width: "calc(var(--p) * 13)", height: "calc(var(--p) * 13)" }} />
+            {note && <span className="tb-t text-right" style={{ color: ink }}>{note}</span>}
+          </span>
+          <span className="flex-1" />
+          <PixelWord text={title} from="var(--tb-text)" to={ink} />
+        </>
+      ) : (
+        // Small cards: the icon sits beside the title, one line saved.
+        <>
+          <span className="flex-1" />
+          <span className="flex items-center gap-2"><Icon style={{ color: ink, flexShrink: 0 }} /><span className="tb-t" style={{ color: ink }}>{title}</span></span>
+        </>
+      )}
       <span className="tb-t" style={{ color: UI.text, opacity: 0.8 }}>{sub}</span>
     </button>
   );
@@ -3143,54 +3219,40 @@ function PlayModal({ status, authed, verified, placed, rank, tr, onPick, onClose
   const off = online ? null : "needs the server";
   const rankedInk = MODE_INK.ranked;
   return (
-    // In place of the menu's buttons: just the modes, on glass.
-    <div className="absolute inset-0 z-40 flex items-center justify-center" onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
-      style={{ padding: "clamp(12px, 4vw, 48px)" }}>
-      <PxContext.Provider value={BASE_P}>
-        <div className="tb-dive tb-scale tb-calm tb-scroll relative w-full overflow-hidden" role="dialog" aria-label="Play"
-          style={{ maxWidth: 500, maxHeight: "100%", overflowY: "auto", ...GLASS_PANE }}>
-          <Arrival />
-          <div className="relative px-3.5 pb-3.5">
-            <div className="flex items-center justify-between pt-2.5 pb-1.5">
-              <span style={{ width: 34 }} />
-              <div className="flex flex-col items-center gap-1">
-                <PixelWord text="PLAY" from="var(--tb-text)" to="var(--tb-special)" />
-                <span className="tb-t" style={{ color: UI.text, opacity: 0.6 }}>{!online ? "offline · marathon, turn based and vs ai still work" : count ? `${count} ${count === 1 ? "person" : "people"} online` : "choose a mode"}</span>
-              </div>
-              <button onClick={onClose} aria-label="Close" className="p-2" style={{ color: UI.text, width: 34 }}><X /></button>
-            </div>
+    // In place of the menu's buttons: just the modes.
+    <InlineFrame title="PLAY" label="Play" onClose={onClose} maxW={phone ? 480 : 600}
+      aside={<span className="tb-t text-right" style={{ color: UI.text, opacity: 0.6 }}>{!online ? "offline" : count ? `${count} online` : ""}</span>}>
             {/* Two clusters, with room between them: offline on the left, online on the right. */}
             <div className="flex items-start" style={{ gap: phone ? 10 : 18 }}>
               <div className="flex flex-col min-w-0" style={{ flex: 1, gap: 8 }}>
                 <span className="tb-t" style={{ color: UI.text, opacity: 0.55 }}>OFFLINE</span>
-                <ModeCard big ink={MODE_INK.marathon} icon={Stack} title="MARATHON" h={phone ? 118 : 108} delay={0}
-                  sub={open ? `resume your run · ${open.score.toLocaleString("en-US")}` : "solo high score, 7×7"}
+                <ModeCard big ink={MODE_INK.marathon} icon={Stack} title="MARATHON" h={phone ? 96 : 100} delay={0}
+                  sub={open ? `resume · ${open.score.toLocaleString("en-US")}` : phone ? "solo, 7×7" : "solo high score, 7×7"}
                   note={best ? `BEST ${best.toLocaleString("en-US")}` : null} onClick={() => onPick("MARATHON")} />
                 <div style={{ width: phone ? "100%" : "78%" }}>
-                  <ModeCard ink={MODE_INK.ai} icon={Robot} title="VS AI" sub="strength 1–10" h={phone ? 64 : 60} delay={800} onClick={() => onPick("DIFFICULTY")} />
+                  <ModeCard ink={MODE_INK.ai} icon={Robot} title="VS AI" sub="strength 1–10" h={phone ? 56 : 58} delay={800} onClick={() => onPick("DIFFICULTY")} />
                 </div>
                 {/* Pass-and-play only makes sense on one phone in two hands. */}
-                {phone && <ModeCard ink={MODE_INK.turns} icon={People} title="TURN BASED" sub="2 players, 1 device" h={64} delay={300} onClick={() => onPick("TURNBASED")} />}
+                {phone && <ModeCard ink={MODE_INK.turns} icon={People} title="TURN BASED" sub="1 device" h={56} delay={300} onClick={() => onPick("TURNBASED")} />}
               </div>
-              <div className="flex flex-col min-w-0 items-end" style={{ flex: 1, gap: 8, marginTop: phone ? 0 : 12 }}>
+              <div className="flex flex-col min-w-0 items-end" style={{ flex: 1, gap: 8, marginTop: phone ? 0 : 8 }}>
                 <span className="tb-t text-right" style={{ color: UI.text, opacity: 0.55 }}>ONLINE</span>
-                <ModeCard big ink={rankedInk} icon={Trophy} title="RANKED" h={phone ? 118 : 108} delay={500}
-                  sub={!online ? "needs the server" : !authed ? "account required" : !verified ? "verify your email" : placed ? "rated 1v1 matches" : "10 games to a rank"}
+                <ModeCard big ink={rankedInk} icon={Trophy} title="RANKED" h={phone ? 96 : 100} delay={500}
+                  sub={!online ? (phone ? "offline" : "needs the server") : !authed ? (phone ? "needs an account" : "account required") : !verified ? "verify your email" : placed ? (phone ? "rated 1v1" : "rated 1v1 matches") : "10 games to a rank"}
                   note={online && authed && verified ? (placed ? `${rank.name} · ${tr}` : "UNPLACED") : null}
                   disabled={!online} onClick={() => onPick("MATCHMAKING")} />
-                {/* Narrower and narrower down the side. */}
-                <div style={{ width: phone ? "100%" : "84%" }}>
-                  <ModeCard ink={MODE_INK.unranked} icon={Wifi} title="UNRANKED" sub={off || "anyone, guests too"} h={phone ? 64 : 54} delay={200} disabled={!online} onClick={() => onPick("UNRANKED")} />
-                </div>
-                <div style={{ width: phone ? "100%" : "64%" }}>
-                  <ModeCard ink={MODE_INK.private} icon={Lock} title="PRIVATE" sub={off || "a room code"} h={phone ? 64 : 54} delay={650} disabled={!online} onClick={() => onPick("PRIVATE")} />
+                {/* Phone: stacked. Wider screens: side by side under RANKED, the second one narrower. */}
+                <div className={phone ? "flex flex-col w-full" : "flex w-full"} style={{ gap: 8 }}>
+                  <div style={{ flex: phone ? undefined : 1.12, minWidth: 0 }}>
+                    <ModeCard ink={MODE_INK.unranked} icon={Wifi} title="UNRANKED" sub={off || (phone ? "guests too" : "anyone, guests too")} h={56} delay={200} disabled={!online} onClick={() => onPick("UNRANKED")} />
+                  </div>
+                  <div style={{ flex: phone ? undefined : 1, minWidth: 0 }}>
+                    <ModeCard ink={MODE_INK.private} icon={Lock} title="PRIVATE" sub={off || "a room code"} h={56} delay={650} disabled={!online} onClick={() => onPick("PRIVATE")} />
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        </div>
-      </PxContext.Provider>
-    </div>
+    </InlineFrame>
   );
 }
 
@@ -5139,6 +5201,31 @@ export default function TurfBlocks() {
         100% { opacity: 1; transform: none; filter: none }
       }
       .tb-dive { animation: tbDive .5s cubic-bezier(.16,.84,.3,1) both; }
+      /* Menu panels. Each block (a row of buttons, a section of a panel) rises
+         in on its own beat, then drifts as if floating on water; going away,
+         they sink back down into the blur, top first. */
+      @keyframes tbWater {
+        0%,100% { translate: 0 0 }
+        25% { translate: calc(var(--p) * .5) calc(var(--p) * -1) }
+        50% { translate: 0 calc(var(--p) * -1.6) }
+        75% { translate: calc(var(--p) * -.5) calc(var(--p) * -.7) }
+      }
+      @keyframes tbSink { to { opacity: 0; transform: translateY(calc(var(--p) * 7)) scale(.97); filter: blur(5px) brightness(1.5) } }
+      .tb-flow > * { animation: tbDive .6s cubic-bezier(.16,.84,.3,1) both, tbWater 7s ease-in-out infinite; }
+      ${Array.from({ length: 10 }, (_, i) => `.tb-flow > :nth-child(${i + 1}) { animation-delay: ${i * 55}ms, ${-(i * 1.3).toFixed(1)}s }`).join("\n      ")}
+      .tb-flow.out > * { animation: tbSink ${SINK_MS}ms cubic-bezier(.5,0,.8,.4) both; }
+      ${Array.from({ length: 10 }, (_, i) => `.tb-flow.out > :nth-child(${i + 1}) { animation-delay: ${Math.min(i * 25, 120)}ms }`).join("\n      ")}
+      /* The tide: soft light drifting across the menu while a panel is open. */
+      @keyframes tbTide { 0% { background-position: 0% 0%, 100% 30%, 50% 100% } 50% { background-position: 60% 40%, 40% 70%, 20% 60% } 100% { background-position: 0% 0%, 100% 30%, 50% 100% } }
+      .tb-tide {
+        transition: opacity .7s ease;
+        background:
+          radial-gradient(60% 45% at 30% 35%, color-mix(in srgb, var(--tb-you) 22%, transparent), transparent 70%),
+          radial-gradient(55% 50% at 75% 60%, color-mix(in srgb, var(--tb-special) 16%, transparent), transparent 70%),
+          radial-gradient(70% 40% at 50% 90%, rgba(255,255,255,.10), transparent 70%);
+        background-size: 160% 160%, 170% 170%, 150% 150%;
+        animation: tbTide 16s ease-in-out infinite;
+      }
       /* A band of light runs down the glass once, like a caustic. */
       @keyframes tbRipple { from { top: -30%; opacity: .9 } to { top: 110%; opacity: 0 } }
       .tb-ripple { height: 26%; background: linear-gradient(180deg, transparent, rgba(255,255,255,.13) 45%, color-mix(in srgb, var(--tb-you) 20%, transparent) 55%, transparent); animation: tbRipple .8s cubic-bezier(.3,.6,.4,1) .05s both; }
@@ -5149,9 +5236,9 @@ export default function TurfBlocks() {
         100% { transform: translateY(calc(var(--p) * -60)); opacity: 0 }
       }
       .tb-bubble { background: color-mix(in srgb, white 75%, var(--tb-you)); box-shadow: 0 0 calc(var(--p) * 2) color-mix(in srgb, var(--tb-you) 70%, transparent); animation-name: tbBubble; animation-timing-function: steps(14); animation-fill-mode: both; }
-      ${theme.motion ? "" : ".tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-bob,.tb-runner,.tb-line,.tb-vanish,.tb-rise,.tb-float,.tb-twinkle,.tb-drop-in,.tb-sheen,.tb-dive { animation: none !important } .tb-ripple,.tb-bubble { display: none }"}
+      ${theme.motion ? "" : ".tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-bob,.tb-runner,.tb-line,.tb-vanish,.tb-rise,.tb-float,.tb-twinkle,.tb-drop-in,.tb-sheen,.tb-dive,.tb-flow > *,.tb-tide { animation: none !important } .tb-ripple,.tb-bubble { display: none }"}
       @media (prefers-reduced-motion: reduce) {
-        .tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-bob,.tb-runner,.tb-line,.tb-rise,.tb-dive { animation: none }
+        .tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-bob,.tb-runner,.tb-line,.tb-rise,.tb-dive,.tb-flow > *,.tb-tide { animation: none !important }
         .tb-ripple,.tb-bubble { display: none }
       }
       /* Menus and popups: phone layout at BASE_P, zoomed by P / BASE_P (see Scaled). */
