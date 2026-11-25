@@ -33,6 +33,31 @@ To check the server end to end (two guest bots play a whole private-room match):
 npm run test:match --prefix server
 ```
 
+## Deploying to Cloudflare (recommended)
+
+The same game server runs as a Cloudflare Worker (`cloudflare/worker.js`) with one Durable Object (`cloudflare/game.js`) that holds every room, match and account. Accounts are stored in the Durable Object's own database, so they survive deploys. `wrangler.jsonc` has the whole setup.
+
+1. Cloudflare dashboard → **Workers & Pages → Create → Import a repository** → choose this repository.
+   - Build command: `npm ci && npm run build`
+   - Deploy command: `npx wrangler deploy`
+2. After the first deploy, open the Worker → **Settings → Variables and Secrets** and add:
+   - `RESEND_API_KEY` (type *Secret*)
+   - `MAIL_FROM`, e.g. `Tesella <no-reply@yourdomain.com>`
+   - Optional: `GOOGLE_CLIENT_ID`
+3. Try it on the `*.workers.dev` address, then add your domain under **Settings → Domains & Routes → Custom domain** (remove any old DNS records for that name first).
+
+To run the Cloudflare version locally:
+
+```bash
+npm run cf:dev        # builds the client, then serves everything on :8787
+```
+
+Notes:
+
+- **Deploys don't wipe accounts**, but they do restart the game, so matches in progress end (ratings unaffected). Deploy at quiet times.
+- The client sends a small keepalive every 25 s; Cloudflare closes sockets that are silent for about 100 s.
+- To check a deployment end to end: `URL=wss://your-domain/ws npm run test:match --prefix server`.
+
 ## Deploying to Render
 
 `render.yaml` describes the whole deployment: one web service that builds the client, serves it, and runs the multiplayer server, plus a 1 GB disk for accounts.

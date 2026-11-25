@@ -5,11 +5,8 @@
  * Codes are hashed too: a leaked database shouldn't hand out working codes.
  */
 import crypto from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { OAuth2Client } from "google-auth-library";
+import { unref } from "./timers.js";
 
 const scrypt = promisify(crypto.scrypt);
 const KEYLEN = 64;
@@ -34,14 +31,14 @@ const RESERVED = /^(admin|administrator|mod|moderator|staff|support|system|serve
  * Words a name may not contain. Kept short and in its own file so you can
  * extend it without touching code: server/blocklist.txt, one word per line.
  */
-const BLOCKLIST = (() => {
-  try {
-    const f = path.join(path.dirname(fileURLToPath(import.meta.url)), "blocklist.txt");
-    return fs.readFileSync(f, "utf8").split(/\r?\n/).map((w) => w.trim().toLowerCase()).filter((w) => w && !w.startsWith("#"));
-  } catch {
-    return [];
-  }
-})();
+let BLOCKLIST = [];
+/**
+ * The blocklist's words, from the text of server/blocklist.txt (the host
+ * reads the file: Node from disk, Cloudflare bundles it).
+ */
+export function setBlocklist(text) {
+  BLOCKLIST = String(text || "").split(/\r?\n/).map((w) => w.trim().toLowerCase()).filter((w) => w && !w.startsWith("#"));
+}
 
 /**
  * Chat text, made safe to relay: plain characters only (no control or
@@ -151,20 +148,24 @@ export const newSalt = () => crypto.randomBytes(8).toString("hex");
 
 /* ---------- google ---------- */
 
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
-const googleClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
-export const googleEnabled = () => !!googleClient;
+// Read when used, not at load: on Cloudflare the settings arrive with the request.
+const googleId = () => (typeof process !== "undefined" && process.env.GOOGLE_CLIENT_ID) || "";
+export const googleEnabled = () => !!googleId();
 
-/** Verifies the ID token's signature against Google's keys. Never trust the client's word. */
+/**
+ * Verifies a Google ID token with Google itself (its tokeninfo endpoint
+ * checks the signature and expiry), then checks it was issued for us.
+ * Never trust the client's word.
+ */
 export async function verifyGoogle(credential) {
-  if (!googleClient) throw new Error("Google sign-in is not configured on this server.");
-  const ticket = await googleClient.verifyIdToken({
-    idToken: String(credential || ""),
-    audience: GOOGLE_CLIENT_ID,
-  });
-  const p = ticket.getPayload();
-  if (!p || !p.sub) throw new Error("Google rejected that sign-in.");
-  return { sub: p.sub, email: p.email, emailVerified: !!p.email_verified, name: p.name };
+  const aud = googleId();
+  if (!aud) throw new Error("Google sign-in is not configured on this server.");
+  const res = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(String(credential || ""))}`);
+  if (!res.ok) throw new Error("Google rejected that sign-in.");
+  const p = await res.json();
+  const iss = p.iss === "accounts.google.com" || p.iss === "https://accounts.google.com";
+  if (!p.sub || p.aud !== aud || !iss || Number(p.exp) * 1000 < Date.now()) throw new Error("Google rejected that sign-in.");
+  return { sub: p.sub, email: p.email, emailVerified: p.email_verified === true || p.email_verified === "true", name: p.name };
 }
 
 /* ---------- throttling ---------- */
@@ -184,6 +185,7 @@ function check(k, max) {
 }
 export const throttled = (username, ip) => Math.max(check(`u:${username}`, 30), check(`ip:${ip}`, 10), check(`ui:${ip}:${username}`, 6));
 export function noteFailure(username, ip) {
+  sweepLater();
   for (const k of [`u:${username}`, `ip:${ip}`, `ui:${ip}:${username}`]) {
     const a = attempts.get(k) || { n: 0, at: Date.now() };
     a.n++; a.at = Date.now();
@@ -191,7 +193,12 @@ export function noteFailure(username, ip) {
   }
 }
 export const clearFailures = (username, ip) => { attempts.delete(`ui:${ip}:${username}`); };
-setInterval(() => {
-  const now = Date.now();
-  for (const [k, a] of attempts) if (now - a.at > WINDOW) attempts.delete(k);
-}, WINDOW).unref();
+// Swept every WINDOW, from the first failure on (no timers at load: Cloudflare forbids them).
+let sweeper = null;
+function sweepLater() {
+  if (sweeper) return;
+  sweeper = unref(setInterval(() => {
+    const now = Date.now();
+    for (const [k, a] of attempts) if (now - a.at > WINDOW) attempts.delete(k);
+  }, WINDOW));
+}

@@ -1,0 +1,27 @@
+// Tesella on Cloudflare Workers: the built site as static assets, and the
+// game server in a Durable Object. Deploy: npm run cf:deploy (or connect the
+// GitHub repo in the Cloudflare dashboard; see README "Cloudflare").
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tesella",
+  "main": "cloudflare/worker.js",
+  "compatibility_date": "2025-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "single-page-application",
+    // Only these reach the Worker; every other file is served directly.
+    "run_worker_first": ["/", "/ws", "/api/*", "/music/*"]
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "GAME", "class_name": "Game" }]
+  },
+  // SQLite-backed Durable Objects (available on the free plan).
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Game"] }],
+  // server/blocklist.txt is bundled as text.
+  "rules": [{ "type": "Text", "globs": ["**/*.txt"], "fallthrough": true }],
+  "vars": { "NODE_ENV": "production" },
+  "observability": { "enabled": true }
+}

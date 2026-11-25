@@ -17,10 +17,13 @@ const origin = typeof location !== "undefined" ? location.host : "localhost:8787
  * In dev the client runs on Vite's port and the server on 8787.
  * In a build the server serves the client too, so same-origin is correct —
  * which also means https pages get wss automatically, with nothing to configure.
+ * The socket lives at /ws (on Cloudflare the site root is plain static files).
  */
 const SERVER_URL =
   (typeof import.meta !== "undefined" && import.meta.env?.VITE_SERVER_URL) ||
-  (isDev ? `ws://${host}:8787` : `${secure ? "wss" : "ws"}://${origin}`);
+  (isDev ? `ws://${host}:8787/ws` : `${secure ? "wss" : "ws"}://${origin}/ws`);
+// A quiet message now and then: hosts (Cloudflare among them) close a socket that stays silent.
+const KEEPALIVE_MS = 25_000;
 
 export const IS_SECURE = SERVER_URL.startsWith("wss://");
 export const GOOGLE_CLIENT_ID =
@@ -112,6 +115,8 @@ class Net {
 
     ws.onopen = () => {
       this.attempt = 0;
+      clearInterval(this.keepalive);
+      this.keepalive = setInterval(() => { if (this.ws === ws && ws.readyState === 1) ws.send('{"t":"ping"}'); }, KEEPALIVE_MS);
       // Signed in, or a guest coming back (e.g. after a refresh, mid-room).
       if (!this.token && this.guestInfo) this.raw({ t: "guest", name: this.guestInfo.name, gid: this.guestInfo.gid });
       else this.raw({ t: "hello", token: this.token });
@@ -130,6 +135,7 @@ class Net {
     };
 
     ws.onclose = () => {
+      if (this.ws === ws) clearInterval(this.keepalive);
       this.setStatus("offline");
       if (!this.closing) this.scheduleRetry();
     };

@@ -20,11 +20,11 @@ export class Queue {
   constructor(onPair) {
     this.entries = new Map(); // playerId -> entry
     this.onPair = onPair;
-    this.timer = setInterval(() => this.tick(), TICK_MS);
-    this.timer.unref?.();
+    this.timer = null; // started with the first player (no timers at load: Cloudflare forbids them)
   }
 
   add(entry) {
+    if (!this.timer) { this.timer = setInterval(() => this.tick(), TICK_MS); this.timer.unref?.(); }
     entry.joinedAt = Date.now();
     this.entries.set(entry.playerId, entry);
   }
