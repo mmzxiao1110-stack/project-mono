@@ -1985,6 +1985,7 @@ function StatCell({ label, value, sub, color }) {
 }
 
 function StatsModal({ profile, status, onClose, onLogout }) {
+  const wide = useWidePanel();
   // No profile has two very different causes. Saying "offline" for both sent
   // people hunting a server problem when they simply weren't signed in.
   // (Guests have a name but no ranked stats.)
@@ -2022,127 +2023,155 @@ function StatsModal({ profile, status, onClose, onLogout }) {
   const since = profile.createdAt ? new Date(profile.createdAt).toLocaleDateString(undefined, { month: "short", year: "numeric" }) : "—";
   const mar = profile.marathon;
 
-  return (
-    <Popup title="ACCOUNT" onClose={onClose}>
-      <div className="mt-4 flex items-baseline justify-between gap-3">
-        <span className="tb-t truncate" style={{ color: UI.text }}>{profile.name}</span>
-        <span className="tb-t shrink-0" style={{ color: UI.dim }}>since {since}</span>
-      </div>
-      <div className="mt-3 rounded p-4" style={{ ...glass(UI.line) }}>
-        <div className="flex items-center gap-4">
-          <div className="rounded flex items-center justify-center shrink-0"
-            style={{ width: 74, height: 74, background: placed ? `${rank.color}1F` : UI.cell, ...sk(placed ? rank.color : UI.line) }}>
-            <span className="text-3xl" style={{ color: placed ? rank.color : UI.dim }}>{placed ? rank.name : "–"}</span>
-          </div>
-          <div className="min-w-0 flex-1">
-            {placed ? (
-              <>
-                <div className="flex items-baseline gap-1.5">
-                  <span className="tb-t">{tr}</span>
-                  <span className="tb-t" style={{ color: UI.dim }}>TR ±{Math.round(profile.rating.rd)}</span>
-                </div>
-                <div className="tb-t mt-2 mb-1.5" style={{ color: UI.dim }}>
-                  {next ? `${toNext} TR TO ${next.name}` : "TOP OF THE LADDER"}
-                </div>
-                <div className="h-1 w-full rounded overflow-hidden" style={{ background: UI.cell }}>
-                  <div style={{ width: `${prog * 100}%`, height: "100%", background: rank.color }} />
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="tb-t mb-1">UNRANKED</div>
-                <div className="tb-t" style={{ color: UI.dim }}>
-                  {PLACEMENT_GAMES - st.games} more ranked {PLACEMENT_GAMES - st.games === 1 ? "match" : "matches"} to place.
-                </div>
-              </>
-            )}
-          </div>
+  const who = (
+    <div className={`${wide ? "" : "mt-4 "}flex items-baseline justify-between gap-3`}>
+      <span className="tb-t truncate" style={{ color: UI.text }}>{profile.name}</span>
+      <span className="tb-t shrink-0" style={{ color: UI.dim }}>since {since}</span>
+    </div>
+  );
+  const rankCard = (
+    <div className="mt-3 rounded p-4" style={{ ...glass(UI.line) }}>
+      <div className="flex items-center gap-4">
+        <div className="rounded flex items-center justify-center shrink-0"
+          style={{ width: 74, height: 74, background: placed ? `${rank.color}1F` : UI.cell, ...sk(placed ? rank.color : UI.line) }}>
+          <span className="text-3xl" style={{ color: placed ? rank.color : UI.dim }}>{placed ? rank.name : "–"}</span>
         </div>
-      </div>
-
-      <div className="mt-4">
-        <div className="tb-t mb-2" style={{ color: UI.dim }}>LADDER</div>
-        <div className="flex gap-[3px]">
-          {RANKS.map((r, i) => {
-            const here = placed && i === ri;
-            const past = placed && i < ri;
-            return (
-              <div key={r.name} className="flex-1 flex flex-col items-center gap-1.5">
-                <div className="w-full rounded-sm" style={{
-                  height: here ? 22 : 12,
-                  background: here ? r.color : past ? `${r.color}66` : UI.cell,
-                  transition: "height 180ms ease",
-                }} />
-                <span className="tb-t" style={{ color: here ? r.color : UI.dim, opacity: here ? 1 : 0.5 }}>{r.name}</span>
+        <div className="min-w-0 flex-1">
+          {placed ? (
+            <>
+              <div className="flex items-baseline gap-1.5">
+                <span className="tb-t">{tr}</span>
+                <span className="tb-t" style={{ color: UI.dim }}>TR ±{Math.round(profile.rating.rd)}</span>
               </div>
-            );
-          })}
+              <div className="tb-t mt-2 mb-1.5" style={{ color: UI.dim }}>
+                {next ? `${toNext} TR TO ${next.name}` : "TOP OF THE LADDER"}
+              </div>
+              <div className="h-1 w-full rounded overflow-hidden" style={{ background: UI.cell }}>
+                <div style={{ width: `${prog * 100}%`, height: "100%", background: rank.color }} />
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="tb-t mb-1">UNRANKED</div>
+              <div className="tb-t" style={{ color: UI.dim }}>
+                {PLACEMENT_GAMES - st.games} more ranked {PLACEMENT_GAMES - st.games === 1 ? "match" : "matches"} to place.
+              </div>
+            </>
+          )}
         </div>
       </div>
-
-      {st.history.length > 1 && (
-        <div className="mt-5 rounded p-3" style={{ ...glass(UI.line) }}>
-          <div className="flex items-center justify-between mb-1">
-            <span className="tb-t" style={{ color: UI.dim }}>TR · LAST {st.history.length}</span>
-            <span className="tb-t" style={{ color: UI.dim }}>{Math.min(...st.history)} – {Math.max(...st.history)}</span>
-          </div>
-          <Sparkline values={st.history} color={rank.color} />
+    </div>
+  );
+  const ladder = (
+    <div className="mt-4">
+      <div className="tb-t mb-2" style={{ color: UI.dim }}>LADDER</div>
+      <div className="flex gap-[3px]">
+        {RANKS.map((r, i) => {
+          const here = placed && i === ri;
+          const past = placed && i < ri;
+          return (
+            <div key={r.name} className="flex-1 flex flex-col items-center gap-1.5">
+              <div className="w-full rounded-sm" style={{
+                height: here ? 22 : 12,
+                background: here ? r.color : past ? `${r.color}66` : UI.cell,
+                transition: "height 180ms ease",
+              }} />
+              <span className="tb-t" style={{ color: here ? r.color : UI.dim, opacity: here ? 1 : 0.5 }}>{r.name}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+  const trend = st.history.length > 1 && (
+    <div className={`${wide ? "" : "mt-5 "}rounded p-3`} style={{ ...glass(UI.line) }}>
+      <div className="flex items-center justify-between mb-1">
+        <span className="tb-t" style={{ color: UI.dim }}>TR · LAST {st.history.length}</span>
+        <span className="tb-t" style={{ color: UI.dim }}>{Math.min(...st.history)} – {Math.max(...st.history)}</span>
+      </div>
+      <Sparkline values={st.history} color={rank.color} height={wide ? 44 : 58} />
+    </div>
+  );
+  const cells = (
+    <div className={`grid ${wide ? "grid-cols-3" : "grid-cols-2"} gap-2 ${wide ? (trend ? "mt-3" : "") : "mt-4"}`}>
+      <StatCell label="RECORD" value={`${st.wins}–${st.losses}`} sub={`${st.games} ${st.games === 1 ? "match" : "matches"}`} />
+      <StatCell label="WIN RATE" value={`${winRate}%`} sub={st.games ? `${st.wins} ${st.wins === 1 ? "win" : "wins"}` : "no data"} color={winRate >= 50 ? UI.good : UI.text} />
+      <StatCell label="PEAK" value={st.peakRank !== null ? RANKS[st.peakRank].name : "–"} sub={st.peakRank !== null ? `${st.peakTr} TR` : "unplaced"} color={st.peakRank !== null ? RANKS[st.peakRank].color : UI.dim} />
+      <StatCell label="PLAYTIME" value={fmtTime(st.seconds)} sub={st.games ? `~${Math.round(st.seconds / st.games / 60)}m ${wide ? "each" : "per match"}` : "no data"} />
+      <StatCell label="STREAK" value={st.streak > 0 ? `W${st.streak}` : st.streak < 0 ? `L${-st.streak}` : "–"} sub={`best W${st.bestStreak}`} color={st.streak > 0 ? UI.good : st.streak < 0 ? UI.bad : UI.text} />
+      <StatCell label="AVG TURF" value={st.squares ? st.squares.toFixed(1) : "–"} sub={st.special ? `${st.special.toFixed(1)} special` : "no data"} />
+    </div>
+  );
+  const marathon = (
+    // Marathon: your best, also on T-Terminal.
+    <div className={wide ? "mt-4" : "mt-5"}>
+      <div className="tb-t mb-2" style={{ color: UI.dim }}>MARATHON</div>
+      <div className="grid grid-cols-3 gap-2">
+        <StatCell label="BEST" value={mar?.best ? mar.best.toLocaleString("en-US") : "–"} sub={mar?.at ? new Date(mar.at).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "no score yet"} color={GOLD} />
+        <StatCell label="LINES" value={mar?.lines ?? "–"} sub={wide ? "in best" : "in your best"} />
+        <StatCell label="GAMES" value={mar?.games ?? 0} sub={profile.marathonOpen ? (wide ? "run saved" : `run saved · ${profile.marathonOpen.score}`) : "finished"} />
+      </div>
+    </div>
+  );
+  // On a computer the list has a column to itself, so it shows as many as fit without scrolling.
+  const shown = wide ? st.recent.slice(0, 6) : st.recent;
+  const recent = (
+    <div className={wide ? "" : "mt-5 mb-2"}>
+      <div className="tb-t mb-2" style={{ color: UI.dim }}>RECENT MATCHES</div>
+      {st.recent.length === 0 ? (
+        <div className="rounded p-4 text-center tb-t" style={{ ...glass(UI.line), color: UI.dim }}>
+          No ranked matches yet.
+        </div>
+      ) : (
+        <div className="space-y-1">
+          {shown.map((m, i) => (
+            <div key={i} className={`flex items-center gap-2.5 rounded px-3 ${wide ? "py-1.5" : "py-2"}`} style={{ ...glass(UI.line) }}>
+              <span className="tb-t w-4 shrink-0" style={{ color: m.drew ? UI.dim : m.won ? UI.good : UI.bad }}>
+                {m.drew ? "D" : m.won ? "W" : "L"}
+              </span>
+              <span className="tb-t flex-1 truncate">{m.name}</span>
+              <span className="tb-t" style={{ color: UI.dim }}>{m.score[0]}–{m.score[1]}</span>
+              <span className="tb-t w-8 text-right" style={{ color: UI.dim }}>{fmtTime(m.seconds)}</span>
+              <span className="tb-t w-9 text-right" style={{ color: m.delta > 0 ? UI.good : UI.bad }}>
+                {m.delta > 0 ? "+" : ""}{m.delta}
+              </span>
+            </div>
+          ))}
+          {shown.length < st.recent.length && (
+            <a href={`/terminal#/player/${encodeURIComponent(profile.name)}`} className="block tb-t pt-1" style={{ color: ACCENTS.terminal }}>
+              ALL MATCHES ON T-TERMINAL ›
+            </a>
+          )}
         </div>
       )}
+    </div>
+  );
+  const note = (
+    <div className="tb-t pt-3 pb-2" style={{ color: UI.dim, ...RULE_ABOVE }}>
+      Rating is Glicko-2 and computed on the server. TR is your rating;
+      ± is how sure the system is about it, and it narrows as you play.
+    </div>
+  );
+  const signOut = onLogout && (
+    <button onClick={onLogout} className="w-full rounded tb-t flex items-center justify-center gap-2 mt-2 mb-1"
+      style={{ height: wide ? 38 : 44, ...sk(UI.line), color: UI.dim }}>
+      <LogOut size={13} /> SIGN OUT
+    </button>
+  );
 
-      <div className="grid grid-cols-2 gap-2 mt-4">
-        <StatCell label="RECORD" value={`${st.wins}–${st.losses}`} sub={`${st.games} matches`} />
-        <StatCell label="WIN RATE" value={`${winRate}%`} sub={st.games ? `${st.wins} wins` : "no data"} color={winRate >= 50 ? UI.good : UI.text} />
-        <StatCell label="PEAK" value={st.peakRank !== null ? RANKS[st.peakRank].name : "–"} sub={st.peakRank !== null ? `${st.peakTr} TR` : "unplaced"} color={st.peakRank !== null ? RANKS[st.peakRank].color : UI.dim} />
-        <StatCell label="PLAYTIME" value={fmtTime(st.seconds)} sub={st.games ? `~${Math.round(st.seconds / st.games / 60)}m per match` : "no data"} />
-        <StatCell label="STREAK" value={st.streak > 0 ? `W${st.streak}` : st.streak < 0 ? `L${-st.streak}` : "–"} sub={`best W${st.bestStreak}`} color={st.streak > 0 ? UI.good : st.streak < 0 ? UI.bad : UI.text} />
-        <StatCell label="AVG TURF" value={st.squares ? st.squares.toFixed(1) : "–"} sub={st.special ? `${st.special.toFixed(1)} special` : "no data"} />
-      </div>
-
-      {/* Marathon: your best, also on T-Terminal. */}
-      <div className="mt-5">
-        <div className="tb-t mb-2" style={{ color: UI.dim }}>MARATHON</div>
-        <div className="grid grid-cols-3 gap-2">
-          <StatCell label="BEST" value={mar?.best ? mar.best.toLocaleString("en-US") : "–"} sub={mar?.at ? new Date(mar.at).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "no score yet"} color={GOLD} />
-          <StatCell label="LINES" value={mar?.lines ?? "–"} sub="in your best" />
-          <StatCell label="GAMES" value={mar?.games ?? 0} sub={profile.marathonOpen ? `run saved · ${profile.marathonOpen.score}` : "finished"} />
+  return (
+    <Popup title="ACCOUNT" onClose={onClose} wideW={1120}>
+      {wide ? (
+        // A computer: who you are, how you play, who you played; side by side.
+        <div className="tb-cols grid gap-6 pt-3 items-start" style={{ gridTemplateColumns: "1fr 1.4fr 1fr" }}>
+          <div className="min-w-0">{who}{rankCard}{ladder}<div className="mt-5">{signOut}</div></div>
+          <div className="min-w-0">{trend}{cells}{marathon}</div>
+          <div className="min-w-0">{recent}<div className="mt-4">{note}</div></div>
         </div>
-      </div>
-
-      <div className="mt-5 mb-2">
-        <div className="tb-t mb-2" style={{ color: UI.dim }}>RECENT MATCHES</div>
-        {st.recent.length === 0 ? (
-          <div className="rounded p-4 text-center tb-t" style={{ ...glass(UI.line), color: UI.dim }}>
-            No ranked matches yet.
-          </div>
-        ) : (
-          <div className="space-y-1">
-            {st.recent.map((m, i) => (
-              <div key={i} className="flex items-center gap-2.5 rounded px-3 py-2" style={{ ...glass(UI.line) }}>
-                <span className="tb-t w-4 shrink-0" style={{ color: m.drew ? UI.dim : m.won ? UI.good : UI.bad }}>
-                  {m.drew ? "D" : m.won ? "W" : "L"}
-                </span>
-                <span className="tb-t flex-1 truncate">{m.name}</span>
-                <span className="tb-t" style={{ color: UI.dim }}>{m.score[0]}–{m.score[1]}</span>
-                <span className="tb-t w-8 text-right" style={{ color: UI.dim }}>{fmtTime(m.seconds)}</span>
-                <span className="tb-t w-9 text-right" style={{ color: m.delta > 0 ? UI.good : UI.bad }}>
-                  {m.delta > 0 ? "+" : ""}{m.delta}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="tb-t pt-3 pb-2" style={{ color: UI.dim, ...RULE_ABOVE }}>
-        Rating is Glicko-2 and computed on the server — TR is your rating,
-        ± is how sure the system is about it. It narrows as you play.
-      </div>
-      {onLogout && (
-        <button onClick={onLogout} className="w-full rounded tb-t flex items-center justify-center gap-2 mt-2 mb-1"
-          style={{ height: 44, ...sk(UI.line), color: UI.dim }}>
-          <LogOut size={13} /> SIGN OUT
-        </button>
+      ) : (
+        <>
+          {who}{rankCard}{ladder}{trend}{cells}{marathon}{recent}{note}{signOut}
+        </>
       )}
     </Popup>
   );
@@ -3132,32 +3161,57 @@ function PixelRule({ count = 18 }) {
 const SINK_MS = 300;
 
 function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout, theme, setTheme }) {
-  const wideScreen = useWideScreen();
   const [modal, setShown] = useState(null);
+  // Where the menu is heading: set the moment a page is asked for, so the
+  // title starts gliding up while the buttons are still sinking.
+  const [pending, setPending] = useState(null);
   // While true, whatever is showing under the title is sinking out.
   const [leaving, setLeaving] = useState(false);
   const swap = useRef(null);
   const still = !theme.motion || (typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
   const setModal = useCallback((next) => {
     clearTimeout(swap.current);
+    setPending(next);
     if (still) { setShown(next); setLeaving(false); return; }
     setLeaving(true);
     swap.current = setTimeout(() => { setShown(next); setLeaving(false); }, SINK_MS);
   }, [still]);
   useEffect(() => () => clearTimeout(swap.current), []);
 
-  // Where the buttons start: the panels take over from there down.
-  const rootRef = useRef(null), slotRef = useRef(null);
+  // The menu sits centred. Opening a page lifts the title (and the slot
+  // under it) up near the top of the screen, so the page gets the room;
+  // closing glides it back. `lift` is how far, in screen pixels.
+  const rootRef = useRef(null), slotRef = useRef(null), liftRef = useRef(0);
+  const [lift, setLift] = useState(0);
+  const [base, setBase] = useState({ top: 0, slot: 0 });
   useLayoutEffect(() => {
-    const root = rootRef.current, slot = slotRef.current;
-    if (!root || !slot) return undefined;
-    const place = () => root.style.setProperty("--menu-top", `${Math.round(slot.getBoundingClientRect().top - root.getBoundingClientRect().top)}px`);
+    const root = rootRef.current, slot = slotRef.current, head = slot?.parentElement;
+    if (!root || !slot || !head) return undefined;
+    const place = () => {
+      const r = root.getBoundingClientRect();
+      // Measured as if not lifted (the lift is a transform, so it shows up in the rects).
+      const top = head.getBoundingClientRect().top - r.top + liftRef.current;
+      const slotTop = slot.getBoundingClientRect().top - r.top + liftRef.current;
+      setBase((b) => (Math.abs(b.top - top) < 1 && Math.abs(b.slot - slotTop) < 1 ? b : { top, slot: slotTop }));
+    };
     place();
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(place) : null;
     ro?.observe(root); ro?.observe(slot);
     window.addEventListener("resize", place);
     return () => { ro?.disconnect(); window.removeEventListener("resize", place); };
   }, []);
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    // Up to a little below the top edge (and the notch): 7% of the height, 18–90 px.
+    const target = Math.min(90, Math.max(18, root.clientHeight * 0.07));
+    const want = pending ? Math.max(0, Math.round(base.top - target)) : 0;
+    liftRef.current = want;
+    setLift(want);
+    // The page hangs from the lifted slot. While one sinks away it keeps its
+    // place, so only move the anchor once nothing is showing.
+    if (pending || !modal) root.style.setProperty("--menu-top", `${Math.round(base.slot - want)}px`);
+  }, [pending, base, modal]);
   const authed = useAuth() === "authed";
   const verified = !!profile?.emailVerified;
   const tr = profile?.rating ? Math.round(profile.rating.r) : null;
@@ -3167,17 +3221,19 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
   const notice = useNotice();
 
   return (
-    // On a computer the menu sits high, leaving the lower part of the screen for the panels.
-    <div ref={rootRef} className={`tb-screen tb-safe relative w-full flex items-center ${wideScreen ? "justify-start flex-col" : "justify-center"} px-5 font-mono overflow-hidden`}
-      style={{ color: UI.text, ...(wideScreen ? { paddingTop: "clamp(24px, 12vh, 150px)" } : null) }}>
+    <div ref={rootRef} className="tb-screen tb-safe relative w-full flex items-center justify-center px-5 font-mono overflow-hidden" style={{ color: UI.text }}>
       <AmbientField colors={colors} theme={theme} paused={false} />
       <div className="absolute inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse at 50% 46%, color-mix(in srgb, var(--tb-ground) 45%, transparent) 0%, color-mix(in srgb, var(--tb-ground) 20%, transparent) 50%, transparent 80%)" }} />
 
       {/* Water over the sky while a panel is open: soft drifting light, no dark in it. */}
       <div aria-hidden="true" className="tb-tide absolute inset-0 pointer-events-none" style={{ opacity: modal && !leaving ? 1 : 0 }} />
 
+      <div className="relative w-full flex justify-center" style={{
+        transform: lift ? `translateY(${-lift}px)` : "none",
+        transition: still ? "none" : "transform .75s cubic-bezier(.45,.05,.2,1)",
+      }}>
       <Scaled className="tb-calm relative w-full" style={{ maxWidth: 316 }}>
-        {/* The title never moves; only what's under it changes. */}
+        {/* The title glides up for a page and back down for the menu. */}
         <div className="text-center mb-7">
           <PixelLogo />
           <PixelRule />
@@ -3246,6 +3302,7 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
         </div>
         </div>
       </Scaled>
+      </div>
 
       <InlineCtx.Provider value={{ leaving }}>
       {(modal === "login" || modal === "signup") && (
