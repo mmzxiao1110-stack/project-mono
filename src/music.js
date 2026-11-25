@@ -4,10 +4,10 @@
  *   BUTTERFLY      the menu
  *   INITIAL WAVE, LULLABY, WATER LIGHT, WAVE EFFECT   in game
  *
- * Every song starts from the middle of its track, so you arrive inside the
- * music rather than at its beginning, and fades in and out slowly. When an
- * in-game song ends, the next one takes over (again from its middle); the
- * menu song comes round again from its middle.
+ * The in-game songs start from the middle of their tracks, so a match drops
+ * you inside the music; the menu song plays from its beginning. Everything
+ * fades in and out slowly. When an in-game song ends, the next one takes
+ * over (again from its middle); the menu song comes round again.
  *
  * Everything runs through one music bus: a volume, and a filter that muffles
  * the music under popups and opens it up in overtime.
@@ -15,7 +15,7 @@
 import { core, onAudioReady } from "./sfx.js";
 
 export const TRACKS = {
-  menu: { title: "BUTTERFLY", src: "/music/butterfly.mp3" },
+  menu: { title: "BUTTERFLY", src: "/music/butterfly.mp3", startAt: 0 }, // the menu song plays from its start
   wave: { title: "INITIAL WAVE", src: "/music/initial-wave.mp3" },
   lullaby: { title: "LULLABY", src: "/music/lullaby.mp3" },
   light: { title: "WATER LIGHT", src: "/music/water-light.mp3" },
@@ -82,7 +82,8 @@ function voice(name) {
   const start = () => {
     if (v.started) return;
     v.started = true;
-    if (Number.isFinite(audio.duration)) audio.currentTime = audio.duration * START_AT;
+    const at = TRACKS[name].startAt ?? START_AT;
+    if (at && Number.isFinite(audio.duration)) audio.currentTime = audio.duration * at;
     audio.play().then(() => {
       const now = c.currentTime;
       gain.gain.cancelScheduledValues(now);
