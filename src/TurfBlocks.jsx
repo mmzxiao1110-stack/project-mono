@@ -160,20 +160,10 @@ function tileShades(color) {
 // AI opponents, weakest first. The names are placeholders: replace each
 // string with the opponent's real name. Adding or removing entries changes
 // how many levels there are; the AI's strength scales to fit.
-const LEVELS = [
-  "1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
-  "11", "12", "13", "14", "15", "16", "17", "18", "19", "20",
-];
-const DEFAULT_LEVEL = 7;
+// AI strength 1–10 (10 plays at full strength; see aiPickAction).
+const LEVELS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
+const DEFAULT_LEVEL = 4;
 
-function levelBlurb(n) {
-  const t = (n - 1) / (LEVELS.length - 1);
-  if (t <= 0.15) return "Drops blocks almost anywhere they fit.";
-  if (t <= 0.35) return "Always grabs the biggest block available.";
-  if (t <= 0.55) return "Protects the open space it needs to grow.";
-  if (t <= 0.8) return "Pushes hard toward your half of the board.";
-  return "Expands, advances, and cuts off your room to build.";
-}
 
 const fmtTime = (s) => {
   if (!s) return "0m";
@@ -2932,6 +2922,7 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
    DIFFICULTY
    ============================================================ */
 function Difficulty({ onStart, onBack, colors }) {
+  const P = usePx();
   const [lv, setLv] = useState(DEFAULT_LEVEL);
   return (
     <div className="tb-screen tb-safe w-full flex items-center justify-center px-5 font-mono" style={{ color: UI.text }}>
@@ -2939,25 +2930,14 @@ function Difficulty({ onStart, onBack, colors }) {
         <button onClick={onBack} className="flex items-center gap-1 tb-t mb-6 py-2" style={{ color: UI.dim }}>
           <ChevronLeft size={13} /> MENU
         </button>
-        <div className="tb-t mb-3" style={{ color: UI.dim }}>OPPONENT STRENGTH</div>
-        <div className="grid grid-cols-5 gap-1.5 mb-4">
-          {LEVELS.map((nm, i) => {
-            const n = i + 1, on = lv === n;
-            return (
-              <button key={n} onClick={() => { setLv(n); }}
-                className="rounded flex items-center justify-center tb-t"
-                style={{
-                  height: 44,
-                  color: UI.text,
-                  ...(on ? skFill(colors.rival) : sk(UI.line)),
-                  opacity: on ? 1 : 0.45 + (n / LEVELS.length) * 0.5,
-                }}>{n}</button>
-            );
-          })}
+        <div className="flex items-baseline justify-between mb-3">
+          <span className="tb-t" style={{ color: UI.dim }}>AI</span>
+          <span className="tb-t tb-b tabular-nums" style={{ color: colors.rival, textShadow: `${P}px ${P}px 0 rgba(0,0,0,.45)` }}>{lv}</span>
         </div>
-        <div className="rounded p-3 mb-4" style={{ ...glass(UI.line), minHeight: 76 }}>
-          <div className="tb-t mb-1" style={{ color: colors.rival }}>{LEVELS[lv - 1]}</div>
-          <div className="tb-t" style={{ color: UI.dim }}>{levelBlurb(lv)}</div>
+        <input type="range" min={1} max={LEVELS.length} step={1} value={lv} onChange={(e) => setLv(Number(e.target.value))}
+          aria-label="AI strength" className="w-full mb-2" style={{ accentColor: colors.rival }} />
+        <div className="flex justify-between tb-t mb-6" style={{ color: UI.dim, opacity: 0.7 }}>
+          <span>1</span><span>{LEVELS.length}</span>
         </div>
         <button onClick={() => onStart(lv)} className="w-full rounded tb-t" style={{ height: 50, ...skFill(UI.text), color: UI.text }}>
           START MATCH
