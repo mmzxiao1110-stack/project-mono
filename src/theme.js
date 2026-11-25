@@ -18,7 +18,7 @@ export const PRESETS = {
     label: "AQUARIUM",
     ground: "#1B1A21", panel: "#2B2932", line: "#4A4656", cell: "#232129",
     text: "#F2E8D2", dim: "#ABA1CF",
-    you: "#B4A3EE", rival: "#EAD6A4", special: "#7CC7BF",
+    you: "#7CC7BF", rival: "#EAD6A4", special: "#B4A3EE",
   },
   dream: {
     label: "DREAM",
@@ -66,8 +66,8 @@ export const INKS = [
 
 /** How a claimed square is drawn. */
 export const STROKES = {
-  pixel: { label: "PIXEL" },
   flat: { label: "FLAT" },
+  pixel: { label: "PIXEL" },
   outline: { label: "OUTLINE" },
 };
 
@@ -77,7 +77,7 @@ export const GRID_GAPS = [1, 2, 3];
 export const defaultTheme = () => ({
   preset: "aquarium",
   ...stripLabel(PRESETS.aquarium),
-  stroke: "pixel",
+  stroke: "flat",
   gap: 1,
   colorblind: false,
   motion: true,
@@ -100,15 +100,16 @@ export function applyPreset(theme, key) {
 /** Any manual colour edit drops the preset label — it isn't that preset any more. */
 export const editTheme = (theme, patch) => ({ ...theme, ...patch, preset: "custom" });
 
-// v7: aquarium palette and glass board. Older saves start fresh on it.
-const KEY = "tb:theme:v7";
+// v8: flat blocks, teal for you and cream for your rival by default.
+// Older saves start fresh on it.
+const KEY = "tb:theme:v8";
 
 export function loadTheme() {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return defaultTheme();
     const t = { ...defaultTheme(), ...JSON.parse(raw) };
-    if (!STROKES[t.stroke]) t.stroke = "pixel";
+    if (!STROKES[t.stroke]) t.stroke = "flat";
     if (!GRID_GAPS.includes(t.gap)) t.gap = 1;
     return t;
   } catch {
