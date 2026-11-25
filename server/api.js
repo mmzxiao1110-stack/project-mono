@@ -5,6 +5,7 @@
  *   GET /api/leaderboard?page=1  ranked players by TR, 50 a page
  *   GET /api/search?q=name       up to 20 players whose name contains q
  *   GET /api/player/NAME         one player's public profile
+ *   GET /api/marathon?page=1     Marathon high scores, 50 a page
  *
  * Only public things go out: names, ratings, stats, recent results. Never an
  * email, an account id or anything about sign-in. Players who haven't
@@ -36,7 +37,9 @@ function ladder() {
   const ladderList = listed.filter(placed).sort((a, b) => tr(b) - tr(a) || (a.rating.rd - b.rating.rd));
   const pos = new Map(ladderList.map((p, i) => [p.playerId, i + 1]));
   const byName = new Map(listed.map((p) => [p.name.toLowerCase(), p]));
-  cache = { at: Date.now(), listed, ladder: ladderList, pos, byName };
+  const marathon = listed.filter((p) => p.marathon?.best > 0).sort((a, b) => b.marathon.best - a.marathon.best || (a.marathon.at - b.marathon.at));
+  const mpos = new Map(marathon.map((p, i) => [p.playerId, i + 1]));
+  cache = { at: Date.now(), listed, ladder: ladderList, pos, byName, marathon, mpos };
   return cache;
 }
 
@@ -53,6 +56,9 @@ function row(p, c) {
     wins: st.wins || 0,
   };
 }
+
+/** A row in the Marathon high scores. */
+const mrow = (p, c) => ({ name: p.name, position: c.mpos.get(p.playerId), best: p.marathon.best, lines: p.marathon.lines, at: p.marathon.at || null });
 
 /** Everything public about one player. */
 function card(p, c) {
@@ -74,6 +80,7 @@ function card(p, c) {
       name: m.name, won: !!m.won, drew: !!m.drew, delta: m.delta ?? 0, score: m.score || null, seconds: m.seconds || 0, at: m.at || null,
     })),
     joined: p.createdAt || null,
+    marathon: p.marathon?.best ? { best: p.marathon.best, lines: p.marathon.lines, games: p.marathon.games, at: p.marathon.at, position: c.mpos.get(p.playerId) || null } : null,
   };
 }
 
@@ -103,6 +110,7 @@ export function apiHandler(req, res) {
     reply(res, 200, {
       players: c.listed.length, ranked: c.ladder.length, online: onlineNow(),
       spread, top: c.ladder.slice(0, 5).map((p) => row(p, c)),
+      marathon: c.marathon.slice(0, 5).map((p) => mrow(p, c)),
     });
     return true;
   }
@@ -110,6 +118,12 @@ export function apiHandler(req, res) {
     const page = Math.max(1, Math.min(10_000, Number(url.searchParams.get("page")) || 1));
     const slice = c.ladder.slice((page - 1) * PAGE, page * PAGE);
     reply(res, 200, { page, pages: Math.max(1, Math.ceil(c.ladder.length / PAGE)), total: c.ladder.length, players: slice.map((p) => row(p, c)) });
+    return true;
+  }
+  if (parts[1] === "marathon") {
+    const page = Math.max(1, Math.min(10_000, Number(url.searchParams.get("page")) || 1));
+    const slice = c.marathon.slice((page - 1) * PAGE, page * PAGE);
+    reply(res, 200, { page, pages: Math.max(1, Math.ceil(c.marathon.length / PAGE)), total: c.marathon.length, players: slice.map((p) => mrow(p, c)) });
     return true;
   }
   if (parts[1] === "search") {

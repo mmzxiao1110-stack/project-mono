@@ -8,6 +8,7 @@ import {
 import { PlayerRecord } from "./site/terminal.jsx";
 import { apiGet } from "./site/api.js";
 import { ACCENTS } from "./site/colors.js";
+import { PixelWord } from "./site/kit.jsx";
 
 /* The rules live in one place and the server imports the same file. */
 import {
@@ -18,6 +19,10 @@ import {
   isCheckTurn, shrinkBoard,
 } from "../shared/engine.js";
 import { aiPickAction } from "../shared/ai.js";
+import {
+  SIZE as M_SIZE, PIECES as M_PIECES, newMarathon, newMarathonSeed, placePiece as mPlace, fits as mFits,
+  fitsAnywhere as mFitsAnywhere, levelOf as mLevelOf, encodeMoves, TUNING as M_TUNING,
+} from "../shared/marathon.js";
 import { encodeAction, encodeTurn } from "../shared/notation.js";
 import { REPLAY_VERSION, buildFrames, exportReplay, importReplay } from "../shared/replay.js";
 import { replays } from "./replays.js";
@@ -2940,30 +2945,15 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
           <div className="tb-t mt-2" style={{ color: UI.dim, opacity: 0.6 }}>{VERSION_LABEL}</div>
         </div>
 
-        <button
-          onClick={() => {
-            if (status !== "online") return;
-            if (!authed) return setModal("login");
-            if (!verified) return setModal("VERIFY");
-            onPick("MATCHMAKING");
-          }}
-          disabled={status !== "online"}
-          className="w-full rounded flex flex-col items-center justify-center gap-1 mb-2.5 disabled:opacity-40"
-          style={{ height: 98, ...glass(authed && verified && placed ? rank.color : UI.line) }}
-        >
-          <span className="tb-t" style={{ color: UI.dim }}>
-            {status !== "online" ? (status === "connecting" ? "CONNECTING…" : "SERVER OFFLINE")
-              : !authed ? "ACCOUNT REQUIRED"
-              : !verified ? "VERIFY YOUR EMAIL"
-              : placed ? `RANKED · ${rank.name} · ${tr}` : "RANKED · UNPLACED"}
-          </span>
-          <span className="tb-t" style={{ textDecoration: authed && verified ? "none" : "line-through", textDecorationThickness: 1 }}>
-            MULTIPLAYER
-          </span>
-          {status === "online" && online !== null && (
-            <span className="tb-t italic" style={{ color: UI.dim }}>
-              {online === 1 ? "just you online right now" : `${online} people online`}
-            </span>
+        {/* One big way in: PLAY opens the modes. */}
+        <button onClick={() => setModal("PLAY")}
+          className="w-full rounded flex flex-col items-center justify-center gap-2 mb-2.5"
+          style={{ height: 120, ...skFill("var(--tb-you)") }}>
+          <PixelWord text="PLAY" from="var(--tb-text)" to="var(--tb-you)" />
+          {status === "online" && online !== null ? (
+            <span className="tb-t" style={{ color: UI.dim }}>{online === 1 ? "just you online right now" : `${online} people online`}</span>
+          ) : (
+            <span className="tb-t" style={{ color: UI.dim }}>{status === "connecting" ? "connecting…" : "offline: marathon and turn based still work"}</span>
           )}
         </button>
 
@@ -2975,30 +2965,10 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
         )}
 
         <div className="flex gap-2.5 mb-2.5">
-          {/* Unranked: quick games against anyone, guests too; ratings don't move. */}
-          <button onClick={() => onPick("UNRANKED")} disabled={status !== "online"}
-            className="flex-1 rounded flex items-center justify-center disabled:opacity-40"
-            style={{ height: 44, ...glass(UI.line) }}>
-            <span className="tb-t">UNRANKED</span>
-          </button>
-          {/* Private 1v1 with a friend: a room code to share. Guests welcome. */}
-          <button onClick={() => onPick("PRIVATE")} disabled={status !== "online"}
-            className="flex-1 rounded flex items-center justify-center disabled:opacity-40"
-            style={{ height: 44, ...skFill(UI.text), color: UI.text }}>
-            <span className="tb-t">PRIVATE</span>
-          </button>
-        </div>
-
-        <div className="flex gap-2.5 mb-2.5">
           {/* Offline play takes the left half; T-TERMINAL, the player hub, the right. */}
-          <div className="flex-1 flex gap-2.5 min-w-0">
-            <button onClick={() => { onPick("DIFFICULTY"); }} aria-label="Single player" className="flex-1 rounded flex items-center justify-center min-w-0" style={{ height: 44, ...glass(UI.line) }}>
-              <span className="tb-t">SP</span>
-            </button>
-            <button onClick={() => { onPick("HOTSEAT"); }} aria-label="Take turns" className="flex-1 rounded flex items-center justify-center min-w-0" style={{ height: 44, ...glass(UI.line) }}>
-              <span className="tb-t text-center">TAKE<br />TURNS</span>
-            </button>
-          </div>
+          <button onClick={() => { onPick("DIFFICULTY"); }} aria-label="Single player" className="flex-1 rounded flex items-center justify-center min-w-0" style={{ height: 44, ...glass(UI.line) }}>
+            <span className="tb-t">SP</span>
+          </button>
           <a href="/terminal" className="flex-1 rounded flex items-center justify-center gap-2 no-underline"
             style={{ height: 44, ...skFill(ACCENTS.terminal), color: UI.text }}>
             <span style={{ color: ACCENTS.terminal, display: "flex" }}><TerminalIcon /></span>
@@ -3063,7 +3033,51 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
       )}
       {modal === "SETTINGS" && <SettingsModal name={name} rename={rename} status={status} theme={theme} setTheme={setTheme} onClose={() => setModal(null)} />}
       {modal === "STATS" && <StatsModal profile={profile} status={status} onClose={() => setModal(null)} />}
+      {modal === "PLAY" && (
+        <PlayModal status={status} authed={authed} verified={verified} placed={placed} rank={rank} tr={tr}
+          onClose={() => setModal(null)}
+          onPick={(t) => {
+            if (t === "MATCHMAKING") {
+              if (status !== "online") return;
+              if (!authed) return setModal("login");
+              if (!verified) return setModal("VERIFY");
+            }
+            setModal(null);
+            onPick(t);
+          }} />
+      )}
     </div>
+  );
+}
+
+/** PLAY: every way to play, online and off. */
+function PlayModal({ status, authed, verified, placed, rank, tr, onPick, onClose }) {
+  const online = status === "online";
+  const best = Math.max(Number(store.get("tb:marathonBest")) || 0, net.profile?.marathon?.best || 0);
+  const modes = [
+    { key: "MATCHMAKING", title: "RANKED", needs: true, tint: authed && verified && placed ? rank.color : "var(--tb-you)",
+      sub: !online ? "server offline" : !authed ? "account required" : !verified ? "verify your email first" : placed ? `${rank.name} · ${tr} TR` : "unplaced: 10 games to a rank" },
+    { key: "UNRANKED", title: "UNRANKED", needs: true, sub: "anyone, guests too · no rating" },
+    { key: "PRIVATE", title: "PRIVATE", needs: true, sub: "a room code for a friend" },
+    { key: "MARATHON", title: "MARATHON", tint: GOLD, sub: best ? `solo high score · best ${best.toLocaleString("en-US")}` : "solo high score · how far can you go?" },
+    { key: "TURNBASED", title: "TURN BASED", sub: "two players, one device · pass it between turns" },
+  ];
+  return (
+    <Popup title="PLAY" onClose={onClose} maxW={400}>
+      <div className="pt-4 pb-1 flex flex-col gap-2.5">
+        {modes.map((m) => {
+          const off = m.needs && !online;
+          return (
+            <button key={m.key} onClick={() => onPick(m.key)} disabled={off}
+              className="w-full text-left flex flex-col gap-1 px-3 disabled:opacity-40"
+              style={{ minHeight: 58, justifyContent: "center", ...(m.key === "MATCHMAKING" ? skFill(m.tint) : glass(m.tint ? `color-mix(in srgb, ${m.tint} 60%, transparent)` : UI.line)) }}>
+              <span className="tb-t" style={{ color: m.tint || UI.text }}>{m.title}</span>
+              <span className="tb-t" style={{ color: UI.dim }}>{m.sub}</span>
+            </button>
+          );
+        })}
+      </div>
+    </Popup>
   );
 }
 
@@ -3236,6 +3250,276 @@ function ForfeitButton({ onConfirm, ranked = false, disabled = false, compact = 
    LOCAL GAME — hotseat and solo. Client owns everything.
    ============================================================ */
 /* ============================================================
+   MARATHON — solo high-score mode (shared/marathon.js)
+   ============================================================ */
+const M_INKS = ["#7CC7BF", "#EAD6A4", "#B4A3EE", "#E88FB4", "#C18A5E", "#A3D98C", "#6FA8FF", "#F2B880"];
+// Board squares remember which piece made them: each piece has its colour.
+const M_INK = Object.fromEntries(M_PIECES.map((_, i) => [i, M_INKS[i % M_INKS.length]]));
+const localBest = { get: () => Number(store.get("tb:marathonBest")) || 0, set: (n) => store.set("tb:marathonBest", String(n)) };
+const cloneMarathon = (s) => ({ ...s, board: s.board.map((r) => r.slice()), hand: s.hand.slice(), bag: s.bag.slice() });
+
+/** A piece drawn small, for the tray (and, at full size, under your finger). */
+function MPiece({ id, cell, gap, ink, faint = false }) {
+  const p = M_PIECES[id];
+  return (
+    <div className="relative" style={{ width: p.w * cell + (p.w - 1) * gap, height: p.h * cell + (p.h - 1) * gap, opacity: faint ? 0.35 : 1 }}>
+      {p.cells.map(([r, c]) => (
+        <div key={`${r},${c}`} className="absolute" style={{ left: c * (cell + gap), top: r * (cell + gap) }}>
+          <Ink size={cell} color={ink} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MarathonGame({ theme, onExit }) {
+  useEffect(() => { sky.slow = true; return () => { sky.slow = false; }; }, []);
+  const P = usePx();
+  const compact = useCompact();
+  const [stageRef, stage] = useSize();
+  const boardRef = useRef(null);
+  // A seed from the server makes the score count on T-Terminal; offline, a local one.
+  const [game, setGame] = useState(null);           // { st, seed, official }
+  const [sel, setSel] = useState(null);             // hand slot picked up
+  const [ptr, setPtr] = useState(null);             // { x, y, touch, drag } while a piece is held
+  const [vanish, setVanish] = useState(null);       // cleared squares, animating
+  const [flash, setFlash] = useState(null);         // "+120 · COMBO ×3"
+  const [levelUp, setLevelUp] = useState(null);     // { level, key }: the LEVEL UP moment
+  const [ended, setEnded] = useState(null);         // { reason } once over
+  const [showEnd, setShowEnd] = useState(false);
+  const [result, setResult] = useState(null);       // the server's reply to our score
+  const movesRef = useRef([]);
+  const [best, setBest] = useState(() => Math.max(localBest.get(), net.profile?.marathon?.best || 0));
+
+  useEffect(() => {
+    let done = false;
+    const begin = (seed, official) => { if (done) return; done = true; setGame({ st: newMarathon(seed), seed, official }); };
+    const canPost = net.status === "online" && net.auth === "authed" && net.profile?.emailVerified;
+    if (!canPost) { begin(newMarathonSeed(), false); return; }
+    const off = net.on("marathonSeed", (seed) => begin(seed, true));
+    net.marathonStart();
+    const t = setTimeout(() => begin(newMarathonSeed(), false), 2500); // no answer: play offline
+    return () => { off(); clearTimeout(t); };
+  }, []);
+  useEffect(() => net.on("marathonResult", (m) => { setResult(m); if (m.best) setBest((b) => Math.max(b, m.best)); }), []);
+  useGameMusic({ choice: theme.track, over: !!ended, ot: false });
+
+  const st = game?.st;
+  const over = !!ended;
+
+  // Layout: the board as big as fits, the tray to its right (desktop) or under it (phone).
+  const g = Math.max(P, (theme.gap ?? 1) * P);
+  const trayCellArt = compact ? 4 : 5;
+  const slotArt = 5 * trayCellArt + 6;
+  const availW = stage.w - (compact ? 0 : (slotArt + 8) * P);
+  const availH = stage.h - (TITLE_H + 26) * P - (compact ? (slotArt + 10) * P : 0);
+  const cellArt = Math.max(6, Math.min(18, Math.floor(Math.min((availW - 6 * g) / M_SIZE, (availH - 6 * g) / M_SIZE) / P)));
+  const cell = cellArt * P;
+  const boardW = cell * M_SIZE + g * (M_SIZE - 1);
+
+  // Where the held piece would land: centred under the pointer (lifted above a finger).
+  const ghost = useMemo(() => {
+    if (!st || sel === null || !ptr || !ptr.rect) return null;
+    const rect = ptr.rect;
+    const scale = rect.width / boardW || 1;
+    const p = M_PIECES[st.hand[sel]];
+    const lift = ptr.touch ? 3 * cell * scale : 0;
+    const x = (ptr.x - rect.left) / scale, y = (ptr.y - lift - rect.top) / scale;
+    const c0 = Math.floor(x / (cell + g)) - Math.floor((p.w - 1) / 2), r0 = Math.floor(y / (cell + g)) - Math.floor((p.h - 1) / 2);
+    if (x < -cell * 2 || y < -cell * 2 || x > boardW + cell * 2 || y > boardW + cell * 2) return null;
+    return { r: r0, c: c0, ok: mFits(st.board, st.hand[sel], r0, c0), cells: p.cells.map(([dr, dc]) => [r0 + dr, c0 + dc]) };
+  }, [st, sel, ptr, cell, g, boardW]);
+
+  const finish = (reason, s) => {
+    setEnded({ reason });
+    setSel(null); setPtr(null);
+    if (s.score > localBest.get()) localBest.set(s.score);
+    setBest((b) => Math.max(b, s.score));
+    if (game.official) net.marathonEnd(game.seed, encodeMoves(movesRef.current));
+    setTimeout(() => setShowEnd(true), reason === "forfeit" ? 0 : 1100);
+  };
+
+  const place = (slot, r, c) => {
+    if (!st || over) return false;
+    const next = cloneMarathon(st);
+    if (!mPlace(next, slot, r, c)) { sfx.illegal(); return false; }
+    movesRef.current.push([slot, r, c]);
+    const L = next.last;
+    sfx.lockIn("place");
+    if (L.cleared.length) {
+      sfx.reveal({ lines: L.rows.length + L.cols.length });
+      setVanish({ cleared: L.cleared, key: next.moves });
+      setTimeout(() => setVanish((v) => (v && v.key === next.moves ? null : v)), 700);
+      setFlash({ text: `+${L.points}${L.combo > 1 ? ` · COMBO ×${L.combo}` : ""}`, key: next.moves });
+      setTimeout(() => setFlash((f) => (f && f.key === next.moves ? null : f)), 1300);
+    }
+    const lv = mLevelOf(next.lines);
+    if (lv > mLevelOf(st.lines)) {
+      setTimeout(() => sfx.levelUp(), 350);
+      setLevelUp({ level: lv, key: next.moves });
+      setTimeout(() => setLevelUp((u) => (u && u.key === next.moves ? null : u)), 1900);
+    }
+    setGame({ ...game, st: next });
+    setSel(null); setPtr(null);
+    if (next.over) finish("stuck", next);
+    return true;
+  };
+
+  // Holding a piece: follow the pointer anywhere on screen; let go over the board to place it.
+  useEffect(() => {
+    if (sel === null) return;
+    const move = (e) => {
+      const rect = boardRef.current?.getBoundingClientRect() || null;
+      setPtr((p) => ({ x: e.clientX, y: e.clientY, rect, touch: e.pointerType !== "mouse", drag: p?.drag || (p && Math.hypot(e.clientX - p.sx, e.clientY - p.sy) > 6), sx: p?.sx ?? e.clientX, sy: p?.sy ?? e.clientY }));
+    };
+    window.addEventListener("pointermove", move);
+    return () => window.removeEventListener("pointermove", move);
+  }, [sel]);
+  const release = () => {
+    if (sel === null || !ptr) return;
+    if (ptr.drag && ghost) { if (!place(sel, ghost.r, ghost.c)) { if (ptr.touch) { setSel(null); setPtr(null); } } }
+    else if (ptr.drag && ptr.touch) { setSel(null); setPtr(null); }
+  };
+  useEffect(() => {
+    if (sel === null) return;
+    window.addEventListener("pointerup", release);
+    return () => window.removeEventListener("pointerup", release);
+  });
+
+  // Keys: 1–3 pick a piece, Esc puts it down.
+  useEffect(() => {
+    const onKey = (e) => {
+      const t = e.target;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
+      if (["1", "2", "3"].includes(e.key) && st && !over) { const i = Number(e.key) - 1; setSel(i); sfx.pick(); setPtr((p) => p || null); }
+      if (e.key === "Escape") { setSel(null); setPtr(null); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [st, over]);
+
+  const pickUp = (slot, e) => {
+    if (!st || over) return;
+    e.preventDefault();
+    if (sel === slot && !(ptr && ptr.drag)) { setSel(null); setPtr(null); return; }
+    setSel(slot);
+    sfx.pick();
+    setPtr({ x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, rect: boardRef.current?.getBoundingClientRect() || null, touch: e.pointerType !== "mouse", drag: false });
+  };
+  const onBoardDown = (e) => {
+    if (sel === null || !ghost) return;
+    if (ptr && !ptr.drag) { e.preventDefault(); place(sel, ghost.r, ghost.c); }
+  };
+
+  if (showEnd && st) {
+    const newBest = st.score > 0 && st.score >= best && (!result || result.newBest !== false);
+    const note = [
+      `${st.lines} lines · level ${mLevelOf(st.lines)}`,
+      game.official ? (result ? (result.saved ? "saved to T-Terminal" : result.error || "not saved") : "saving…") : "log in to post high scores",
+    ].join(" · ");
+    return (
+      <EndScreen verdict={newBest ? "NEW BEST" : "GAME OVER"} ink={newBest ? GOLD : UI.text} note={note}
+        left={{ name: "SCORE", score: st.score, ink: "var(--tb-you)" }} right={{ name: "BEST", score: Math.max(best, st.score), ink: GOLD }}
+        actions={[{ label: "MENU", onClick: () => onExit() }, { label: "AGAIN", onClick: () => onExit("again"), main: true }]} />
+    );
+  }
+
+  const ghostKeys = new Set((ghost?.cells || []).map(([r, c]) => r * M_SIZE + c));
+  const hint = st && !over && sel === null ? (compact ? "drag a piece onto the board" : "pick a piece: click or drag, or press 1–3") : "";
+  const slotPx = slotArt * P;
+  const tray = st && (
+    <div className={`flex ${compact ? "flex-row" : "flex-col"} items-center`} style={{ gap: 3 * P, ...(compact ? { width: boardW, justifyContent: "space-between" } : { height: boardW }) }}>
+      <div className={`flex ${compact ? "flex-row" : "flex-col"}`} style={{ gap: 3 * P }}>
+        {st.hand.map((id, i) => {
+          const can = mFitsAnywhere(st.board, id);
+          const held = sel === i;
+          return (
+            <button key={i} aria-label={`Piece ${i + 1}${can ? "" : " (doesn't fit)"}`} onPointerDown={(e) => pickUp(i, e)}
+              className="relative flex items-center justify-center" style={{ width: slotPx, height: slotPx, touchAction: "none", ...glass(held ? UI.text : UI.line), opacity: over ? 0.5 : 1 }}>
+              {!(held && ptr?.drag) && <MPiece id={id} cell={trayCellArt * P} gap={P} ink={M_INK[id]} faint={!can} />}
+              {!compact && <span className="absolute tb-t" style={{ left: 2 * P, top: P, color: UI.dim, opacity: 0.6 }}>{i + 1}</span>}
+            </button>
+          );
+        })}
+      </div>
+      {!compact && <div className="flex-1" />}
+      <ForfeitButton compact={compact} disabled={over} onConfirm={() => { sfx.forfeit(); finish("forfeit", st); }} />
+    </div>
+  );
+
+  return (
+    <div className="tb-screen tb-safe w-full flex flex-col font-mono select-none" style={{ color: UI.text }}>
+      <div className="tb-col relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
+        <div ref={stageRef} className="flex-1 min-h-0 flex flex-col items-center">
+          <div style={{ flex: 1, minHeight: 4 * P }} />
+          <GameTitle mode="MARATHON" />
+          <div style={{ flex: 1, minHeight: 4 * P }} />
+          {st && (
+            <div className="flex flex-col items-center" style={{ gap: 3 * P }}>
+              {/* The high score on top, like the scores in a match. */}
+              <div className="flex items-end justify-between tb-t" style={{ width: compact ? boardW : boardW + (slotArt + 4) * P, gap: 3 * P }}>
+                <div className="flex flex-col"><span style={{ color: UI.dim }}>SCORE</span><span className="tb-b tabular-nums" style={{ color: "var(--tb-you)" }}>{st.score.toLocaleString("en-US")}</span></div>
+                <div className="flex flex-col items-center">
+                  <span style={{ color: UI.text }}>LEVEL {mLevelOf(st.lines)}{mLevelOf(st.lines) > 1 && <span style={{ color: GOLD }}> ×{(1 + M_TUNING.levelBonus * (mLevelOf(st.lines) - 1)).toFixed(1)}</span>}</span>
+                  {/* Always a near goal in view. */}
+                  <span className="tabular-nums" style={{ color: UI.dim }}>NEXT IN {M_TUNING.levelLines - (st.lines % M_TUNING.levelLines)} {M_TUNING.levelLines - (st.lines % M_TUNING.levelLines) === 1 ? "LINE" : "LINES"}</span>
+                </div>
+                <div className="flex flex-col items-end"><span style={{ color: UI.dim }}>BEST</span><span className="tb-b tabular-nums" style={{ color: GOLD }}>{Math.max(best, st.score).toLocaleString("en-US")}</span></div>
+              </div>
+              <div className={`flex ${compact ? "flex-col" : "flex-row"} items-start`} style={{ gap: 4 * P }}>
+                <div className="relative" style={{ width: boardW, height: boardW }}>
+                  <div ref={boardRef} onPointerDown={onBoardDown} style={{ display: "grid", gridTemplateColumns: `repeat(${M_SIZE}, ${cell}px)`, gap: g, touchAction: "none" }}>
+                    {st.board.map((row, r) => row.map((v, c) => {
+                      const k = r * M_SIZE + c, gh = ghostKeys.has(k);
+                      return (
+                        <div key={k} className={v !== null ? "tb-drop" : undefined} style={{ position: "relative", width: cell, height: cell, clipPath: Math.round(cell / P) >= 9 ? CLIP : CLIP1, ...(v === null ? GLASS : null) }}>
+                          {v !== null && <Ink size={cell} color={M_INK[v]} />}
+                          {gh && v === null && <div className="absolute inset-0" style={{ opacity: ghost.ok ? 0.55 : 0.35 }}><Ink size={cell} color={ghost.ok ? M_INK[st.hand[sel]] : UI.bad} stroke="ghost" /></div>}
+                        </div>
+                      );
+                    }))}
+                  </div>
+                  {vanish && <VanishLayer key={vanish.key} cleared={vanish.cleared} cell={cell} gap={g} ink={M_INK} />}
+                  {flash && (
+                    <div key={flash.key} className="absolute flex pointer-events-none tb-rise" style={{ left: 0, bottom: -11 * P, zIndex: 4 }}>
+                      <span className="tb-t tb-b" style={{ color: GOLD, textShadow: `${P}px ${P}px 0 rgba(0,0,0,.6)` }}>{flash.text}</span>
+                    </div>
+                  )}
+                  {levelUp && (
+                    // LEVEL UP: the board lights up and the new level drops in.
+                    <div key={levelUp.key} className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none tb-fade" style={{ zIndex: 5,
+                      background: "radial-gradient(closest-side, color-mix(in srgb, var(--tb-special) 30%, transparent), transparent)" }}>
+                      <div className="flex flex-col items-center tb-rise" style={{ gap: 2 * P, padding: `${5 * P}px ${7 * P}px`, clipPath: CLIP,
+                        background: "color-mix(in srgb, var(--tb-panel-solid) 88%, transparent)", boxShadow: `inset 0 0 0 ${P}px var(--tb-special)` }}>
+                        <PixelWord text="LEVEL UP" from="var(--tb-text)" to="var(--tb-special)" />
+                        <span className="tb-t" style={{ color: GOLD }}>LEVEL {levelUp.level} · CLEARS ×{(1 + M_TUNING.levelBonus * (levelUp.level - 1)).toFixed(1)}</span>
+                      </div>
+                    </div>
+                  )}
+                  {st.combo > 1 && !over && (
+                    <div className="absolute tb-t" style={{ right: 0, bottom: -11 * P, color: GOLD, opacity: 0.8 }}>STREAK ×{st.combo}</div>
+                  )}
+                </div>
+                {tray}
+              </div>
+              <BoardLine width={boardW} />
+              <div className="tb-t" style={{ color: UI.dim, opacity: 0.6, minHeight: 10 * P }}>{over ? "NO ROOM LEFT" : hint}</div>
+            </div>
+          )}
+          <div style={{ flex: 2, minHeight: 4 * P }} />
+        </div>
+      </div>
+      {/* The piece in hand follows the pointer while dragging. */}
+      {st && sel !== null && ptr?.drag && (
+        <div className="fixed pointer-events-none" style={{ left: ptr.x, top: ptr.y - (ptr.touch ? 3 * cell : 0), transform: "translate(-50%, -50%)", zIndex: 50, opacity: ghost?.ok ? 0.35 : 0.85 }}>
+          <MPiece id={st.hand[sel]} cell={cell} gap={g} ink={M_INK[st.hand[sel]]} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============================================================
    GAME SOUNDS — what the hands do (turn, slide, pick up, switch modes)
    and what the board does when a turn resolves.
    ============================================================ */
@@ -3287,6 +3571,8 @@ const lockKind = (raw) => (!raw || raw.type === "pass" ? "pass" : raw.type === "
 function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart }) {
   useEffect(() => { sky.slow = true; return () => { sky.slow = false; }; }, []);
   const solo = mode === "SOLO";
+  // TURN BASED is pass-and-play under the normal rules: both choose, then reveal.
+  const turnBased = mode === "TURNBASED";
   const INK = useMemo(() => ({ A: colors.you, B: colors.rival, S: colors.special }), [colors]);
 
   const [board, setBoard] = useState(initialBoard);
@@ -3532,7 +3818,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
       <div className="tb-col relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
         <div ref={stageRef} className="flex-1 min-h-0 flex flex-col items-center">
           <div style={{ flex: 1, minHeight: 4 * P }} />
-          <GameTitle mode={solo ? "AI" : "LAN"} />
+          <GameTitle mode={turnBased ? "TURN BASED" : solo ? "AI" : "LAN"} />
           <div style={{ flex: 2, minHeight: 4 * P }} />
           <div className="flex flex-col items-center" style={{ gap: 3 * P }}>
             {/* One forecast: both players are dealt the same pieces. It follows whoever is to move. */}
@@ -3979,7 +4265,7 @@ function EndSide({ name, score, ink, won }) {
 function EndScreen({ verdict, ink, note, left, right, special = 0, children, actions }) {
   const P = usePx();
   useEffect(() => {
-    const t = setTimeout(() => (verdict === "DRAW" ? sfx.draw() : verdict === "DEFEAT" ? sfx.lose() : sfx.win()), 150);
+    const t = setTimeout(() => (verdict === "DRAW" || verdict === "GAME OVER" ? sfx.draw() : verdict === "DEFEAT" ? sfx.lose() : sfx.win()), 150);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -4700,6 +4986,8 @@ export default function TurfBlocks() {
           else if (t === "PRIVATE") setScreen("PRIVATE");
           else if (t === "UNRANKED") setScreen("UNRANKED");
           else if (t === "REPLAYS") setScreen("REPLAYS");
+          else if (t === "MARATHON") { setSeed((s) => s + 1); setScreen("MARATHON"); }
+          else if (t === "TURNBASED") { setSeed((s) => s + 1); setScreen("TURNBASED"); }
           else { setSeed((s) => s + 1); setScreen("HOTSEAT"); }
         }}
         loadout={loadout} setLoadout={setLoadout}
@@ -4751,6 +5039,8 @@ export default function TurfBlocks() {
           else setScreen("MATCHMAKING");
         }} />
     );
+  else if (screen === "MARATHON")
+    view = <MarathonGame key={seed} theme={theme} onExit={(again) => (again ? setSeed((s) => s + 1) : setScreen("MENU"))} />;
   else
     view = (
       <LocalGame key={seed} mode={screen} aiLevel={aiLevel} loadout={loadout}

@@ -305,6 +305,11 @@ class Net {
     if (t) this.send({ t: "chat", text: t });
   }
 
+  /** Marathon: ask for a seed (the server checks the finished game against it). */
+  marathonStart() { this.send({ t: "marathonStart" }); }
+  /** Marathon: the finished game, as its moves (see shared/marathon.js encodeMoves). */
+  marathonEnd(seed, moves) { this.send({ t: "marathonEnd", seed, moves }); }
+
   forfeit() {
     this.send({ t: "forfeit" });
   }
@@ -440,6 +445,18 @@ class Net {
       case "searching":
         this.search = { band: m.band, elapsed: m.elapsed, queued: m.queued };
         this.emit("search", this.search);
+        break;
+
+      case "marathonSeed":
+        this.emit("marathonSeed", m.seed);
+        break;
+
+      case "marathonResult":
+        if (m.saved && this.profile) {
+          this.profile = { ...this.profile, marathon: { ...(this.profile.marathon || {}), best: Math.max(m.best || 0, this.profile.marathon?.best || 0) } };
+          this.emit("profile", this.profile);
+        }
+        this.emit("marathonResult", m);
         break;
 
       case "found":
