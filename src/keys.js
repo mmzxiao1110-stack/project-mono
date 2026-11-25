@@ -9,15 +9,15 @@
  */
 
 export const ACTIONS = [
-  { id: "slot1", label: "Place mode / pick up", def: "1" },
-  { id: "erase", label: "Delete mode", def: "2" },
-  { id: "pinmode", label: "Pin mode", def: "3" },
-  { id: "up", label: "Move up", def: "w" },
-  { id: "left", label: "Move left", def: "a" },
-  { id: "down", label: "Move down", def: "s" },
-  { id: "right", label: "Move right", def: "d" },
-  { id: "ccw", label: "Rotate left", def: "q" },
-  { id: "cw", label: "Rotate right", def: "e" },
+  { id: "slot1", label: "Place", def: "1" },
+  { id: "erase", label: "Delete", def: "2" },
+  { id: "pinmode", label: "Pin", def: "3" },
+  { id: "up", label: "Up", def: "w" },
+  { id: "left", label: "Left", def: "a" },
+  { id: "down", label: "Down", def: "s" },
+  { id: "right", label: "Right", def: "d" },
+  { id: "ccw", label: "Rotate L", def: "q" },
+  { id: "cw", label: "Rotate R", def: "e" },
   { id: "commit", label: "Lock in", def: " " },
   { id: "discard", label: "Pass", def: "x" },
 ];
