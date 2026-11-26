@@ -113,7 +113,7 @@ export const fits = (board, p) => cellsOf(p).every(([x, y]) => free(board, x, y)
 function spawn(st, id) {
   refill(st);
   const box = BOX[NAMES[id]];
-  st.cur = { id, rot: 0, x: box === 2 ? 4 : 3, y: TOP - 2 };
+  st.cur = { id, rot: 0, x: box === 2 ? 4 : 3, y: TOP - 3 };
   st.lastRot = false; st.lastKick = 0;
   if (!fits(st.board, st.cur)) { st.over = true; st.cur = null; }
 }

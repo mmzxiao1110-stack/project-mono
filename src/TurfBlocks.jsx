@@ -4779,7 +4779,7 @@ function SprintGame({ onExit, ultra = false }) {
    five next, SRS turns with 180, T-spins). See shared/zerog.js.
    ============================================================ */
 const zgBest = { get: () => Number(store.get("tb:zgBest")) || 0, set: (ms) => store.set("tb:zgBest", String(ms)) };
-const ZG_SHOW = Z_VISIBLE + 2; // the field and the two buffer rows the pieces spawn in
+const ZG_SHOW = Z_VISIBLE + 3; // the field and the three buffer rows above it (pieces spawn in them)
 
 /** A piece drawn on its own (hold and next), in its spawn state. */
 function ZPiece({ id, cell, gap, dim = false }) {
@@ -5032,17 +5032,17 @@ function ZeroGGame({ onExit }) {
 
   // The field: 10 wide, the 20 visible rows plus the 2 spawn rows above them.
   const g = P;
-  const clockH = 10 * P, countH = 10 * P; // the clock above the board, the line count under it
-  const availH = stage.h - (TITLE_H + 12) * P - clockH - countH - 12 * P;
+  const side = 2 * P; // the small gap between the board and the panels beside it
+  const availH = stage.h - (TITLE_H + 12) * P - 16 * P;
   const fitW = (stage.w - 24 * P - 9 * g) / 18.5; // the board plus both side columns must fit across
   const cell = Math.max(4 * P, Math.min(16 * P, Math.floor(Math.min((availH - (ZG_SHOW - 1) * g) / ZG_SHOW, fitW) / P) * P));
   const boardW = Z_W * cell + (Z_W - 1) * g;
   const boardH = ZG_SHOW * cell + (ZG_SHOW - 1) * g;
   const small = Math.max(2 * P, Math.floor(cell * 0.6 / P) * P);
-  const colW = Math.max(small * 4 + 8 * P, Math.round(cell * 4.2), 40 * P);
-  const sideTop = clockH + 2 * P + 2 * (cell + g); // the side columns start level with the field's top row
-  const sideH = boardH - 2 * (cell + g);
-  const top0 = Z_TOP - 2;
+  const colW = Math.max(small * 4 + 8 * P, Math.round(cell * 4.2), 46 * P);
+  const sideTop = 3 * (cell + g); // the side columns start level with the field's top row
+  const sideH = boardH - sideTop;
+  const top0 = Z_TOP - 3;
   const curCells = st.cur ? zCellsOf(st.cur) : [];
   const ghost = st.cur ? zCellsOf(zDropped(st.board, st.cur)) : [];
   const at = new Map();
@@ -5062,7 +5062,7 @@ function ZeroGGame({ onExit }) {
         <div style={{ flex: 1, minHeight: 2 * P }} />
         <div className="flex items-start">
           {/* Left: hold, flush against the board, then the stats and the last clear. */}
-          <div className="flex flex-col items-start tb-t" style={{ width: colW, gap: 4 * P, marginTop: sideTop }}>
+          <div className="flex flex-col items-start tb-t" style={{ width: colW, gap: 4 * P, marginTop: sideTop, height: sideH, marginRight: side }}>
             <div className="flex flex-col items-center w-full" style={{ gap: 2 * P, padding: 3 * P, ...glass(UI.line) }}>
               <span style={{ color: UI.dim }}>HOLD ({keyOf("hold")})</span>
               <div className="flex items-center justify-center" style={{ height: small * 2 + P + 2 * P }}>
@@ -5085,10 +5085,14 @@ function ZeroGGame({ onExit }) {
                 </div>
               )}
             </div>
+            {/* The clock and the lines, level with the board's floor. */}
+            <div className="flex flex-col items-start" style={{ marginTop: "auto", gap: P, paddingLeft: 3 * P }}>
+              <span className="tb-b tabular-nums">{Math.min(st.lines, Z_GOAL)} / {Z_GOAL}</span>
+              <ZgClock run={run} style={{ fontSize: "1.1em", color: "var(--tb-you)" }} />
+            </div>
           </div>
-          {/* The board, the clock above it, the line count under it. */}
+          {/* The board, with the line of light under it. */}
           <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
-            <div className="flex items-center" style={{ height: clockH }}><ZgClock run={run} style={{ fontSize: "1.4em", color: "var(--tb-you)" }} /></div>
             <div className="relative" style={{ width: boardW, height: boardH, padding: 0 }}>
               <div style={{ display: "grid", gridTemplateColumns: `repeat(${Z_W}, ${cell}px)`, gap: g }}>
                 {Array.from({ length: ZG_SHOW }, (_, i) => top0 + i).map((y) => st.board[y].map((v, x) => {
@@ -5107,19 +5111,17 @@ function ZeroGGame({ onExit }) {
                 <div key={`${r.flash.key}-${y}`} className="absolute pointer-events-none tb-zgflash" style={{ left: 0, width: boardW, top: (y - top0) * (cell + g), height: cell }} />
               ))}
               {!r.startAt && !r.result && (
-                <div className="absolute inset-x-0 flex justify-center pointer-events-none" style={{ top: 3 * (cell + g) }}>
+                <div className="absolute inset-x-0 flex justify-center pointer-events-none" style={{ top: 5 * (cell + g) }}>
                   <span className="tb-t" style={{ color: UI.text, padding: `${P}px ${3 * P}px`, background: "color-mix(in srgb, var(--tb-panel-solid) 80%, transparent)" }}>
                     NO GRAVITY · THE CLOCK STARTS ON YOUR FIRST MOVE
                   </span>
                 </div>
               )}
             </div>
-            <div className="flex items-center tb-t" style={{ height: countH }}>
-              <span className="tb-b tabular-nums">{Math.min(st.lines, Z_GOAL)} / {Z_GOAL}</span>
-            </div>
+            <BoardLine width={boardW} />
           </div>
           {/* Right: the next five, flush against the board; the buttons in a column at its bottom. */}
-          <div className="flex flex-col items-start tb-t" style={{ width: colW, marginTop: sideTop, height: sideH }}>
+          <div className="flex flex-col items-start tb-t" style={{ width: colW, marginTop: sideTop, height: sideH, marginLeft: side }}>
             <div aria-label="Next pieces" className="flex flex-col items-center w-full" style={{ gap: 3 * P, padding: 3 * P, ...glass(UI.line) }}>
               <span style={{ color: UI.dim }}>NEXT</span>
               {st.queue.slice(0, Z_NEXT).map((id, i) => (
