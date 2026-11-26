@@ -45,7 +45,8 @@ import { ACTIONS, getKeys, subscribeKeys, setKey, resetKeys, actionFor, keyLabel
 import { SPRINT_ACTIONS, getSprintKeys, subscribeSprintKeys, setSprintKey, resetSprintKeys, sprintActionFor, mouseName, mouseLabel } from "./sprintKeys.js";
 import {
   SIZE as S_SIZE, GOAL as S_GOAL, NAMES as S_NAMES, newSprint, newSprintSeed, shapeOf as sShapeOf, spawn as sSpawn, cellsOf as sCellsOf,
-  turn as sTurn, canPlace as sCanPlace, place as sPlace, at as sAt, ULTRA_MS as S_ULTRA_MS, comboMult as sComboMult,
+  turn as sTurn, canPlace as sCanPlace, place as sPlace, at as sAt,
+  isJunk as sIsJunk, junkLevel as sJunkLevel, noteClear as sNoteClear, spikeDue as sSpikeDue, receiveJunk as sReceiveJunk, SPIKE_MS as S_SPIKE_MS, ULTRA_MS as S_ULTRA_MS, comboMult as sComboMult,
 } from "../shared/sprint.js";
 
 /* ============================================================
@@ -3511,8 +3512,8 @@ function PlayModal({ status, authed, verified, placed, rank, tr, onPick, onClose
                     note={best ? `BEST ${best.toLocaleString("en-US")}` : null} onClick={() => onPick("MARATHON")} />
                 ) : (
                   <>
-                    <ModeCard big ink={MODE_INK.blitz} icon={Clock} title="BLITZ" h={100} delay={0} disabled
-                      sub="ranked 1v1 · coming soon" />
+                    <ModeCard big ink={MODE_INK.blitz} icon={Clock} title="BLITZ" h={100} delay={0}
+                      sub="1v1 vs bot · ranked online soon" onClick={() => onPick("BLITZ")} />
                     <div className="flex" style={{ gap: 8, width: "100%" }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <ModeCard ink={MODE_INK.sprint} icon={Clock} title="SPRINT" sub={sprintBest.get() ? `best ${fmtClock(sprintBest.get())}` : "40 lines"} h={58} delay={400} onClick={() => onPick("SPRINT")} />
@@ -4103,6 +4104,8 @@ function MarathonGame({ theme, onExit }) {
    SPRINT — 40 lines, keyboard only, against the clock
    ============================================================ */
 const S_INK = ["#6FD3E0", "#EAD6A4", "#B4A3EE", "#A3D98C", "#E88FB4", "#6FA8FF", "#F2B880"]; // I O T S Z J L
+// Tetromino colours plus junk (grey), indexed by any piece id (for the clear animation).
+const S_INK_ALL = new Proxy(S_INK, { get: (t, k) => (Number(k) >= 100 ? "#8E8A99" : t[k]) });
 const sprintBest = { get: () => Number(store.get("tb:sprintBest")) || 0, set: (ms) => store.set("tb:sprintBest", String(ms)) };
 const comboMultOf = (c) => { const m = sComboMult(c); return Number.isInteger(m) ? m : m.toFixed(1); };
 const ultraBest = { get: () => Number(store.get("tb:ultraBest")) || 0, set: (n) => store.set("tb:ultraBest", String(n)) };
@@ -4117,7 +4120,7 @@ function SPiece({ id, cell, gap }) {
   return (
     <div className="relative" style={{ width: s.w * cell + (s.w - 1) * gap, height: s.h * cell + (s.h - 1) * gap }}>
       {s.cells.map(([r, c]) => (
-        <div key={`${r},${c}`} className="absolute" style={{ left: c * (cell + gap), top: r * (cell + gap) }}><Ink size={cell} color={S_INK[id]} /></div>
+        <div key={`${r},${c}`} className="absolute" style={{ left: c * (cell + gap), top: r * (cell + gap) }}><Ink size={cell} color={S_INK_ALL[id]} /></div>
       ))}
     </div>
   );
@@ -4439,6 +4442,250 @@ function SprintGame({ onExit, ultra = false }) {
               <div className="flex" style={{ gap: 2 * P }}>
                 <button onClick={onExit} className="tb-t px-4" style={{ height: 38, ...sk(UI.line), color: UI.dim }}>MENU</button>
                 <button onClick={retry} className="tb-t px-4" style={{ height: 38, ...skFill(UI.text), color: UI.text }}>RETRY ({keyOf("retry")})</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   BLITZ 1v1 — two boards side by side; spikes send junk pieces
+   (against a bot for now; online comes with the server side)
+   ============================================================ */
+const JUNK_INK = "#8E8A99";
+const blitzName = (id) => (sIsJunk(id) ? `junk ${sJunkLevel(id)}` : S_NAMES[id]);
+const BLITZ_BOT_PPS = 1.6;
+const BLITZ_COUNTDOWN = 3;
+
+/** The bot's move: the placement that clears most, else the tidiest. */
+function blitzBotMove(st) {
+  const N = S_SIZE;
+  let best = null;
+  for (let slot = 0; slot < 2; slot++) for (let rot = 0; rot < 4; rot++) {
+    const sh = sShapeOf(st.hand[slot], rot);
+    for (let r = 0; r + sh.h <= N; r++) for (let c = 0; c + sh.w <= N; c++) {
+      if (!sh.cells.every(([dr, dc]) => st.board[r + dr][c + dc] === null)) continue;
+      const b = st.board.map((row) => row.map((v) => v !== null));
+      for (const [dr, dc] of sh.cells) b[r + dr][c + dc] = true;
+      let lines = 0, holes = 0;
+      for (let i = 0; i < N; i++) { if (b[i].every(Boolean)) lines++; if (b.every((row) => row[i])) lines++; }
+      for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) if (!b[i][j]) {
+        let k = 0; for (const [x, y] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const ii = i + x, jj = j + y; if (ii < 0 || jj < 0 || ii >= N || jj >= N || b[ii][jj]) k++; }
+        if (k >= 3) holes++;
+      }
+      const v = lines * 50 - holes * 3 + Math.random();
+      if (!best || v > best.v) best = { v, a: { slot, id: st.hand[slot], rot, cr: r + sh.h / 2, cc: c + sh.w / 2 } };
+    }
+  }
+  return best && best.a;
+}
+
+function BlitzGame({ onExit }) {
+  useGameMusic();
+  useEffect(() => { sky.slow = true; return () => { sky.slow = false; }; }, []);
+  const P = usePx();
+  const railD = useBubble(false);
+  const [stageRef, stage] = useSize();
+  const keys = useSyncExternalStore(subscribeSprintKeys, getSprintKeys);
+  const fresh = () => {
+    const me = newSprint(newSprintSeed(), Infinity), bot = newSprint(newSprintSeed(), Infinity);
+    return { me, bot, act: sSpawn(me, 0), startAt: performance.now() + BLITZ_COUNTDOWN * 1000, result: null, sent: { me: 0, bot: 0 }, flash: null, vanish: { me: null, bot: null }, tick: 0 };
+  };
+  const [g, setG] = useState(fresh);
+  const live = useRef(g);
+  const commit = useCallback((next) => { live.current = next; setG(next); }, []);
+  const [now, setNow] = useState(() => performance.now());
+  const boardEl = useRef(null);
+  const mouse = useRef(null);
+  const toMouse = useCallback((a) => {
+    const el = boardEl.current, m = mouse.current;
+    if (!a || !el || !m) return a;
+    const rect = el.getBoundingClientRect(), step = rect.width / S_SIZE;
+    return sAt(a, (m.y - rect.top) / step, (m.x - rect.left) / step);
+  }, []);
+  const playing = (c) => !c.result && performance.now() >= c.startAt;
+
+  // A placement on either side: clears feed that side's spike; a dead board loses.
+  const placeOn = useCallback((c, who, a) => {
+    const st = { ...c[who], board: c[who].board.map((row) => row.slice()), hand: c[who].hand.slice(), queue: c[who].queue.slice(), bag: c[who].bag.slice() };
+    if (!sPlace(st, a)) return null;
+    const t = performance.now();
+    sNoteClear(st, st.last.lines, t);
+    const vanish = st.last.lines ? { ...c.vanish, [who]: { cleared: st.last.cleared, key: `${who}${st.pieces}` } } : c.vanish;
+    let next = { ...c, [who]: st, vanish };
+    if (st.over) next = { ...next, result: who === "me" ? "lose" : "win" };
+    return next;
+  }, []);
+
+  // The clock: countdown, spikes landing, the bot playing.
+  useEffect(() => {
+    let raf, lastBot = 0;
+    const loop = () => {
+      raf = requestAnimationFrame(loop);
+      const t = performance.now();
+      setNow(t);
+      let c = live.current;
+      if (c.result || t < c.startAt) return;
+      let changed = false;
+      for (const [from, to] of [["me", "bot"], ["bot", "me"]]) {
+        const st = { ...c[from] };
+        const level = sSpikeDue(st, t);
+        if (level) {
+          const target = { ...c[to], queue: c[to].queue.slice() };
+          sReceiveJunk(target, level);
+          c = { ...c, [from]: st, [to]: target, sent: { ...c.sent, [from]: c.sent[from] + 1 }, flash: { who: to, level, key: t } };
+          changed = true;
+          sfx.reveal({ lines: Math.min(4, level) });
+        }
+      }
+      if (t - lastBot >= 1000 / BLITZ_BOT_PPS) {
+        lastBot = t;
+        const a = blitzBotMove(c.bot);
+        if (a) { const n = placeOn(c, "bot", a); if (n) { c = n; changed = true; } }
+        else { c = { ...c, result: "win" }; changed = true; }
+      }
+      if (changed) commit(c);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [commit, placeOn]);
+
+  const act = useCallback((a) => {
+    const c = live.current;
+    if (a === "retry") { commit(fresh()); return; }
+    if (a === "forfeit") { if (!c.result) commit({ ...c, result: "lose", forfeit: true }); return; }
+    if (!playing(c) || !c.act) return;
+    if (a === "swap") { commit({ ...c, act: toMouse(sSpawn(c.me, 1 - c.act.slot)) }); sfx.pick(); return; }
+    if (a === "cw" || a === "ccw" || a === "r180") { const d = a === "cw" ? 1 : a === "ccw" ? -1 : 2; commit({ ...c, act: toMouse(sTurn(c.act, d)) }); sfx.rotate(d === -1 ? -1 : 1); return; }
+    if (a === "place") {
+      if (!sCanPlace(c.me, c.act)) { sfx.illegal(); return; }
+      const n = placeOn(c, "me", c.act);
+      if (!n) return;
+      sfx.lockIn("place");
+      if (n.me.last.lines) sfx.reveal({ lines: n.me.last.lines });
+      commit({ ...n, act: n.result ? null : toMouse(sSpawn(n.me, c.act.slot)) });
+    }
+  }, [commit, placeOn, toMouse]);
+
+  useEffect(() => {
+    const onKey = (e) => { const a = sprintActionFor(e.key); if (!a) return; e.preventDefault(); if (!e.repeat) act(a); };
+    const onMove = (e) => {
+      mouse.current = { x: e.clientX, y: e.clientY };
+      const c = live.current;
+      if (!c.act || c.result) return;
+      const a = toMouse(c.act);
+      if (a.cr !== c.act.cr || a.cc !== c.act.cc) commit({ ...c, act: a });
+    };
+    const onDown = (e) => {
+      if (e.target instanceof Element && e.target.closest("button, a, input, [role=dialog]")) return;
+      const a = sprintActionFor(mouseName(e.button)) || (e.button === 0 ? "place" : null);
+      if (!a) return;
+      e.preventDefault(); act(a);
+    };
+    const noMenu = (e) => e.preventDefault();
+    window.addEventListener("keydown", onKey); window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerdown", onDown); window.addEventListener("contextmenu", noMenu);
+    return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerdown", onDown); window.removeEventListener("contextmenu", noMenu); };
+  }, [act, toMouse, commit]);
+
+  // Sizes: two boards and their side strips across the screen.
+  const gap = P;
+  const cell = Math.max(4 * P, Math.min(16 * P, Math.floor(Math.min((stage.w - 40 * P) / (2 * S_SIZE + 6.5), (stage.h - (TITLE_H + 30) * P - 80) / (S_SIZE + 2.6)) / P) * P));
+  const boardW = cell * S_SIZE + gap * (S_SIZE - 1);
+  const half = Math.max(P, Math.floor((cell + gap) / 2 / P) * P - P);
+  const count = Math.ceil((g.startAt - now) / 1000);
+  const inkOf = (id) => (sIsJunk(id) ? JUNK_INK : S_INK[id]);
+  const keyOf = (id) => bindLabel(keys[id]);
+
+  const panel = (who) => {
+    const st = g[who], mine = who === "me";
+    const a = mine ? g.act : null;
+    const cells = a ? sCellsOf(a) : [];
+    const on = new Set(cells.map(([r, c]) => r * S_SIZE + c));
+    const legal = a ? sCanPlace(st, a) : false;
+    const spiking = st.spike && now - st.lastClearAt <= S_SPIKE_MS;
+    return (
+      <div className="flex flex-col items-center" style={{ gap: 3 * P }}>
+        <div className="flex items-end justify-between tb-t" style={{ width: boardW + 2 * cell + 4 * P }}>
+          <span style={{ color: mine ? "var(--tb-you)" : "var(--tb-rival)" }}>{mine ? (net.profile?.name || "YOU") : "BOT"}</span>
+          <span style={{ color: spiking ? GOLD : UI.dim }}>{spiking ? `SPIKE ${st.spike}` : `SENT ${g.sent[who]}`}</span>
+        </div>
+        {/* Your two pieces over the board, the one in play lit up. */}
+        <div className="flex" style={{ gap: 3 * P, width: boardW + 2 * cell + 4 * P }}>
+          {st.hand.map((id, i) => (
+            <div key={i} role="img" aria-label={`${who} piece ${i + 1}: ${blitzName(id)}`} className="flex-1 flex items-center justify-center"
+              style={{ height: Math.round(cell * 1.4), ...glass(mine && a && a.slot === i ? UI.text : UI.line), opacity: mine && a && a.slot === i ? 1 : 0.7 }}>
+              <SPiece id={id} cell={sIsJunk(id) ? Math.max(P, Math.floor(half / 2 / P) * P) : half} gap={P} />
+            </div>
+          ))}
+        </div>
+        <div className="flex items-start" style={{ gap: 4 * P }}>
+          <div ref={mine ? boardEl : undefined} className="relative" style={{ width: boardW, height: boardW }}>
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(${S_SIZE}, ${cell}px)`, gap }}>
+              {st.board.map((row, ri) => row.map((v, ci) => {
+                const k = ri * S_SIZE + ci, hit = on.has(k);
+                return (
+                  <div key={k} data-v={mine ? v ?? "" : undefined} style={{ position: "relative", width: cell, height: cell, clipPath: Math.round(cell / P) >= 9 ? CLIP : CLIP1, ...(v === null ? GLASS : null) }}>
+                    {v !== null && <Ink size={cell} color={inkOf(v)} />}
+                    {hit && v === null && <div className="absolute inset-0" style={{ opacity: legal ? 0.9 : 0.6 }}><Ink size={cell} color={legal ? inkOf(a.id) : UI.bad} {...(legal ? null : { stroke: "ghost" })} /></div>}
+                    {hit && v !== null && (<><div className="absolute inset-0" style={{ background: "rgba(8,6,16,.62)" }} /><div className="absolute inset-0" style={{ opacity: 0.9 }}><Ink size={cell} color={UI.bad} stroke="ghost" /></div></>)}
+                  </div>
+                );
+              }))}
+            </div>
+            {g.vanish[who] && <VanishLayer key={g.vanish[who].key} cleared={g.vanish[who].cleared} cell={cell} gap={gap} ink={S_INK_ALL} />}
+            {g.flash && g.flash.who === who && now - g.flash.key < 900 && (
+              <div className="absolute inset-x-0 flex justify-center pointer-events-none tb-rise" style={{ top: 4 * P, zIndex: 4 }}>
+                <span className="tb-t tb-b" style={{ color: UI.bad, padding: `${P}px ${3 * P}px`, background: "color-mix(in srgb, var(--tb-panel-solid) 82%, transparent)", clipPath: CLIP1 }}>+ JUNK {g.flash.level}</span>
+              </div>
+            )}
+          </div>
+          {/* The forecast: colours; junk shows grey with its level. */}
+          <div className="flex flex-col items-center" style={{ gap: 2 * P, padding: `${2 * P}px`, width: cell + 4 * P, ...glass(UI.line) }}>
+            {st.queue.slice(0, 8).map((id, i) => (
+              <div key={i} role="img" aria-label={`${who} next ${i + 1}: ${blitzName(id)}`} className="relative flex items-center justify-center" style={{ opacity: i < 5 ? 1 - i * 0.08 : 0.9 }}>
+                <Ink size={Math.round(cell * 0.85)} color={inkOf(id)} />
+                {sIsJunk(id) && <span className="absolute tb-t tb-b" style={{ color: UI.text }}>{sJunkLevel(id)}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="tb-screen tb-safe w-full flex flex-col font-mono select-none" style={{ color: UI.text, cursor: "crosshair" }}>
+      <div ref={stageRef} className="relative flex-1 min-h-0 flex flex-col items-center w-full mx-auto px-3" style={{ maxWidth: 1600 }}>
+        <div style={{ flex: 1, minHeight: 2 * P }} />
+        <GameTitle mode="BLITZ" />
+        <div style={{ flex: 1, minHeight: 2 * P }} />
+        <div className="flex items-start" style={{ gap: 14 * P }}>
+          {panel("me")}
+          {panel("bot")}
+        </div>
+        <div className="flex items-center justify-end" style={{ width: "100%", maxWidth: 2 * (boardW + 2 * cell) + 40 * P, gap: 3 * P, marginTop: 3 * P }}>
+          <Bubble w={railD} h={railD} label={`Retry (${keyOf("retry")})`} onClick={() => act("retry")}><RefreshCw /></Bubble>
+          {g.result ? <Bubble w={railD} h={railD} label="Menu" onClick={onExit}><LogOut /></Bubble>
+            : <ForfeitButton onConfirm={() => act("forfeit")} />}
+        </div>
+        <div style={{ flex: 2, minHeight: 2 * P }} />
+        {count > 0 && !g.result && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ zIndex: 10 }}>
+            <div key={count} className="tb-dive"><PixelWord text={String(count)} from="var(--tb-text)" to="#F29A4A" scale={6} /></div>
+          </div>
+        )}
+        {g.result && (
+          <div className="absolute inset-0 flex items-center justify-center tb-fade" style={{ zIndex: 20, background: "repeating-conic-gradient(rgba(0,0,0,.5) 0 25%, rgba(0,0,0,.25) 0 50%) 0 0 / calc(var(--p) * 2) calc(var(--p) * 2)" }}>
+            <div className="tb-dive flex flex-col items-center" style={{ gap: 3 * P, padding: `${6 * P}px ${10 * P}px`, ...GLASS_PANE }}>
+              <PixelWord text={g.result === "win" ? "YOU WIN" : "YOU LOSE"} from="var(--tb-text)" to={g.result === "win" ? GOLD : UI.bad} />
+              <span className="tb-t" style={{ color: UI.dim }}>junk sent {g.sent.me} · received {g.sent.bot} · {g.me.pieces} pieces</span>
+              <div className="flex" style={{ gap: 2 * P }}>
+                <button onClick={onExit} className="tb-t px-4" style={{ height: 38, ...sk(UI.line), color: UI.dim }}>MENU</button>
+                <button onClick={() => act("retry")} className="tb-t px-4" style={{ height: 38, ...skFill(UI.text), color: UI.text }}>REMATCH ({keyOf("retry")})</button>
               </div>
             </div>
           </div>
@@ -5975,6 +6222,7 @@ export default function TurfBlocks() {
           else if (t === "MARATHON") { setSeed((s) => s + 1); setScreen("MARATHON"); }
           else if (t === "SPRINT") { setSeed((s) => s + 1); setScreen("SPRINT"); }
           else if (t === "ULTRA") { setSeed((s) => s + 1); setScreen("ULTRA"); }
+          else if (t === "BLITZ") { setSeed((s) => s + 1); setScreen("BLITZ"); }
           else if (t === "TURNBASED") { setSeed((s) => s + 1); setScreen("TURNBASED"); }
           else { setSeed((s) => s + 1); setScreen("HOTSEAT"); }
         }}
@@ -6027,6 +6275,8 @@ export default function TurfBlocks() {
           else setScreen("MATCHMAKING");
         }} />
     );
+  else if (screen === "BLITZ")
+    view = <BlitzGame key={`B${seed}`} onExit={() => setScreen("MENU")} />;
   else if (screen === "SPRINT" || screen === "ULTRA")
     view = <SprintGame key={`${screen}${seed}`} ultra={screen === "ULTRA"} onExit={() => setScreen("MENU")} />;
   else if (screen === "MARATHON")
