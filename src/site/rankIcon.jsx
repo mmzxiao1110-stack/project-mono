@@ -32,11 +32,11 @@ function build(name, color) {
   const letter = GLYPH[name[0]] || GLYPH["?"], mod = MOD[name[1]] || null;
   const cells = new Map(); // "x,y" -> band index
   if (name[0] === "X") {
-    // X is two straight slanted strokes, drawn as lines (slanting an upright X row by row goes wonky).
+    // X is two straight strokes crossing on a leaning axis, drawn as lines, so
+    // the notches at the top and bottom come to a sharp V.
     for (let y = 0; y < ROWS; y++) {
-      const off = (ROWS - 1 - y) / 3;                       // the italic lean
-      const a = (2 * y) / 3 + off, b = 6 - (2 * y) / 3 + off; // the two strokes' left edges
-      for (const e of [a, b]) for (let dx = 0; dx < 3; dx++) cells.set(`${Math.round(e) + dx + 1},${y + 2}`, y);
+      const off = (ROWS - 1 - y) / 3, d = (y - (ROWS - 1) / 2) * 1.1;
+      for (const e of [5 + d + off, 5 - d + off]) for (let dx = 0; dx < 3; dx++) cells.set(`${Math.round(e - 1) + dx + 1},${y + 2}`, y);
     }
   } else letter.forEach((row, y) => [...row].forEach((b, x) => { if (b === "1") cells.set(`${x + slant(y) + 1},${y + 2}`, y); }));
   // The mark as a superscript, top right, banded on its own.
