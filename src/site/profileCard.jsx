@@ -239,38 +239,34 @@ export function ProfileCard({ p, compact = false, href = null, onEdit = null }) 
         {geo && <CardSky card={card} world={geo.world} at={geo.body} />}
       </div>
       <div className="relative" style={{ padding: `${px(compact ? 7 : 10)} ${px(6)} ${px(compact ? 7 : 9)}` }}>
-        {/* Marathon: under the name, inside Blitz's width, a little longer than the other small cards. */}
-        <div className="absolute" style={{ left: "33%", width: "34%", top: px(compact ? 7 + 30 : 10 + 38) }}>
-          <Mini boxRef={m3} card={card} world={geo?.world} at={geo?.minis[3]} label="MARATHON"
-            big={p.marathon ? p.marathon.best.toLocaleString("en-US") : "—"} tag={p.marathon?.position} sub={p.marathon?.at ? timeAgo(p.marathon.at).toUpperCase() : "no game yet"} />
-        </div>
-        <div className="flex items-start" style={{ gap: px(5), minHeight: px(compact ? 80 : 92) }}>
-          {/* The picture: big, on the left, set a little lower, hanging just over the left edge. */}
-          <div style={{ marginLeft: px(-6 - SIDE), marginTop: px(6), boxShadow: `${px(2)} ${px(2)} 0 rgba(0,0,0,.35)`, flexShrink: 0 }}><Avatar name={p.name} size={px(av)} /></div>
-          <div className="flex flex-col min-w-0" style={{ gap: px(2), flex: "1 1 auto" }}>
-            <span className="truncate" style={{ ...BIG, fontSize: px(compact ? 15 : 22), textShadow: `${px(1)} ${px(1)} 0 rgba(0,0,0,.55)` }}>{p.name}</span>
+        {/* Two rows on the same three columns: the picture over Sprint, the name over Blitz,
+            joined / played and Marathon over Ultra; then Sprint, Blitz (biggest) and Ultra. */}
+        <div className="grid" style={{ margin: `0 ${px(compact ? 2 : 4)}`, gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr)", columnGap: px(compact ? 5 : 8), rowGap: px(compact ? 4 : 6), alignItems: "end" }}>
+          <div className="flex justify-center" style={{ gridColumn: 1, gridRow: 1 }}>
+            <div style={{ boxShadow: `${px(2)} ${px(2)} 0 rgba(0,0,0,.35)` }}><Avatar name={p.name} size={px(av)} /></div>
+          </div>
+          <div className="flex flex-col items-center text-center min-w-0" style={{ gridColumn: 2, gridRow: 1, gap: px(2), paddingBottom: px(2) }}>
+            <span className="truncate max-w-full" style={{ ...BIG, fontSize: px(compact ? 15 : 22), textShadow: `${px(1)} ${px(1)} 0 rgba(0,0,0,.55)` }}>{p.name}</span>
             <span className="tb-t flex items-center" style={{ gap: px(2), color: "rgba(255,255,255,.7)" }}>
               CONTROL {cRank ? <RankIcon rank={cRank} size={px(10)} /> : null}
               <span className="tb-b" style={{ color: "#fff" }}>{p.tr != null ? p.tr : p.placementLeft != null ? `${PLACEMENT_GAMES - p.placementLeft}/${PLACEMENT_GAMES} placement` : "—"}</span>
             </span>
           </div>
-          <div className="flex flex-col items-end text-right shrink-0" style={{ gap: px(3), minWidth: 0 }}>
-            <div className="flex flex-col items-end" style={{ gap: px(1), marginRight: onEdit ? px(12) : 0 }}>
+          <div className="flex flex-col min-w-0" style={{ gridColumn: 3, gridRow: 1, gap: px(3) }}>
+            <div className="flex flex-col items-end text-right" style={{ gap: px(1), marginRight: onEdit ? px(12) : 0 }}>
               {p.joined && <span className="tb-t" style={{ color: "rgba(255,255,255,.75)" }}>JOINED {timeAgo(p.joined).toUpperCase()}</span>}
               <span className="tb-t" style={{ color: "rgba(255,255,255,.75)" }}>{hours(p.played ?? p.seconds)} PLAYED</span>
             </div>
-
+            <Mini boxRef={m3} card={card} world={geo?.world} at={geo?.minis[3]} label="MARATHON"
+              big={p.marathon ? p.marathon.best.toLocaleString("en-US") : "—"} tag={p.marathon?.position} sub={p.marathon?.at ? timeAgo(p.marathon.at).toUpperCase() : "no game yet"} />
           </div>
-        </div>
-        {/* Sprint, Blitz (biggest) and Ultra across the bottom, offset like pieces on a board. */}
-        <div className="grid items-end" style={{ margin: `${px(compact ? 4 : 6)} ${px(compact ? 2 : 4)} 0`, gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr)", columnGap: px(compact ? 5 : 8) }}>
-          <Mini boxRef={m0} card={card} world={geo?.world} at={geo?.minis[0]} label="SPRINT · 40L" style={{ marginBottom: 0 }}
+          <Mini boxRef={m0} card={card} world={geo?.world} at={geo?.minis[0]} label="SPRINT · 40L" style={{ gridColumn: 1, gridRow: 2, alignSelf: "start", marginTop: px(compact ? 3 : 5) }}
             big={p.sprint ? clock(p.sprint.best) : "—"} tag={p.sprint?.position} sub={p.sprint?.at ? timeAgo(p.sprint.at).toUpperCase() : "no run yet"} />
-          <Mini boxRef={m1} card={card} world={geo?.world} at={geo?.minis[1]} label="BLITZ" size={compact ? 1 : 2} style={{ marginBottom: px(compact ? 2 : 4) }}
+          <Mini boxRef={m1} card={card} world={geo?.world} at={geo?.minis[1]} label="BLITZ" size={compact ? 1 : 2} style={{ gridColumn: 2, gridRow: 2, alignSelf: "start" }}
             lead={bz ? <RankIcon rank={bRank} size={px(compact ? 14 : 22)} /> : null}
             big={bz ? bz.rating : "—"} tag={bz?.position}
             sub={bz ? (bz.pps != null ? `${bz.apm?.toFixed(1)} APM · ${bz.pps.toFixed(2)} PPS · ${bz.vs?.toFixed(1)} VS` : `${bz.games} games`) : "unplayed"} />
-          <Mini boxRef={m2} card={card} world={geo?.world} at={geo?.minis[2]} label="ULTRA · 2 MIN" style={{ marginBottom: px(compact ? 1 : 2) }}
+          <Mini boxRef={m2} card={card} world={geo?.world} at={geo?.minis[2]} label="ULTRA · 2 MIN" style={{ gridColumn: 3, gridRow: 2, alignSelf: "start", marginTop: px(compact ? 2 : 3) }}
             big={p.ultra ? p.ultra.best.toLocaleString("en-US") : "—"} tag={p.ultra?.position} sub={p.ultra?.at ? timeAgo(p.ultra.at).toUpperCase() : "no run yet"} />
         </div>
       </div>

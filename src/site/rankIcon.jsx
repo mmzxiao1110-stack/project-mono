@@ -2,7 +2,7 @@
  * Ranks are their letters, made as flashy as a pixel can be: chunky italic
  * capitals (each row nudged right as it rises), banded like chrome (bright
  * top, a dark horizon line through the middle, a second shine below), lit
- * from the top left with a two-step shadow falling down and right, the + or −
+ * from the top left with a hard shadow falling down and right, the + or −
  * as a superscript. `size` is the height.
  */
 import { RANKS } from "../../shared/glicko.js";
@@ -17,14 +17,14 @@ const GLYPH = {
   X: [],
   "?": ["..11111..", ".1111111.", "111...111", "11.....11", ".......11", "......111", ".....111.", "....111..", "...111...", "...11....", "...11....", ".........", ".........", "...11....", "...11....", "........."],
 };
+// One pixel wider than drawn: the middle column doubled (X is drawn as lines, below).
+for (const k of Object.keys(GLYPH)) GLYPH[k] = GLYPH[k].map((r) => r.slice(0, 5) + r[4] + r.slice(5));
 const MOD = { "+": ["..11..", "..11..", "111111", "111111", "..11..", "..11.."], "-": ["1111", "1111"] };
 const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
 const mix = (a, b, t) => `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * t)).join(",")})`;
 const W = [255, 255, 255], K = [10, 8, 22];
 // Chrome bands, top to bottom (+ toward white, − toward the dark).
 const ROWS = 16;
-// Chrome bands down the letter: bright top, a dark horizon just past the middle, a second shine, a deep foot.
-const BANDS = Array.from({ length: ROWS }, (_, y) => { const t = y / (ROWS - 1); return t < 0.12 ? 0.72 : t < 0.25 ? 0.5 : t < 0.38 ? 0.28 : t < 0.5 ? 0.1 : t < 0.58 ? -0.2 : t < 0.72 ? 0.16 : t < 0.86 ? 0.02 : -0.22; });
 const slant = (y) => Math.floor((ROWS - 1 - y) / 4); // italic: a step right every four rows up
 
 const cache = new Map();
@@ -42,7 +42,7 @@ function build(name, color) {
     }
   } else letter.forEach((row, y) => [...row].forEach((b, x) => { if (b === "1") cells.set(`${x + slant(y) + 1},${y + 2}`, y); }));
   // The mark as a superscript, top right, banded on its own.
-  if (mod) mod.forEach((row, y) => [...row].forEach((b, x) => { if (b === "1") cells.set(`${x + 14},${y + (mod.length === 2 ? 4 : 2)}`, Math.min(ROWS - 1, Math.round((y / (mod.length - 1 || 1)) * (ROWS - 1) * 0.5))); }));
+  if (mod) mod.forEach((row, y) => [...row].forEach((b, x) => { if (b === "1") cells.set(`${x + 15},${y + (mod.length === 2 ? 4 : 2)}`, Math.min(ROWS - 1, Math.round((y / (mod.length - 1 || 1)) * (ROWS - 1) * 0.5))); }));
   const base = hexRgb(color);
   const has = (x, y) => cells.has(`${x},${y}`);
   const xs = [...cells.keys()].map((k) => Number(k.split(",")[0]));
@@ -52,15 +52,17 @@ function build(name, color) {
     const [x, y] = k.split(",").map(Number);
     if (!has(x + 1, y + 1)) out.px.push([x + 1, y + 1, mix(base, K, 0.7)]);
   }
-  for (const [k, band] of cells) {
+  // Cel shading, no white: a light top, the rank's own colour, a deep foot, the top edges a
+  // shade lighter, and one slanted stripe of shine across the letter.
+  const light = mix(base, W, 0.28), mid = `rgb(${base.join(",")})`, deep = mix(base, K, 0.32), rim = mix(base, W, 0.42);
+  for (const [k, row] of cells) {
     const [x, y] = k.split(",").map(Number);
-    const t = BANDS[band];
-    let c = t > 0 ? mix(base, W, t) : t < 0 ? mix(base, K, -t) : `rgb(${base.join(",")})`;
-    if (!has(x, y - 1)) c = mix(base, W, 0.6);                      // top edges catch the light
-    if (!has(x, y - 1) && !has(x - 1, y)) c = "rgb(255,255,255)";   // the brightest corner
+    let c = row < 5 ? light : row < 11 ? mid : deep;
+    const d = x + (y - 2) * 0.55; // along the lean
+    if (d > 5.2 && d < 6.9 && row >= 3 && row <= 12) c = rim;   // the shine stripe
+    if (!has(x, y - 1)) c = rim;                                  // top edges
     out.px.push([x, y, c]);
   }
-  // A sparkle over the top right of the letter; bigger on the top ranks.
   cache.set(key, out);
   return out;
 }
