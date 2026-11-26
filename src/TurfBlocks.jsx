@@ -51,7 +51,7 @@ import {
   SIZE as S_SIZE, GOAL as S_GOAL, NAMES as S_NAMES, newSprint, newSprintSeed, shapeOf as sShapeOf, spawn as sSpawn, cellsOf as sCellsOf,
   turn as sTurn, canPlace as sCanPlace, place as sPlace, at as sAt,
   recordMove as sRecordMove,
-  isJunk as sIsJunk, junkLevel as sJunkLevel, FORECAST as S_FORECAST, JUNK as S_JUNK, noteClear as sNoteClear, spikeDue as sSpikeDue, receiveJunk as sReceiveJunk, SPIKE_MS as S_SPIKE_MS, ULTRA_MS as S_ULTRA_MS, comboMult as sComboMult,
+  isJunk as sIsJunk, junkLevel as sJunkLevel, FORECAST as S_FORECAST, JUNK as S_JUNK, noteClear as sNoteClear, spikeOnMiss as sSpikeOnMiss, receiveJunk as sReceiveJunk, redCells as sRedCells, redFull as sRedFull, RED_FLASH_MS as S_RED_FLASH_MS, ULTRA_MS as S_ULTRA_MS, comboMult as sComboMult,
 } from "../shared/sprint.js";
 import { botMove, botPps, botDelay } from "../shared/blitzbot.js";
 
@@ -3167,12 +3167,12 @@ function HowToModal({ colors, loadout, onClose }) {
       title: "SPIKES",
       art: (
         <div className="tb-t grid gap-x-4 gap-y-1" style={{ gridTemplateColumns: "auto auto auto auto" }}>
-          {[["1 line", "1 · combo 2"], ["3 lines", "4"], ["2 lines", "2 · combo 3"], ["4 lines", "6"], ["T, 4 lines", "8"], ["all clear", "12"]].map(([a, b]) => (
+          {[["1 line", "0 · combo 1"], ["T S Z O · 4", "10"], ["2 lines", "2 · combo 3"], ["I J L · 4", "8"], ["3 lines", "4"], ["5 lines", "15"], ["all clear", "20"]].map(([a, b]) => (
             <React.Fragment key={a}><span style={{ color: UI.dim }}>{a}</span><span className="tb-b" style={{ color: GOLD }}>{b}</span></React.Fragment>
           ))}
         </div>
       ),
-      body: "Every clear attacks. Clears less than half a second apart chain into one spike and their levels add up — small clears hit harder inside a combo. Stop clearing for half a second and the spike is sent.",
+      body: "Every clear adds to your spike; clears in a row (a combo) keep adding, and the first piece that clears nothing sends the whole spike as one junk piece. A single on its own sends nothing; big clears send far more.",
     },
     {
       title: "JUNK",
@@ -3182,6 +3182,11 @@ function HowToModal({ colors, loadout, onClose }) {
         </div>
       ),
       body: "A spike lands in your opponent's forecast as one grey junk piece, sixth in line, and it grows with its level: one square, then a diagonal, a corner, a block, then ring after ring. They have to place it like any other piece. Send big ones; don't let them build.",
+    },
+    {
+      title: "RED SQUARES",
+      art: <MiniBoard w={8} h={4} size={10} ink={{ ...bInk, R: "#7A2330" }} cells={{ "0,0": "R", "0,1": "R", "0,2": "R", "0,3": "R", "0,4": "R", "0,5": "R", "0,6": "R", "0,7": "R", "1,7": "R", "1,6": "R", "2,0": "I", "2,1": "I", "2,2": "I", "2,3": "I" }} />,
+      body: "Every line your opponent clears lights one of your empty squares dark red, from the top left in a zigzag down. Placing a piece clears all your red. If red ever covers every empty square, it flashes for a second and you lose — so keep moving.",
     },
     {
       title: "RANKED AND PRACTICE",
@@ -3204,7 +3209,7 @@ function HowToModal({ colors, loadout, onClose }) {
         <span className="tb-t tb-b" style={{ color: GOLD }}>→ ×</span>
       </div>
     ),
-    body: "Clear again within half a second and it's a combo: the levels stack into one bigger spike. Two quick doubles send more than one triple. A T piece that clears four lines is worth 8 — build a slot for it. An all clear (an empty board) is 12 on its own.",
+    body: "Clear with piece after piece and it's a combo: every clear adds to one spike, and the first piece that clears nothing sends it. Inside a combo a single adds 1 and a double 3. Big clears are the heavy hitters, combo or not: four lines send 10 with a T, S, Z or O and 8 with an I, J or L; five lines send 15; an all clear 20.",
   }, {
     title: "DEFENCE",
     art: (
@@ -4767,6 +4772,8 @@ function SprintGame({ onExit, ultra = false }) {
    (against a bot for now; online comes with the server side)
    ============================================================ */
 const JUNK_INK = "#8E8A99";
+// A square lit red by the opponent's lines: dark red, a pixel lighter along the top.
+const RED_SQ = { background: "#5A1622", boxShadow: "inset 0 var(--p) 0 #7A2330, inset 0 calc(var(--p) * -1) 0 #3A0C14" };
 const blitzName = (id) => (sIsJunk(id) ? `junk ${sJunkLevel(id)}` : S_NAMES[id]);
 const BLITZ_COUNTDOWN = 3;
 const blitzSkill = { get: () => Math.max(1, Math.min(10, Number(store.get("tb:botSkill")) || 6)), set: (n) => store.set("tb:botSkill", String(n)) };
@@ -4792,7 +4799,7 @@ function BlitzGame({ onExit, online = false, colors, onRequeue }) {
   // `log` is the match in time order, for the replay (see server/blitz.js).
   const fresh = (seed, startIn) => {
     const me = newSprint(seed, Infinity), bot = newSprint(seed, Infinity);
-    return { seed, me, bot, act: sSpawn(me, 0), startAt: performance.now() + startIn, result: null, reason: null, sent: { me: 0, bot: 0 }, flash: null, vanish: { me: null, bot: null }, ratings: null, log: [] };
+    return { seed, me, bot, act: sSpawn(me, 0), startAt: performance.now() + startIn, result: null, red: { me: 0, bot: 0 }, redFlash: { me: 0, bot: 0 }, reason: null, sent: { me: 0, bot: 0 }, flash: null, vanish: { me: null, bot: null }, ratings: null, log: [] };
   };
   // vs bot: waits on the skill picker. Online: the match found in the lobby (its intro has played).
   const joining = () => { const b = net.blitz; return online && b && !b.over && b.seed != null ? b : null; };
@@ -4827,10 +4834,12 @@ function BlitzGame({ onExit, online = false, colors, onRequeue }) {
         const c = live.current; if (!c || !net.blitz) return;
         if (m.side === net.blitz.you) {
           // The server's copy of your board: taken when it has seen as many placements as you've made.
-          if (m.pieces === c.me.pieces) commit({ ...c, me: { ...c.me, board: m.board, hand: m.hand, queue: m.queue, lines: m.lines }, sent: { ...c.sent, me: m.sent } });
-          else commit({ ...c, sent: { ...c.sent, me: m.sent } });
+          const red = { ...c.red, me: m.red || 0 }, redFlash = { ...c.redFlash, me: m.flash ? 1 : 0 };
+          if (m.pieces === c.me.pieces) commit({ ...c, me: { ...c.me, board: m.board, hand: m.hand, queue: m.queue, lines: m.lines }, sent: { ...c.sent, me: m.sent }, red, redFlash });
+          else commit({ ...c, sent: { ...c.sent, me: m.sent }, red, redFlash });
         } else {
-          commit({ ...c, bot: { ...c.bot, board: m.board, hand: m.hand, queue: m.queue, pieces: m.pieces, lines: m.lines, spike: m.spike, lastClearAt: performance.now() }, sent: { ...c.sent, bot: m.sent } });
+          commit({ ...c, bot: { ...c.bot, board: m.board, hand: m.hand, queue: m.queue, pieces: m.pieces, lines: m.lines, spike: m.spike, lastClearAt: performance.now() }, sent: { ...c.sent, bot: m.sent },
+            red: { ...c.red, bot: m.red || 0 }, redFlash: { ...c.redFlash, bot: m.flash ? 1 : 0 } });
         }
       }),
       net.on("blitzJunk", (m) => {
@@ -4881,9 +4890,33 @@ function BlitzGame({ onExit, online = false, colors, onRequeue }) {
     if (!sPlace(st, a)) return null;
     if (!online) { const mv = sRecordMove(a, t - c.startAt); c.log.push([mv[0], who === "me" ? "A" : "B", mv[1], mv[2], mv[3], mv[4]]); }
     const L = st.last;
-    sNoteClear(st, L.lines, t, L.allClear, L.id);
+    const other = who === "me" ? "bot" : "me";
+    // A clear adds to the combo's spike; a piece that clears nothing ends the combo and
+    // (vs bot; online the server does it) sends the spike as one junk piece.
+    let junkTo = null;
+    if (L.lines) sNoteClear(st, L.lines, t, L.allClear, L.id);
+    else {
+      const level = sSpikeOnMiss(st);
+      if (level && !online) {
+        junkTo = { ...c[other], queue: c[other].queue.slice() };
+        sReceiveJunk(junkTo, level);
+        c.log.push([Math.max(0, Math.round(t - c.startAt)), other === "me" ? "A" : "B", -1, level]);
+        sfx.reveal({ lines: Math.min(4, level) });
+        junkTo.__level = level;
+      }
+    }
     const vanish = L.lines ? { ...c.vanish, [who]: { cleared: L.cleared, key: `${who}${st.pieces}` } } : c.vanish;
-    let next = { ...c, [who]: st, vanish };
+    // Placing clears your red; your lines light the opponent's (one square a line).
+    const red = { ...c.red, [who]: 0 }, redFlash = { ...c.redFlash, [who]: 0 };
+    if (L.lines) {
+      red[other] = (red[other] || 0) + L.lines;
+      if (!redFlash[other] && sRedFull(c[other].board, red[other])) redFlash[other] = t + S_RED_FLASH_MS;
+    }
+    let next = { ...c, [who]: st, vanish, red, redFlash };
+    if (junkTo) {
+      const level = junkTo.__level; delete junkTo.__level;
+      next = { ...next, [other]: junkTo, sent: { ...c.sent, [who]: c.sent[who] + 1 }, flash: { who: other, level, key: t } };
+    }
     // Online, the server decides the result.
     if (st.over && !online) next = { ...next, result: who === "me" ? "lose" : "win", reason: "stuck" };
     return next;
@@ -4899,22 +4932,16 @@ function BlitzGame({ onExit, online = false, colors, onRequeue }) {
       let c = live.current;
       if (!c || c.result || t < c.startAt) return;
       let changed = false;
-      if (online) {
-        // Your spike ends here as on the server (the server sends the junk).
-        if (c.me.spike && t - c.me.lastClearAt > S_SPIKE_MS) { const me = { ...c.me }; sSpikeDue(me, t); c = { ...c, me }; changed = true; }
-      } else {
-        for (const [from, to] of [["me", "bot"], ["bot", "me"]]) {
-          const st = { ...c[from] };
-          const level = sSpikeDue(st, t);
-          if (level) {
-            const target = { ...c[to], queue: c[to].queue.slice() };
-            sReceiveJunk(target, level);
-            c.log.push([Math.max(0, Math.round(t - c.startAt)), to === "me" ? "A" : "B", -1, level]);
-            c = { ...c, [from]: st, [to]: target, sent: { ...c.sent, [from]: c.sent[from] + 1 }, flash: { who: to, level, key: t } };
-            changed = true;
-            sfx.reveal({ lines: Math.min(4, level) });
-          }
+      if (!online) {
+        for (const who of ["me", "bot"]) {
+          const f = c.redFlash?.[who];
+          if (!f || t < f) continue;
+          if (sRedFull(c[who].board, c.red[who])) {
+            c.log.push([Math.max(0, Math.round(t - c.startAt)), who === "me" ? "A" : "B", -3]);
+            c = { ...c, result: who === "me" ? "lose" : "win", reason: "red" }; changed = true;
+          } else c = { ...c, redFlash: { ...c.redFlash, [who]: 0 } };
         }
+        if (c.result) { commit(c); return; }
         if (t >= nextBot) {
           const bot = { ...c.bot };
           const a = botMove(bot, blitzSkill.get());
@@ -4973,7 +5000,8 @@ function BlitzGame({ onExit, online = false, colors, onRequeue }) {
 
   if (showEnd && g?.result) {
     const won = g.result === "win";
-    const note = g.reason === "forfeit" ? (won ? "opponent forfeited" : "you forfeited")
+    const note = g.reason === "red" ? (won ? "their board went red" : "your board went red — keep placing")
+      : g.reason === "forfeit" ? (won ? "opponent forfeited" : "you forfeited")
       : g.reason === "left" ? (won ? "opponent left" : "you left")
       : won ? "their pieces ran out of room" : "your pieces ran out of room";
     return (
@@ -5011,7 +5039,8 @@ function BlitzGame({ onExit, online = false, colors, onRequeue }) {
     const cells = a ? sCellsOf(a) : [];
     const on = new Set(cells.map(([r, c]) => r * S_SIZE + c));
     const legal = a ? sCanPlace(st, a) : false;
-    const spiking = st.spike && now - st.lastClearAt <= S_SPIKE_MS + (mine ? 0 : 300);
+    const spiking = st.spike > 0; // a combo is open: its spike goes out when it ends
+    const reds = sRedCells(st.board, g.red?.[who] || 0), redFlash = !!g.redFlash?.[who];
     const handBox = (i) => {
       const id = st.hand[i], picked = mine && a && a.slot === i;
       return (
@@ -5050,7 +5079,8 @@ function BlitzGame({ onExit, online = false, colors, onRequeue }) {
               {st.board.map((row, ri) => row.map((v, ci) => {
                 const k = ri * S_SIZE + ci, hit = on.has(k);
                 return (
-                  <div key={k} data-v={mine ? v ?? "" : undefined} style={{ position: "relative", width: cell, height: cell, clipPath: Math.round(cell / P) >= 9 ? CLIP : CLIP1, ...(v === null ? GLASS : null) }}>
+                  <div key={k} data-v={mine ? v ?? "" : undefined} className={v === null && reds.has(k) && redFlash ? "tb-redflash" : undefined}
+                    style={{ position: "relative", width: cell, height: cell, clipPath: Math.round(cell / P) >= 9 ? CLIP : CLIP1, ...(v === null ? (reds.has(k) ? RED_SQ : GLASS) : null) }}>
                     {v !== null && <Ink size={cell} color={inkOf(v)} />}
                     {hit && v === null && <div className="absolute inset-0" style={{ opacity: legal ? 0.9 : 0.6 }}><Ink size={cell} color={legal ? inkOf(a.id) : UI.bad} {...(legal ? null : { stroke: "ghost" })} /></div>}
                     {hit && v !== null && (<><div className="absolute inset-0" style={{ background: "rgba(8,6,16,.62)" }} /><div className="absolute inset-0" style={{ opacity: 0.9 }}><Ink size={cell} color={UI.bad} stroke="ghost" /></div></>)}
@@ -6145,6 +6175,7 @@ function replayFrameSound(prev, f, blitz) {
   if (!prev || !f) return;
   if (blitz) {
     if (f.junk) { sfx.reveal({ lines: Math.min(4, f.junk) }); return; }
+    if (f.redOut) { sfx.forfeit(); return; }
     if (!f.side) return;
     sfx.lockIn("place");
     const lines = f[f.side].lines - prev[f.side].lines;
@@ -6185,11 +6216,12 @@ function paintReplay(ctx, rec, frames, time, look) {
     ctx.globalAlpha = 1;
   };
   const slot = (x, y, s) => { ctx.fillStyle = "rgba(255,255,255,.07)"; ctx.fillRect(x, y, s, s); ctx.fillStyle = "rgba(0,0,0,.18)"; ctx.fillRect(x, y + s - 2, s, 2); };
-  const board = (x, y, cell, gap, b, ink, just) => {
+  const board = (x, y, cell, gap, b, ink, just, reds = null) => {
     const n = b.length;
     for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
       const px = x + c * (cell + gap), py = y + r * (cell + gap), v = b[r][c];
-      if (v === null || v === undefined) slot(px, py, cell); else tile(px, py, cell, ink(v));
+      if ((v === null || v === undefined) && reds?.has(r * n + c)) { ctx.fillStyle = "#5A1622"; ctx.fillRect(px, py, cell, cell); ctx.fillStyle = "#7A2330"; ctx.fillRect(px, py, cell, 2); }
+      else if (v === null || v === undefined) slot(px, py, cell); else tile(px, py, cell, ink(v));
       if (just && just.has(r * n + c)) { ctx.strokeStyle = look.text; ctx.lineWidth = 3; ctx.strokeRect(px + 1.5, py + 1.5, cell - 3, cell - 3); }
     }
   };
@@ -6212,7 +6244,7 @@ function paintReplay(ctx, rec, frames, time, look) {
       const just = new Set(lp && time - lp.t < 400 ? lp.cells.map(([r, c]) => r * 8 + c) : []);
       text(`${rec.names?.[s] || s}${rec.winner === s && time >= frames[frames.length - 1].t ? " ★" : ""}`, ox, oy - 22, s === me ? look.you : look.rival, 20);
       if (f.side === s && f.junk && time - f.t < 700) text(`+ JUNK ${f.junk}`, ox + bw, oy - 22, look.bad, 20, "right");
-      board(ox, oy, cell, gap, b.board, (v) => (sIsJunk(v) ? JUNK_INK : S_INK[v]), just);
+      board(ox, oy, cell, gap, b.board, (v) => (sIsJunk(v) ? JUNK_INK : S_INK[v]), just, sRedCells(b.board, f.red?.[s] || 0));
       const sx = ox + bw + 16;
       b.hand.forEach((id, h) => { box(sx, oy + h * 76, 120, 68); piece(sx + 60, oy + h * 76 + 34, id, sIsJunk(id) ? 7 : 14, 2); });
       b.queue.forEach((id, q) => { tile(sx, oy + 160 + q * 40, 32, sIsJunk(id) ? JUNK_INK : S_INK[id], q ? 0.85 : 1); if (sIsJunk(id)) text(String(sJunkLevel(id)), sx + 16, oy + 176 + q * 40, look.text, 16, "center"); });
@@ -6482,9 +6514,9 @@ function SoloReplayViewer({ rec, onBack }) {
  */
 function blitzFrames(rec) {
   const st = { A: newSprint(rec.seed, Infinity), B: newSprint(rec.seed, Infinity) };
-  const sent = { A: 0, B: 0 };
+  const sent = { A: 0, B: 0 }, red = { A: 0, B: 0 };
   const snap = (t, side, cells, junk) => ({
-    t, side, cells, junk, sent: { ...sent },
+    t, side, cells, junk, sent: { ...sent }, red: { ...red },
     A: { board: st.A.board.map((r) => r.slice()), hand: st.A.hand.slice(), queue: st.A.queue.slice(0, S_FORECAST + 1), pieces: st.A.pieces, lines: st.A.lines },
     B: { board: st.B.board.map((r) => r.slice()), hand: st.B.hand.slice(), queue: st.B.queue.slice(0, S_FORECAST + 1), pieces: st.B.pieces, lines: st.B.lines },
   });
@@ -6493,6 +6525,7 @@ function blitzFrames(rec) {
     const [t, side, slot] = e;
     const s = st[side];
     if (!s) break;
+    if (slot === -3) { out.push({ ...snap(t, side, null), redOut: side }); continue; }
     if (slot === -1) {
       sReceiveJunk(s, e[3]);
       sent[side === "A" ? "B" : "A"]++;
@@ -6502,6 +6535,8 @@ function blitzFrames(rec) {
     const [, , , rot, r, c] = e;
     const sh = sShapeOf(s.hand[slot], rot);
     if (!sPlace(s, { slot, id: s.hand[slot], rot, cr: r + sh.h / 2, cc: c + sh.w / 2 })) break;
+    red[side] = 0;
+    if (s.last.lines) red[side === "A" ? "B" : "A"] += s.last.lines;
     out.push(snap(t, side, s.last.cells));
   }
   return out;
@@ -6527,6 +6562,7 @@ function BlitzReplayViewer({ rec, colors, onBack }) {
   const side = (s) => {
     const b = f[s], lp = lastOf(s);
     const just = new Set(lp && time - lp.t < 400 ? lp.cells.map(([r, c]) => r * S_SIZE + c) : []);
+    const reds = sRedCells(b.board, f.red?.[s] || 0), redFlash = f.redOut === s || sRedFull(b.board, f.red?.[s] || 0);
     const junkNow = f.side === s && f.junk && time - f.t < 700;
     const secs = Math.max(0.001, time / 1000);
     const bw = S_SIZE * (cell + gap) - gap;
@@ -6539,7 +6575,8 @@ function BlitzReplayViewer({ rec, colors, onBack }) {
         <div className="flex items-start" style={{ gap: 3 * P }}>
           <div style={{ display: "grid", gridTemplateColumns: `repeat(${S_SIZE}, ${cell}px)`, gap }}>
             {b.board.map((row, r) => row.map((v, c) => (
-              <div key={r * S_SIZE + c} style={{ width: cell, height: cell, position: "relative", clipPath: Math.round(cell / P) >= 9 ? CLIP : CLIP1, ...(v === null ? GLASS : null) }}>
+              <div key={r * S_SIZE + c} className={v === null && redFlash && reds.has(r * S_SIZE + c) ? "tb-redflash" : undefined}
+                style={{ width: cell, height: cell, position: "relative", clipPath: Math.round(cell / P) >= 9 ? CLIP : CLIP1, ...(v === null ? (reds.has(r * S_SIZE + c) ? RED_SQ : GLASS) : null) }}>
                 {v !== null && <Ink size={cell} color={inkOf(v)} />}
                 {just.has(r * S_SIZE + c) && <div className="absolute inset-0" style={{ boxShadow: `inset 0 0 0 ${P}px ${UI.text}` }} />}
               </div>
@@ -7089,6 +7126,9 @@ export default function TurfBlocks() {
         background-size: 160% 160%, 170% 170%, 150% 150%;
         animation: tbTide 16s ease-in-out infinite;
       }
+      /* A full red board: it flashes for its last second. */
+      @keyframes tbRedFlash { 0%,100% { filter: none } 50% { filter: brightness(2.2) saturate(1.4) } }
+      .tb-redflash { animation: tbRedFlash .25s steps(2) infinite; }
       /* The wave between the two players before a ranked match. */
       @keyframes tbVsWave { 0%,100% { transform: translate(0, 0) } 50% { transform: translate(-3px, 1.2px) } }
       .tb-vswave { animation: tbVsWave 1.6s ease-in-out infinite; }

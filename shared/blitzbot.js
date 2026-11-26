@@ -6,7 +6,7 @@
  * combos and big spikes (3s, 4s, T set-ups, all clears), and only takes a
  * lone single line to dig out when its board is in danger (downstacking).
  */
-import { SIZE, shapeOf, attackLevel, SPIKE_MS } from "./sprint.js";
+import { SIZE, shapeOf, attackLevel } from "./sprint.js";
 
 const N = SIZE, FULL = (1 << N) - 1;
 export const botPps = (skill) => 0.6 + (Math.max(1, Math.min(10, skill)) - 1) * (2.4 / 9);
@@ -89,7 +89,7 @@ export function botMove(st, skill = 10, rand = Math.random) {
   // Skill 10 is the strongest bot found by simulation (see botMoveOP below).
   if (skill >= 10) return botMoveOP(st, OP_W, rand);
   const smart = (Math.max(1, Math.min(10, skill)) - 1) / 9;
-  const chains = skill >= 6 || 1000 / botPps(skill) <= SPIKE_MS;
+  const chains = true; // combos are clears in a row: no speed needed to chain them
   const comboOpen = chains && !!st.botComboOpen;
   const b = st.board.map((row) => row.reduce((m, v, j) => (v !== null ? m | (1 << j) : m), 0));
   const danger = shape(b).filled > N * N * 0.55;

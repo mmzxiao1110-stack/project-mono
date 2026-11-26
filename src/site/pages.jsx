@@ -73,6 +73,13 @@ export function About() {
    NEWS — sea green
    ============================================================ */
 const NEWS = [
+  { v: "v0.38.0", date: "NOV 2026", title: "RED SQUARES, NO JUNK FOR SINGLES", items: [
+    "Blitz: every line your opponent clears lights one of your empty squares dark red, zigzagging down from the top left. Placing a piece clears your red; if it covers your whole board it flashes for a second and you lose. No more idling.",
+    "Blitz: a single line no longer sends junk (it still lights red).",
+    "Replays show the red squares too.",
+    "Big clears hit much harder: 4 lines send 10 with a T, S, Z or O and 8 with an I, J or L; 5 lines send 15; an all clear 20.",
+    "Combos are now just clears in a row: no timer. The first piece that clears nothing sends your whole spike. Inside a combo a single adds 1 and a double 3; big clears count the same in or out of one.",
+  ] },
   { v: "v0.37.0", date: "NOV 2026", title: "PROFILE CARDS, RANK LETTERS", items: [
     "Your profile card: your picture and big Blitz, Sprint and Ultra cards breaking out of a little dithered sky. Pick its sky, accent and pattern (waves, stars, bubbles or a grid) on your account page.",
     "Ranks are big pixel letters lit from the top left, with a hard shadow down and to the right, and their + and −.",
