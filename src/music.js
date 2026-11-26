@@ -1,13 +1,9 @@
 /**
- * Music — the game's soundtrack, streamed from /music/*.mp3.
+ * Music — one song, on the menu only, streamed from /music/menu.mp3.
  *
- *   BUTTERFLY      the menu
- *   INITIAL WAVE, LULLABY, WATER LIGHT, WAVE EFFECT   in game
- *
- * The in-game songs start from the middle of their tracks, so a match drops
- * you inside the music; the menu song plays from its beginning. Everything
- * fades in and out slowly. When an in-game song ends, the next one takes
- * over (again from its middle); the menu song comes round again.
+ * It starts from its beginning, fades in, and loops seamlessly (the track is
+ * written to loop). Leaving the menu fades it out: matches and Marathon are
+ * silent apart from the sound effects.
  *
  * Everything runs through one music bus: a volume, and a filter that muffles
  * the music under popups and opens it up in overtime.
@@ -15,18 +11,14 @@
 import { core, onAudioReady } from "./sfx.js";
 
 export const TRACKS = {
-  menu: { title: "BUTTERFLY", src: "/music/butterfly.mp3", startAt: 0 }, // the menu song plays from its start
-  wave: { title: "INITIAL WAVE", src: "/music/initial-wave.mp3" },
-  lullaby: { title: "LULLABY", src: "/music/lullaby.mp3" },
-  light: { title: "WATER LIGHT", src: "/music/water-light.mp3" },
-  effect: { title: "WAVE EFFECT", src: "/music/wave-effect.mp3" },
+  // From the top every time, looping on its own seam.
+  menu: { title: "MENU", src: "/music/menu.mp3", startAt: 0, loop: true },
 };
-export const GAME_TRACKS = ["wave", "lullaby", "light", "effect"];
 
-const FADE_IN = 7;     // seconds: a long, slow swell
-const FADE_OUT = 5;    // seconds, when the music changes or stops
-const TAIL = 6;        // seconds before a song's end that the next one starts fading in
-const START_AT = 0.5;  // where each song starts, as a share of its length
+const FADE_IN = 4;     // seconds
+const FADE_OUT = 3;    // seconds, when the music stops
+const TAIL = 6;        // seconds before a non-looping song's end that the next one starts fading in
+const START_AT = 0;    // where a song starts, as a share of its length
 
 let A = null;          // the audio core
 let busFilter = null, busVol = null;
@@ -67,13 +59,14 @@ function release(v, sec = FADE_OUT) {
   setTimeout(() => { try { v.audio.pause(); v.src.disconnect(); v.audio.removeAttribute("src"); v.audio.load(); } catch { /* gone */ } }, sec * 1000 + 100);
 }
 
-/** Starts `name` from the middle of its track, swelling in. */
+/** Starts `name` (from `startAt` of its length), swelling in. */
 function voice(name) {
   const c = A.ctx;
   const audio = new Audio();
   audio.crossOrigin = "anonymous";
   audio.preload = "auto";
   audio.src = TRACKS[name].src;
+  audio.loop = !!TRACKS[name].loop;
   const src = c.createMediaElementSource(audio);
   const gain = c.createGain();
   gain.gain.value = 0.0001;
@@ -90,7 +83,8 @@ function voice(name) {
       gain.gain.setValueAtTime(0.0001, now);
       gain.gain.linearRampToValueAtTime(1, now + FADE_IN);
     }).catch(() => { /* blocked until a tap: onAudioReady retries */ });
-    // Near the end, hand over to the next song.
+    // A looping song just goes round; anything else hands over near its end.
+    if (TRACKS[name].loop) return;
     v.timer = setInterval(() => {
       if (cur !== v || !Number.isFinite(audio.duration)) return;
       if (audio.duration - audio.currentTime < TAIL) next();
@@ -101,13 +95,12 @@ function voice(name) {
   return v;
 }
 
-/** The song after this one: the next in-game track, or the menu song again. */
+/** A non-looping song ending: it comes round again. */
 function next() {
   if (!cur) return;
-  const name = cur.name === "menu" ? "menu" : GAME_TRACKS[(GAME_TRACKS.indexOf(cur.name) + 1) % GAME_TRACKS.length];
+  const name = cur.name;
   release(cur, TAIL);
   cur = voice(name);
-  if (want !== "menu") want = name;
 }
 
 let waiting = null;
@@ -166,10 +159,3 @@ if (typeof document !== "undefined") {
   });
 }
 
-/** Which in-game song next: the one chosen, or each in turn. */
-let rotation = Math.floor(Math.random() * GAME_TRACKS.length);
-export function nextGameTrack(choice) {
-  if (GAME_TRACKS.includes(choice)) return choice;
-  rotation = (rotation + 1) % GAME_TRACKS.length;
-  return GAME_TRACKS[rotation];
-}
