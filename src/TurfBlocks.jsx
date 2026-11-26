@@ -4609,8 +4609,8 @@ function BlitzGame({ onExit, online = false, colors }) {
           const bot = { ...c.bot };
           const a = botMove(bot, blitzSkill.get());
           if (a) { const n = placeOn({ ...c, bot }, "bot", a); if (n) { c = n; changed = true; } }
-          nextBot = t + botDelay(bot, blitzSkill.get());
           else { c = { ...c, result: "win" }; changed = true; }
+          nextBot = t + botDelay(bot, blitzSkill.get());
         }
       }
       if (changed) commit(c);
