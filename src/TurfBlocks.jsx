@@ -3167,12 +3167,12 @@ function HowToModal({ colors, loadout, onClose }) {
       title: "SPIKES",
       art: (
         <div className="tb-t grid gap-x-4 gap-y-1" style={{ gridTemplateColumns: "auto auto auto auto" }}>
-          {[["1 line", "0"], ["3 lines", "4"], ["2 lines", "2 · combo 3"], ["4 lines", "6"], ["T, 4 lines", "8"], ["all clear", "12"]].map(([a, b]) => (
+          {[["1 line", "0"], ["4 lines", "10"], ["2 lines", "2 · combo 3"], ["T, 4 lines", "12"], ["3 lines", "4"], ["5 lines", "14"], ["all clear", "12"]].map(([a, b]) => (
             <React.Fragment key={a}><span style={{ color: UI.dim }}>{a}</span><span className="tb-b" style={{ color: GOLD }}>{b}</span></React.Fragment>
           ))}
         </div>
       ),
-      body: "Clears of two lines or more attack; a single sends nothing. Clears less than half a second apart chain into one spike and their levels add up. Stop clearing for half a second and the spike is sent.",
+      body: "Clears of two lines or more attack; a single sends nothing, and big clears send far more. Clears less than half a second apart chain into one spike and their levels add up. Stop clearing for half a second and the spike is sent.",
     },
     {
       title: "JUNK",
@@ -3209,7 +3209,7 @@ function HowToModal({ colors, loadout, onClose }) {
         <span className="tb-t tb-b" style={{ color: GOLD }}>→ ×</span>
       </div>
     ),
-    body: "Clear again within half a second and it's a combo: the levels stack into one bigger spike. Two quick doubles send more than one triple. A T piece that clears four lines is worth 8 — build a slot for it. An all clear (an empty board) is 12 on its own.",
+    body: "Clear again within half a second and it's a combo: the levels stack into one bigger spike (a single adds nothing, but keeps it going). Big clears are the heavy hitters: four lines send 10, a T that clears four sends 12, five lines send 14. An all clear is 12.",
   }, {
     title: "DEFENCE",
     art: (

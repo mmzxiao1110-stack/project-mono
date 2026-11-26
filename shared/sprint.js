@@ -273,8 +273,9 @@ export function attackLevel(lines, { allClear = false, piece = -1, combo = false
   if (lines === 1) return 0; // a single sends nothing (it still lights the opponent's red squares)
   if (lines === 2) return combo ? 3 : 2;
   if (lines === 3) return 4;
-  if (lines === 4) return piece === T_ID ? 8 : 6;
-  return 6 + 2 * (lines - 4);
+  // Big clears pay much more: they take a whole setup to build.
+  if (lines === 4) return piece === T_ID ? 12 : 10;
+  return 14 + 4 * (lines - 5);
 }
 export function noteClear(st, lines, now, allClear = false, piece = -1) {
   if (!lines) return;
