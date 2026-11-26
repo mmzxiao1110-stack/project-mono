@@ -687,6 +687,12 @@ async function handle(ws, msg) {
       break;
     }
 
+    case "towerCur": {
+      const active = inMatch.get(ws.userId);
+      if (active && active.match instanceof TowerMatch) active.match.cur(active.side, msg);
+      break;
+    }
+
     case "towerPlace": {
       const active = inMatch.get(ws.userId);
       if (!active || !(active.match instanceof TowerMatch)) return fail(ws, "Not in a TOWER match.");

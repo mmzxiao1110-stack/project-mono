@@ -7,13 +7,15 @@
  * To clients:
  *   towerStart   { id, you, seed, opponent: { name, rating }, countdown }
  *   towerGarbage { n, hole, i }   garbage coming at you (the i-th you've been sent)
- *   towerBoard   { side, board, incoming, pieces, lines, sent, fix }
+ *   towerBoard   { side, board, incoming, pieces, lines, sent, hold, queue, cur, last, fix }
  *                a side's board after a lock; `fix` is the server's copy of
- *                your own board when yours fell out of step
+ *                your own board when yours fell out of step; `last` is the lock's clear
+ *   towerCur     { side, cur, hold }   the opponent's piece as they move it
  *   towerEnd     { winner, you, reason, ratings?, sent }
  * From clients:
  *   towerPlace   { hold, id, rot, x, y, spin, kick, seen }   one lock; `seen`:
  *                how many towerGarbage messages it had when it locked
+ *   towerCur     { cur, hold }   where your piece is now (relayed to the opponent)
  */
 import { randomBytes } from "node:crypto";
 import { newGame, newSeed, applyLock, towerLock, incomingRows } from "../shared/zerog.js";
@@ -58,9 +60,11 @@ export class TowerMatch {
     this.hello("A"); this.hello("B");
   }
   board(side, fix = false) {
-    const st = this.st[side];
+    const st = this.st[side], L = st.last;
     return { t: "towerBoard", side, board: st.board, incoming: incomingRows(st), pieces: st.pieces, lines: st.lines, sent: this.sent[side], fix,
-      ...(fix ? { hold: st.hold, cur: st.cur, queue: st.queue, bags: st.bags, combo: st.combo, b2b: st.b2b, list: st.incoming } : null) };
+      hold: st.hold, queue: st.queue.slice(0, 5), cur: st.cur,
+      last: L ? { lines: L.lines, rows: L.rows, spin: L.spin, name: L.name, combo: L.combo, b2b: L.b2b, allClear: L.allClear, piece: L.piece?.id } : null,
+      ...(fix ? { queue: st.queue, bags: st.bags, combo: st.combo, b2b: st.b2b, list: st.incoming } : null) };
   }
   submit(side, msg) {
     if (this.over) return "The match is over.";
@@ -81,6 +85,14 @@ export class TowerMatch {
     this.send(this.other(side), view);
     if (st.over) this.end(side, "stuck");
     return null;
+  }
+  /** Your piece as you move it: shown to the opponent only (the server's copy changes on locks). */
+  cur(side, msg) {
+    if (this.over) return;
+    const c = msg.cur;
+    if (!c || ![c.id, c.rot, c.x, c.y].every(Number.isInteger)) return;
+    const hold = Number.isInteger(msg.hold) ? msg.hold : null;
+    this.send(this.other(side), { t: "towerCur", side, cur: { id: c.id, rot: c.rot & 3, x: c.x, y: c.y }, hold });
   }
   chat(side, text) {
     const msg = { t: "chat", side, name: this.seats[side].profile.name, text, at: Date.now() };

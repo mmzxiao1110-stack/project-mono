@@ -509,6 +509,9 @@ class Net {
       case "towerBoard":
         this.emit("towerBoard", m);
         break;
+      case "towerCur":
+        this.emit("towerCur", m);
+        break;
       case "towerEnd":
         if (this.tower) this.tower = { ...this.tower, over: true };
         if (m.ratings && this.profile) {

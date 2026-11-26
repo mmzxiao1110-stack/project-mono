@@ -4886,28 +4886,83 @@ function ZgClock({ run, style, left = 0 }) {
 }
 
 /**
- * The other side in a TOWER game, the same size as yours and level with it:
- * their field (20 rows), their name over it, what they've sent under it, and
- * the garbage coming at them as a red bar beside it.
+ * One side of a ZERO-G game, drawn the same way for you and your opponent:
+ * hold and stats on the left, the board (piece, ghost, garbage bar, clear
+ * flash) in the middle, the next five on the right. `L` is the layout
+ * measured by the game; `extra` goes under the board (the buttons).
  */
-function ZgOppBoard({ view, name, cell, g, top, font, side }) {
+function ZgField({ L, st, stats, pop, bottom, incoming = 0, flash = null, overlay = null, buttons = null, name = null, nameInk = "var(--tb-you)", holdKey = null }) {
   const P = usePx();
-  const rows = view ? view.board.slice(Z_TOP) : Array.from({ length: Z_VISIBLE }, () => Array(Z_W).fill(null));
-  const w = Z_W * cell + (Z_W - 1) * g, h = Z_VISIBLE * cell + (Z_VISIBLE - 1) * g;
-  const inc = Math.min(Z_VISIBLE, view?.incoming || 0);
+  const { cell, g, side, font, pad, boxW, colW, sideTop, sideH, boardW, boardH, top0 } = L;
+  const land = st.cur ? zDropped(st.board, st.cur) : null;
+  const landed = !!land && land.y === st.cur.y;
+  const at = new Set(land ? zCellsOf(land).map(([x, y]) => y * Z_W + x) : []);
+  const flashRows = flash ? flash.rows : [];
   return (
-    <div className="relative tb-t" style={{ marginTop: top, marginLeft: 8 * P, fontSize: font, lineHeight: 1.25 }}>
-      <span className="absolute tb-b" style={{ bottom: "100%", left: 0, marginBottom: 2 * P, color: "var(--tb-rival)", maxWidth: w, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
-      <div className="relative" style={{ width: w, height: h }}>
-        <div style={{ display: "grid", gridTemplateColumns: `repeat(${Z_W}, ${cell}px)`, gap: g }}>
-          {rows.map((row, y) => row.map((v, x) => (
-            <div key={y * Z_W + x} style={{ width: cell, height: cell, ...(v === null ? GLASS : null) }}>{v !== null && <Ink size={cell} color={zInk(v)} />}</div>
-          )))}
+    <div className="flex items-start">
+      {/* Left: hold, then the stats, the last clear, and the clock at the bottom. */}
+      <div className="flex flex-col items-end text-right tb-t" style={{ fontSize: font, lineHeight: 1.25, width: colW, gap: 4 * P, marginTop: sideTop, height: sideH, marginRight: side }}>
+        <div className="flex flex-col items-center" style={{ width: boxW, gap: 2 * P, padding: pad, ...glass(UI.line) }}>
+          <span style={{ color: UI.dim }}>HOLD{holdKey ? ` (${holdKey})` : ""}</span>
+          <div className="flex items-center justify-center" style={{ height: 2 * cell + g }}>
+            {st.hold != null && <ZPiece id={st.hold} cell={cell} gap={g} />}
+          </div>
         </div>
-        {inc > 0 && <div className="absolute pointer-events-none" style={{ left: -side - P, width: side + P, bottom: 0, height: inc * (cell + g) - g, background: "#E0506A", boxShadow: "0 0 8px rgba(224,80,106,.6)" }} />}
+        <div className="flex flex-col items-end" style={{ gap: 3 * P, marginTop: 2 * P }}>{stats}</div>
+        <div className="flex flex-col items-end" style={{ gap: P, minHeight: 14 * P, marginTop: 2 * P }}>
+          {pop && (
+            <div key={pop.key} className="flex flex-col items-end tb-rise" style={{ gap: P }}>
+              {pop.b2b > 0 && <span className="tb-b" style={{ color: GOLD }}>B2B ×{pop.b2b}</span>}
+              {pop.name && <span className="tb-b" style={{ color: pop.name.includes("-SPIN") ? S_INK[pop.piece] : pop.name === "QUAD" ? S_INK[0] : UI.text, fontSize: "1.2em" }}>{pop.name}</span>}
+              {pop.combo >= 1 && <span className="tb-b" style={{ color: nameInk }}>{pop.combo} COMBO</span>}
+              {pop.allClear && <span className="tb-b" style={{ color: GOLD, fontSize: "1.2em" }}>ALL CLEAR</span>}
+            </div>
+          )}
+        </div>
+        <div className="flex flex-col items-end" style={{ marginTop: "auto", gap: P, whiteSpace: "nowrap" }}>{bottom}</div>
       </div>
-      <BoardLine width={w} />
-      <div style={{ color: UI.dim, marginTop: 2 * P }}>{view?.sent || 0} SENT · {view?.lines || 0} LINES</div>
+      {/* The board, the line of light under it, and (in a versus game) whose it is. */}
+      <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
+        <div className="relative" style={{ width: boardW, height: boardH }}>
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${Z_W}, ${cell}px)`, gap: g }}>
+            {Array.from({ length: ZG_SHOW }, (_, i) => top0 + i).map((y) => st.board[y].map((v, x) => {
+              const k = y * Z_W + x, mark = at.has(k), buffer = y < Z_TOP;
+              return (
+                <div key={k} style={{ position: "relative", width: cell, height: cell, ...(v === null && !buffer ? GLASS : null) }}>
+                  {v !== null && <Ink size={cell} color={zInk(v)} />}
+                  {v === null && mark && <div className="absolute inset-0" style={{ opacity: landed ? 1 : 0.4 }}><Ink size={cell} color={S_INK[st.cur.id]} /></div>}
+                </div>
+              );
+            }))}
+          </div>
+          {/* The piece itself, wherever it floats (above the board too, without taking room from it). */}
+          {st.cur && !landed && zCellsOf(st.cur).map(([x, y]) => (
+            <div key={`p${x},${y}`} className="absolute pointer-events-none" style={{ left: x * (cell + g), top: (y - top0) * (cell + g) }}><Ink size={cell} color={S_INK[st.cur.id]} /></div>
+          ))}
+          {flashRows.filter((y) => y >= top0).map((y) => (
+            <div key={`${flash.key}-${y}`} className="absolute pointer-events-none tb-zgflash" style={{ left: 0, width: boardW, top: (y - top0) * (cell + g), height: cell }} />
+          ))}
+          {/* Garbage on its way: a red bar in the gap left of the board, a square per row. */}
+          {incoming > 0 && (
+            <div className="absolute pointer-events-none" style={{ left: -side - P, width: side + P, bottom: 0, height: Math.min(Z_VISIBLE, incoming) * (cell + g) - g, background: "#E0506A", boxShadow: "0 0 8px rgba(224,80,106,.6)" }} />
+          )}
+          {overlay}
+        </div>
+        <BoardLine width={boardW} />
+        {name && <div className="tb-t tb-b" style={{ width: boardW, textAlign: "center", fontSize: font, color: nameInk, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{name}</div>}
+      </div>
+      {/* Right: the next five; the buttons (yours only) in a column under them. */}
+      <div className="flex flex-col items-start tb-t" style={{ fontSize: font, lineHeight: 1.25, width: colW, marginTop: sideTop, height: sideH, marginLeft: side }}>
+        <div aria-label="Next pieces" className="flex flex-col items-center" style={{ width: boxW, flex: 1, minHeight: 0, justifyContent: "space-between", gap: 2 * P, padding: pad, ...glass(UI.line) }}>
+          <span style={{ color: UI.dim }}>NEXT</span>
+          {(st.queue || []).slice(0, Z_NEXT).map((id, i) => (
+            <div key={i} role="img" aria-label={`Next ${i + 1}: ${Z_NAMES[id]}`} className="flex items-center justify-center" style={{ height: 2 * cell + g, opacity: i ? 0.8 : 1 }}>
+              <ZPiece id={id} cell={cell} gap={g} />
+            </div>
+          ))}
+        </div>
+        {buttons && <div className="flex flex-col items-start" style={{ marginTop: 3 * P, gap: 3 * P, flexShrink: 0 }}>{buttons}</div>}
+      </div>
     </div>
   );
 }
@@ -4927,6 +4982,14 @@ function freshZg(mode, seed = undefined, goAt = 0) {
   const versus = mode === "tower" || mode === "towerbot";
   const opp = mode === "towerbot" ? { st: Object.assign(zNewGame(st.seed, Infinity), { incoming: [] }), given: 0 } : mode === "tower" ? { view: null } : null;
   return { mode, st, startAt: 0, endAt: 0, result: null, newBest: false, flash: null, pop: null, score: 0, holds: 0, seen: 0, sent: 0, given: 0, opp, goAt: versus ? goAt : 0, ratings: null };
+}
+
+/** Shows a clear on the opponent's side: its name, combo and back-to-back, and the rows flashing. */
+function oppClear(o, L, key) {
+  o.pop = { name: L.name, piece: L.piece?.id ?? L.piece, combo: L.combo, b2b: L.b2b, allClear: L.allClear, key };
+  o.flash = L.rows?.length ? { rows: L.rows, key } : null;
+  setTimeout(() => { if (o.flash?.key === key) o.flash = null; }, 200);
+  setTimeout(() => { if (o.pop?.key === key) o.pop = null; }, 1400);
 }
 
 /**
@@ -5118,6 +5181,7 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
         if (!L) { finish("won"); return; }
         const atk = zTowerLock(o.st, L);
         o.sent = (o.sent || 0) + atk;
+        if (L.lines || L.spin) oppClear(o, L, o.st.pieces);
         if (atk > 0) { r.st.incoming.push({ n: atk, hole: Math.floor(Math.random() * Z_W), i: r.seen++ }); sfx.zgLand(); }
         if (o.st.over) { finish("won"); return; }
         bump();
@@ -5127,6 +5191,18 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
     next();
     return () => clearTimeout(t);
   }, [mode, skill, finish, bump, r.goAt]);
+
+  // TOWER online: your piece as you move it, so your opponent sees it (at most 10 times a second: the server allows 20 messages a second in all).
+  useEffect(() => {
+    if (!online) return undefined;
+    let last = "";
+    const h = setInterval(() => {
+      const c = run.current.st.cur;
+      const key = c ? `${c.id},${c.rot},${c.x},${c.y},${run.current.st.hold}` : "";
+      if (key && key !== last) { last = key; net.send({ t: "towerCur", cur: c, hold: run.current.st.hold }); }
+    }, 100);
+    return () => clearInterval(h);
+  }, [online]);
 
   // TOWER online: garbage, the opponent's board, corrections, the result.
   useEffect(() => {
@@ -5140,7 +5216,17 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
           if (m.fix) { r.st = zSyncTo(r.st.seed, m); r.holds = 0; r.toppedOut = false; bump(); }
           return;
         }
-        r.opp = { view: { board: m.board, incoming: m.incoming, lines: m.lines, sent: m.sent, pieces: m.pieces } };
+        const prev = r.opp?.view || {};
+        const view = { board: m.board, incoming: m.incoming, lines: m.lines, sent: m.sent, pieces: m.pieces, hold: m.hold ?? null, queue: m.queue || [], cur: m.cur || null, pop: prev.pop, flash: prev.flash };
+        if (m.last && (m.last.lines || m.last.spin)) oppClear(view, m.last, m.pieces);
+        r.opp = { view };
+        bump();
+        setTimeout(bump, 220); setTimeout(bump, 1450); // let the flash and the clear's name fade
+      }),
+      net.on("towerCur", (m) => {
+        const r = run.current, v = r.opp?.view;
+        if (!v || m.side === net.tower?.you) return;
+        r.opp = { view: { ...v, cur: m.cur, hold: m.hold ?? v.hold } };
         bump();
       }),
       net.on("towerEnd", (m) => { const r = run.current; r.ratings = m.ratings ? m.ratings[m.you] : null; r.oppName = net.tower?.opponent?.name; r.sentBy = m.sent; r.toppedOut = false; r.result = null; finish(m.winner === m.you ? "won" : "lost"); }),
@@ -5174,7 +5260,10 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
   const keyOf = (id) => (keys[id] === " " ? "SPACE" : bindLabel(keys[id]));
   const railD = useBubble(false);
 
-  const oppSt = r.opp?.st || null, oppView = oppSt ? { board: oppSt.board, incoming: zIncoming(oppSt), sent: r.opp.sent || 0, lines: oppSt.lines } : r.opp?.view;
+  const oppSt = r.opp?.st || null;
+  const oppView = oppSt
+    ? { board: oppSt.board, cur: oppSt.cur, hold: oppSt.hold, queue: oppSt.queue, incoming: zIncoming(oppSt), sent: r.opp.sent || 0, lines: oppSt.lines, pieces: oppSt.pieces, pop: r.opp.pop, flash: r.opp.flash }
+    : r.opp?.view;
   const oppName = mode === "towerbot" ? `BOT ${skill}` : (net.tower?.opponent?.name || "OPPONENT");
   if (showEnd && r.result && versus) {
     const won = r.result === "won";
@@ -5217,9 +5306,9 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
   const g = P;
   const side = 2 * P; // the small gap between the board and the panels beside it
   const availH = stage.h - 24 * P; // the whole height (one row more is kept free above the board for the floating piece)
-  const fitW = (stage.w - 24 * P - 9 * g) / (versus ? 31 : 19); // the board, both side columns (and in a versus game the opponent's board) must fit across
+  const fitW = (stage.w - 24 * P - 9 * g) / (versus ? 40 : 19); // the board, both side columns (and in a versus game the opponent's board) must fit across
   // In a versus game the two boards sit side by side, so each is a little smaller.
-  const cell = Math.max(4 * P, Math.min(40 * P, Math.floor(Math.min((availH - ZG_SHOW * g) / (ZG_SHOW + 1) * (versus ? 0.86 : 1), fitW) / P) * P));
+  const cell = Math.max(4 * P, Math.min(40 * P, Math.floor(Math.min((availH - ZG_SHOW * g) / (ZG_SHOW + 1) * (versus ? 0.9 : 1), fitW) / P) * P));
   // Text and buttons grow with the board.
   const zoom = Math.max(1, cell / (8 * P));
   const font = Math.round(8 * P * Math.min(zoom, 1.6));
@@ -5233,122 +5322,75 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
   const sideTop = 2 * (cell + g); // the side columns start level with the field's top row
   const sideH = boardH - sideTop;
   const top0 = Z_TOP - 2;
-  // The piece where it floats, and its ghost where it will land (solid once the piece rests there).
-  const land = st.cur ? zDropped(st.board, st.cur) : null;
-  const landed = !!land && land.y === st.cur.y;
-  const at = new Set(land ? zCellsOf(land).map(([x, y]) => y * Z_W + x) : []);
-  const flashRows = new Set(r.flash ? r.flash.rows : []);
-  const stat = (label, value, ink = UI.text) => (
-    <div className="flex flex-col items-end" style={{ gap: P }}><span style={{ color: UI.dim }}>{label}</span><span className="tb-b tabular-nums" style={{ color: ink }}>{value}</span></div>
+  const L = { cell, g, side, font, pad, boxW, colW, sideTop, sideH, boardW, boardH, top0 };
+  // In a versus game each stat is one line (label and value), so two sides' worth fit.
+  const stat = (label, value, ink = UI.text) => (versus
+    ? <div key={label} className="flex items-baseline justify-end" style={{ gap: 3 * P, whiteSpace: "nowrap" }}><span style={{ color: UI.dim }}>{label}</span><span className="tb-b tabular-nums" style={{ color: ink }}>{value}</span></div>
+    : <div key={label} className="flex flex-col items-end" style={{ gap: P }}><span style={{ color: UI.dim }}>{label}</span><span className="tb-b tabular-nums" style={{ color: ink }}>{value}</span></div>);
+  const apmOf = (sent) => (ms > 0 ? sent / (ms / 60000) : 0).toFixed(1);
+  const ppsOf = (n) => (ms > 0 ? n / (ms / 1000) : 0).toFixed(2);
+  const myStats = [
+    mode === "ultra" && stat("SCORE", r.score.toLocaleString("en-US"), GOLD),
+    versus && stat("SENT", r.sent, GOLD),
+    stat("PIECES", st.pieces),
+    stat("PPS", pps.toFixed(2)),
+    versus && stat("APM", apmOf(r.sent)),
+    !versus && stat("BEST", best ? (mode === "ultra" ? best.toLocaleString("en-US") : fmtClock(best)) : "—", GOLD),
+    mode === "towerbot" && (
+      <div key="skill" className="flex items-baseline justify-end" style={{ gap: 2 * P, whiteSpace: "nowrap" }}>
+        <span style={{ color: UI.dim }}>BOT</span>
+        <div className="flex items-center" style={{ gap: 2 * P }}>
+          <button className="tb-t tb-b" aria-label="Easier bot" onClick={() => { const v = Math.max(1, skill - 1); setSkill(v); zgBotSkill.set(v); }} style={{ color: UI.dim, padding: `0 ${2 * P}px` }}>−</button>
+          <span className="tb-b tabular-nums">{skill}</span>
+          <button className="tb-t tb-b" aria-label="Harder bot" onClick={() => { const v = Math.min(10, skill + 1); setSkill(v); zgBotSkill.set(v); }} style={{ color: UI.dim, padding: `0 ${2 * P}px` }}>+</button>
+        </div>
+      </div>
+    ),
+  ].filter(Boolean);
+  const myBottom = (
+    <>
+      <span className="tb-b tabular-nums">{mode === "sprint" ? `${Math.min(st.lines, Z_GOAL)} / ${Z_GOAL}` : `${st.lines} LINES`}</span>
+      <ZgClock run={run} left={mode === "ultra" ? Z_ULTRA_MS : 0} style={{ fontSize: "1.1em", color: "var(--tb-you)" }} />
+    </>
   );
-  const pop = r.pop;
+  const myOverlay = (
+    <>
+      {mode === "towerbot" && !r.result && <Countdown goAt={r.goAt} block={false} />}
+      {!versus && !r.startAt && !r.result && (
+        <div className="absolute inset-x-0 flex justify-center pointer-events-none" style={{ top: 5 * (cell + g) }}>
+          <span className="tb-t" style={{ color: UI.text, padding: `${P}px ${3 * P}px`, background: "color-mix(in srgb, var(--tb-panel-solid) 80%, transparent)" }}>
+            {mode === "ultra" ? "2 MINUTES · THE CLOCK STARTS ON YOUR FIRST MOVE" : "NO GRAVITY · THE CLOCK STARTS ON YOUR FIRST MOVE"}
+          </span>
+        </div>
+      )}
+    </>
+  );
+  const myButtons = (
+    <>
+      <Bubble w={btn} h={btn} label="Controls and handling" onClick={() => setOpts(true)}><Settings2 /></Bubble>
+      {!online && <Bubble w={btn} h={btn} label={`Retry (${keyOf("retry")})`} onClick={retry}><RefreshCw /></Bubble>}
+      {r.result
+        ? <Bubble w={btn} h={btn} label="Menu" onClick={onExit}><LogOut /></Bubble>
+        : <ForfeitButton size={btn} ranked={online} onConfirm={() => finish("forfeit")} />}
+    </>
+  );
+  // The opponent, drawn the same way: a bot's whole game, or the online opponent's latest view.
+  const opp = versus ? (oppView || { board: zNewGame(st.seed, Infinity).board, queue: [], hold: null, cur: null, sent: 0, lines: 0, pieces: 0, incoming: 0 }) : null;
 
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono select-none" style={{ color: UI.text }}>
-      <div ref={stageRef} className="relative flex-1 min-h-0 flex flex-col items-center w-full mx-auto px-3" style={{ maxWidth: 1600 }}>
+      <div ref={stageRef} className="relative flex-1 min-h-0 flex flex-col items-center w-full mx-auto px-3" style={{ maxWidth: 1900 }}>
         {/* No title here: just the game, in the middle of the screen. */}
         <div style={{ flex: 1, minHeight: cell + 2 * P }} />
-        <div className="flex items-start">
-          {/* Left: hold, flush against the board, then the stats and the last clear. */}
-          <div className="flex flex-col items-end text-right tb-t" style={{ fontSize: font, lineHeight: 1.25, width: colW, gap: 4 * P, marginTop: sideTop, height: sideH, marginRight: side }}>
-            <div className="flex flex-col items-center" style={{ width: boxW, gap: 2 * P, padding: pad, ...glass(UI.line) }}>
-              <span style={{ color: UI.dim }}>HOLD ({keyOf("hold")})</span>
-              <div className="flex items-center justify-center" style={{ height: 2 * cell + g }}>
-                {st.hold !== null && <ZPiece id={st.hold} cell={cell} gap={g} />}
-              </div>
-            </div>
-            <div className="flex flex-col items-end" style={{ gap: 3 * P, marginTop: 2 * P }}>
-              {mode === "ultra" && stat("SCORE", r.score.toLocaleString("en-US"), GOLD)}
-              {versus && stat("SENT", r.sent, GOLD)}
-              {!versus && stat("PIECES", st.pieces)}
-              {stat("PPS", pps.toFixed(2))}
-              {versus && stat("APM", (ms > 0 ? r.sent / (ms / 60000) : 0).toFixed(1))}
-              {!versus && stat("BEST", best ? (mode === "ultra" ? best.toLocaleString("en-US") : fmtClock(best)) : "—", GOLD)}
-              {mode === "towerbot" && (
-                <div className="flex flex-col items-end" style={{ gap: P }}>
-                  <span style={{ color: UI.dim }}>BOT SKILL</span>
-                  <div className="flex items-center" style={{ gap: 2 * P }}>
-                    <button className="tb-t tb-b" aria-label="Easier bot" onClick={() => { const v = Math.max(1, skill - 1); setSkill(v); zgBotSkill.set(v); }} style={{ color: UI.dim, padding: `0 ${2 * P}px` }}>−</button>
-                    <span className="tb-b tabular-nums">{skill}</span>
-                    <button className="tb-t tb-b" aria-label="Harder bot" onClick={() => { const v = Math.min(10, skill + 1); setSkill(v); zgBotSkill.set(v); }} style={{ color: UI.dim, padding: `0 ${2 * P}px` }}>+</button>
-                  </div>
-                </div>
-              )}
-            </div>
-            {/* The last clear: its name, the combo, back-to-back. */}
-            <div className="flex flex-col items-end" style={{ gap: P, minHeight: 14 * P, marginTop: 2 * P }}>
-              {pop && (
-                <div key={pop.key} className="flex flex-col items-end tb-rise" style={{ gap: P }}>
-                  {pop.b2b > 0 && <span className="tb-b" style={{ color: GOLD }}>B2B ×{pop.b2b}</span>}
-                  {pop.name && <span className="tb-b" style={{ color: pop.name.includes("-SPIN") ? S_INK[pop.piece] : pop.name === "QUAD" ? S_INK[0] : UI.text, fontSize: "1.2em" }}>{pop.name}</span>}
-                  {pop.combo >= 1 && <span className="tb-b" style={{ color: "var(--tb-you)" }}>{pop.combo} COMBO</span>}
-                  {pop.allClear && <span className="tb-b" style={{ color: GOLD, fontSize: "1.2em" }}>ALL CLEAR</span>}
-                </div>
-              )}
-            </div>
-            {/* The clock and the lines, level with the board's floor. */}
-            <div className="flex flex-col items-end" style={{ marginTop: "auto", gap: P, whiteSpace: "nowrap", fontSize: versus ? "0.85em" : undefined }}>
-              <span className="tb-b tabular-nums">{mode === "sprint" ? `${Math.min(st.lines, Z_GOAL)} / ${Z_GOAL}` : `${st.lines} LINES`}</span>
-              <ZgClock run={run} left={mode === "ultra" ? Z_ULTRA_MS : 0} style={{ fontSize: "1.1em", color: "var(--tb-you)" }} />
-            </div>
-          </div>
-          {/* The board, with the line of light under it. */}
-          <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
-            <div className="relative" style={{ width: boardW, height: boardH, padding: 0 }}>
-              <div style={{ display: "grid", gridTemplateColumns: `repeat(${Z_W}, ${cell}px)`, gap: g }}>
-                {Array.from({ length: ZG_SHOW }, (_, i) => top0 + i).map((y) => st.board[y].map((v, x) => {
-                  const k = y * Z_W + x, mark = at.has(k), buffer = y < Z_TOP;
-                  return (
-                    <div key={k} style={{ position: "relative", width: cell, height: cell, ...(v === null && !buffer ? GLASS : null) }}>
-                      {v !== null && <Ink size={cell} color={zInk(v)} />}
-                      {v === null && mark && <div className="absolute inset-0" style={{ opacity: landed ? 1 : 0.4 }}><Ink size={cell} color={S_INK[st.cur.id]} /></div>}
-                    </div>
-                  );
-                }))}
-              </div>
-              {/* The piece itself, wherever it floats (above the board too, without taking room from it). */}
-              {st.cur && !landed && zCellsOf(st.cur).map(([x, y]) => (
-                <div key={`p${x},${y}`} className="absolute pointer-events-none" style={{ left: x * (cell + g), top: (y - top0) * (cell + g) }}><Ink size={cell} color={S_INK[st.cur.id]} /></div>
-              ))}
-              {/* A clear: the rows flash and fade in under a fifth of a second. */}
-              {r.flash && [...flashRows].filter((y) => y >= top0).map((y) => (
-                <div key={`${r.flash.key}-${y}`} className="absolute pointer-events-none tb-zgflash" style={{ left: 0, width: boardW, top: (y - top0) * (cell + g), height: cell }} />
-              ))}
-              {/* Garbage on its way: a red bar in the gap left of the board, a square per row. */}
-              {versus && zIncoming(st) > 0 && (
-                <div className="absolute pointer-events-none" style={{ left: -side - P, width: side + P, bottom: 0, height: Math.min(Z_VISIBLE, zIncoming(st)) * (cell + g) - g, background: "#E0506A", boxShadow: "0 0 8px rgba(224,80,106,.6)" }} />
-              )}
-              {mode === "towerbot" && !r.result && <Countdown goAt={r.goAt} block={false} />}
-              {!versus && !r.startAt && !r.result && (
-                <div className="absolute inset-x-0 flex justify-center pointer-events-none" style={{ top: 5 * (cell + g) }}>
-                  <span className="tb-t" style={{ color: UI.text, padding: `${P}px ${3 * P}px`, background: "color-mix(in srgb, var(--tb-panel-solid) 80%, transparent)" }}>
-                    {mode === "ultra" ? "2 MINUTES · THE CLOCK STARTS ON YOUR FIRST MOVE" : "NO GRAVITY · THE CLOCK STARTS ON YOUR FIRST MOVE"}
-                  </span>
-                </div>
-              )}
-            </div>
-            <BoardLine width={boardW} />
-          </div>
-          {/* Right: the next five, flush against the board; the buttons in a column at its bottom. */}
-          <div className="flex flex-col items-start tb-t" style={{ fontSize: font, lineHeight: 1.25, width: colW, marginTop: sideTop, height: sideH, marginLeft: side }}>
-            <div aria-label="Next pieces" className="flex flex-col items-center" style={{ width: boxW, flex: 1, minHeight: 0, justifyContent: "space-between", gap: 2 * P, padding: pad, ...glass(UI.line) }}>
-              <span style={{ color: UI.dim }}>NEXT</span>
-              {st.queue.slice(0, Z_NEXT).map((id, i) => (
-                <div key={i} role="img" aria-label={`Next ${i + 1}: ${Z_NAMES[id]}`} className="flex items-center justify-center" style={{ height: 2 * cell + g, opacity: i ? 0.8 : 1 }}>
-                  <ZPiece id={id} cell={cell} gap={g} />
-                </div>
-              ))}
-            </div>
-            <div className="flex flex-col items-start" style={{ marginTop: 3 * P, gap: 3 * P, flexShrink: 0 }}>
-              <Bubble w={btn} h={btn} label="Controls and handling" onClick={() => setOpts(true)}><Settings2 /></Bubble>
-              {!online && <Bubble w={btn} h={btn} label={`Retry (${keyOf("retry")})`} onClick={retry}><RefreshCw /></Bubble>}
-              {r.result
-                ? <Bubble w={btn} h={btn} label="Menu" onClick={onExit}><LogOut /></Bubble>
-                : <ForfeitButton size={btn} ranked={online} onConfirm={() => finish("forfeit")} />}
-            </div>
-          </div>
-          {/* The opponent: their board, smaller, with the garbage coming at them. */}
-          {versus && <ZgOppBoard view={oppView} name={oppName} cell={cell} g={g} top={sideTop} font={font} side={side} />}
+        <div className="flex items-start" style={{ gap: 10 * P }}>
+          <ZgField L={L} st={st} stats={myStats} pop={r.pop} bottom={myBottom} incoming={versus ? zIncoming(st) : 0} flash={r.flash} overlay={myOverlay} buttons={myButtons}
+            holdKey={keyOf("hold")} name={versus ? (net.profile?.name || "YOU") : null} />
+          {versus && (
+            <ZgField L={L} st={opp} nameInk="var(--tb-rival)" name={oppName} incoming={opp.incoming || 0} pop={opp.pop} flash={opp.flash}
+              stats={[stat("SENT", opp.sent || 0, GOLD), stat("PIECES", opp.pieces || 0), stat("PPS", ppsOf(opp.pieces || 0)), stat("APM", apmOf(opp.sent || 0))]}
+              bottom={<span className="tb-b tabular-nums">{opp.lines || 0} LINES</span>}
+              buttons={<div aria-hidden="true" className="flex flex-col" style={{ visibility: "hidden", gap: 3 * P }}>{myButtons}</div>} />
+          )}
         </div>
         <div style={{ flex: 1, minHeight: 2 * P }} />
       </div>
