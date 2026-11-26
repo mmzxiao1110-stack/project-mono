@@ -326,6 +326,7 @@ class Net {
   /* ---------- Blitz 1v1 ---------- */
   blitzQueue() { this.blitz = null; this.send({ t: "blitzQueue" }); }
   blitzCancel() { this.send({ t: "unqueue" }); }
+  setCard(a, b) { this.send({ t: "setCard", card: [a, b] }); }
   blitzPlace(slot, rot, r, c) { this.send({ t: "blitzPlace", slot, rot, r, c }); }
   patchBlitz(p) { this.blitz = { ...(this.blitz || {}), ...p }; this.emit("blitz", this.blitz); }
 
@@ -431,6 +432,11 @@ class Net {
         this.bumpAuth();
         break;
 
+      case "profile":
+        // Your profile after a change you made (e.g. your card's colours).
+        if (m.profile) { this.profile = m.profile; this.emit("profile", this.profile); }
+        break;
+
       case "verified":
         this.authBusy = false;
         this.authError = null;
@@ -449,6 +455,8 @@ class Net {
         // Which server answered (older servers don't say).
         if (m.host) this.serverHost = m.host;
         this.online = m.n;
+        // How many are queueing and playing each ranked mode (for the lobbies).
+        if (m.queueing) this.lobby = { queueing: m.queueing, playing: m.playing };
         this.emit("online", m.n);
         break;
 
@@ -534,7 +542,7 @@ class Net {
 
       case "found":
         this.queued = false;
-        this.found = { opponent: m.opponent, gap: m.gap, matchId: m.matchId };
+        this.found = { opponent: m.opponent, gap: m.gap, matchId: m.matchId, room: m.room || null, at: Date.now() };
         this.search = null;
         this.emit("found", this.found);
         break;

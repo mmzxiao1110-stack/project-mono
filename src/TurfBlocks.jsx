@@ -10,6 +10,9 @@ import { PlayerRecord } from "./site/terminal.jsx";
 import { apiGet } from "./site/api.js";
 import { ACCENTS } from "./site/colors.js";
 import { PixelWord } from "./site/kit.jsx";
+import { Avatar, ProfileCard } from "./site/profileCard.jsx";
+import { RankIcon } from "./site/rankIcon.jsx";
+import { cardFromProfile, CARD_DEFAULT } from "./site/profileData.js";
 
 /* The rules live in one place and the server imports the same file. */
 import {
@@ -19,7 +22,7 @@ import {
   emptyPins, nextMeters, isLegalDelete, isLegalPin, normalizeAction, stampHits,
   isCheckTurn, shrinkBoard,
 } from "../shared/engine.js";
-import { aiPickAction } from "../shared/ai.js";
+import { aiPickAction, aiPickActionDeep } from "../shared/ai.js";
 import {
   SIZE as M_SIZE, PIECES as M_PIECES, newMarathon, newMarathonSeed, placePiece as mPlace, fits as mFits,
   fitsAnywhere as mFitsAnywhere, levelOf as mLevelOf, encodeMoves, decodeMoves, TUNING as M_TUNING, shapeOf as mShape,
@@ -242,8 +245,6 @@ const useNotice = () => useSyncExternalStore(subs.notice, () => net.notice);
 const useMatch = () => useSyncExternalStore(subs.match, () => net.match);
 const useStatus = () => useSyncExternalStore(subs.status, () => net.status);
 const useProfile = () => useSyncExternalStore(subs.profile, () => net.profile);
-const useSearch = () => useSyncExternalStore(subs.search, () => net.search);
-const useFound = () => useSyncExternalStore(subs.found, () => net.found);
 // Subscribes to the revision counter, returns the state. Any auth event —
 // including busy -> error, which leaves `auth` unchanged — re-renders.
 function useAuth() {
@@ -1760,7 +1761,7 @@ function ProfilePopup({ name, guest = false, onClose }) {
   }, [who, isGuest]);
   const loading = !isGuest && res.who !== who;
   return (
-    <Popup title="PLAYER" onClose={onClose} maxW={460}>
+    <Popup title="PLAYER" onClose={onClose} maxW={640}>
       <div className="pt-4 pb-1 flex flex-col" style={{ gap: 4 * P }}>
         {who !== name && (
           <button onClick={() => setWho(name)} className="tb-t text-left flex items-center gap-1" style={{ color: UI.dim }}>
@@ -1776,7 +1777,10 @@ function ProfilePopup({ name, guest = false, onClose }) {
         ) : res.error ? (
           <div className="tb-t" style={{ color: UI.dim }}>{res.error}</div>
         ) : (
-          <PlayerRecord p={res.data} onOpen={setWho} />
+          <>
+            <ProfileCard p={res.data} compact />
+            <PlayerRecord p={res.data} onOpen={setWho} />
+          </>
         )}
         {!isGuest && (
           // A new tab: never pull someone out of a match.
@@ -2088,19 +2092,30 @@ function StatsModal({ profile, status, onClose, onLogout, onDelete }) {
   const since = profile.createdAt ? new Date(profile.createdAt).toLocaleDateString(undefined, { month: "short", year: "numeric" }) : "—";
   const mar = profile.marathon;
 
+  const card = cardFromProfile(profile);
+  const cardColors = card.card || CARD_DEFAULT;
   const who = (
-    <div className={`${wide ? "" : "mt-4 "}flex items-baseline justify-between gap-3`}>
-      <span className="tb-t truncate" style={{ color: UI.text }}>{profile.name}</span>
-      <span className="tb-t shrink-0" style={{ color: UI.dim }}>since {since}</span>
+    <div className="mt-4 flex flex-col gap-2">
+      <ProfileCard p={card} />
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <label className="tb-t flex items-center gap-2" style={{ color: UI.dim }}>
+          CARD COLOURS
+          {[0, 1].map((k) => (
+            <input key={k} type="color" aria-label={`Card colour ${k + 1}`} defaultValue={cardColors[k]}
+              onChange={(e) => { const next = [...cardColors]; next[k] = e.target.value; net.setCard(next[0], next[1]); }}
+              style={{ width: 34, height: 26, ...glass(UI.line) }} />
+          ))}
+        </label>
+        <a href={`/terminal#/player/${encodeURIComponent(profile.name)}`} target="_blank" rel="noopener" className="tb-t no-underline"
+          style={{ padding: "6px 10px", ...skFill(ACCENTS.terminal), color: UI.text }}>FULL PROFILE ON T-TERMINAL</a>
+      </div>
+      <span className="tb-t" style={{ color: UI.dim }}>since {since}</span>
     </div>
   );
   const rankCard = (
     <div className="mt-3 rounded p-4" style={{ ...glass(UI.line) }}>
       <div className="flex items-center gap-4">
-        <div className="rounded flex items-center justify-center shrink-0"
-          style={{ width: 74, height: 74, background: placed ? `${rank.color}1F` : UI.cell, ...sk(placed ? rank.color : UI.line) }}>
-          <span className="text-3xl" style={{ color: placed ? rank.color : UI.dim }}>{placed ? rank.name : "–"}</span>
-        </div>
+        <RankIcon rank={placed ? rank : null} size={74} />
         <div className="min-w-0 flex-1">
           {placed ? (
             <>
@@ -2136,11 +2151,9 @@ function StatsModal({ profile, status, onClose, onLogout, onDelete }) {
           const past = placed && i < ri;
           return (
             <div key={r.name} className="flex-1 flex flex-col items-center gap-1.5">
-              <div className="w-full rounded-sm" style={{
-                height: here ? 22 : 12,
-                background: here ? r.color : past ? `${r.color}66` : UI.cell,
-                transition: "height 180ms ease",
-              }} />
+              <div style={{ opacity: here ? 1 : past ? 0.75 : 0.35, filter: here ? "none" : "saturate(.6)" }}>
+                <RankIcon rank={r} size={here ? 30 : 20} />
+              </div>
               <span className="tb-t" style={{ color: here ? r.color : UI.dim, opacity: here ? 1 : 0.5 }}>{r.name}</span>
             </div>
           );
@@ -2229,10 +2242,11 @@ function StatsModal({ profile, status, onClose, onLogout, onDelete }) {
 
   return (
     <Popup title="ACCOUNT" onClose={onClose} wideW={980}>
+      {wide && who}
       {wide ? (
-        // A computer: who you are, how you play, who you played; side by side.
+        // A computer: your card across the top; then your rank, how you play, who you played.
         <div className="tb-cols grid gap-6 pt-3 items-start" style={{ gridTemplateColumns: "1fr 1.4fr 1fr" }}>
-          <div className="min-w-0">{who}{rankCard}{ladder}<div className="mt-5">{signOut}</div></div>
+          <div className="min-w-0">{rankCard}{ladder}<div className="mt-5">{signOut}</div></div>
           <div className="min-w-0">{trend}{cells}{marathon}</div>
           <div className="min-w-0">{recent}<div className="mt-4">{note}</div></div>
         </div>
@@ -2934,10 +2948,7 @@ function AccountModal({ profile, onLogout, onClose, onDelete }) {
     <Popup title="ACCOUNT" onClose={onClose} maxW={380}>
       <div className="pt-4">
         <div className="flex items-center gap-4 mb-5">
-          <div className="rounded flex items-center justify-center shrink-0"
-            style={{ width: 62, height: 62, background: placed ? `${rank.color}1F` : UI.ground, ...sk(placed ? rank.color : UI.line) }}>
-            <span className="tb-t" style={{ color: placed ? rank.color : UI.dim }}>{placed ? rank.name : "–"}</span>
-          </div>
+          <RankIcon rank={placed ? rank : null} size={62} />
           <div className="min-w-0">
             <div className="tb-t truncate">{profile.name}</div>
             <div className="tb-t mt-1" style={{ color: UI.dim }}>
@@ -3048,7 +3059,7 @@ function MiniBoard({ w, h, cells, size = 15, ink }) {
 
 function HowToModal({ colors, loadout, onClose }) {
   const [page, setPage] = useState(0);
-  const [mode, setModeNow] = useState(() => (store.get("tb:howMode") === "blitz" ? "blitz" : "control"));
+  const [mode, setModeNow] = useState(() => (["blitz", "sprint", "marathon"].includes(store.get("tb:howMode")) ? store.get("tb:howMode") : "control"));
   const setMode = (m) => { setModeNow(m); setPage(0); store.set("tb:howMode", m); };
   const ink = { A: colors.you, B: colors.rival, S: colors.special };
 
@@ -3151,13 +3162,13 @@ function HowToModal({ colors, loadout, onClose }) {
     {
       title: "SPIKES",
       art: (
-        <div className="tb-t grid gap-x-5 gap-y-1" style={{ gridTemplateColumns: "auto auto" }}>
-          {[["1 line", "1  (2 in a combo)"], ["2 lines", "2  (3 in a combo)"], ["3 lines", "4"], ["4 lines", "6"], ["T piece, 4 lines", "8"], ["all clear", "12"]].map(([a, b]) => (
+        <div className="tb-t grid gap-x-4 gap-y-1" style={{ gridTemplateColumns: "auto auto auto auto" }}>
+          {[["1 line", "1 · combo 2"], ["3 lines", "4"], ["2 lines", "2 · combo 3"], ["4 lines", "6"], ["T, 4 lines", "8"], ["all clear", "12"]].map(([a, b]) => (
             <React.Fragment key={a}><span style={{ color: UI.dim }}>{a}</span><span className="tb-b" style={{ color: GOLD }}>{b}</span></React.Fragment>
           ))}
         </div>
       ),
-      body: "Every clear attacks. Clears less than half a second apart chain into one spike and their levels add up; a clear inside a spike is a combo, and small clears hit harder in a combo. When you stop clearing for half a second, the spike is sent.",
+      body: "Every clear attacks. Clears less than half a second apart chain into one spike and their levels add up — small clears hit harder inside a combo. Stop clearing for half a second and the spike is sent.",
     },
     {
       title: "JUNK",
@@ -3177,10 +3188,97 @@ function HowToModal({ colors, loadout, onClose }) {
           <span className="tb-b" style={{ color: UI.text }}>VS BOT</span>
         </div>
       ),
-      body: "BLITZ is ranked 1v1 online, with its own rating on T-Terminal; the server checks every placement. VS BOT is the same game against a bot from skill 1 (a piece every two seconds) to 10 (two a second, and it hunts combos). Every match is saved in REPLAYS.",
+      body: "BLITZ is ranked 1v1 online, with its own rating on T-Terminal; the server checks every placement. VS BOT is the same game against a bot from skill 1 (about one piece every two seconds) to 10 (about three a second, and it hunts combos). Every match is saved in REPLAYS.",
     },
   ];
-  const list = mode === "blitz" ? blitzPages : pages;
+  // Blitz pages go deeper: combos, junk, defence.
+  blitzPages.splice(3, 0, {
+    title: "COMBOS AND T-SPINS",
+    art: (
+      <div className="flex items-center justify-center gap-3">
+        <MiniBoard w={8} h={4} size={10} ink={bInk} cells={{ "3,0": "I", "3,1": "I", "3,2": "I", "3,3": "I", "3,5": "L", "3,6": "L", "3,7": "L", "2,7": "L", "2,0": "O", "2,1": "O", "1,0": "O", "1,1": "O" }} />
+        <span className="tb-t tb-b" style={{ color: GOLD }}>→ ×</span>
+      </div>
+    ),
+    body: "Clear again within half a second and it's a combo: the levels stack into one bigger spike. Two quick doubles send more than one triple. A T piece that clears four lines is worth 8 — build a slot for it. An all clear (an empty board) is 12 on its own.",
+  }, {
+    title: "DEFENCE",
+    art: (
+      <div className="flex items-end justify-center gap-4">
+        <SPiece id={S_JUNK + 6} cell={7} gap={1} />
+        <span className="tb-t" style={{ color: UI.dim }}>place it where it costs least</span>
+      </div>
+    ),
+    body: "Junk arrives sixth in your forecast, so you see it coming five pieces ahead. Leave room for it: an open corner or edge fits most junk. A big junk piece placed well can even finish a line for you. If your board fills past half, take any clear you can — singles included — to dig out.",
+  });
+  const sInk = { I: S_INK[0], O: S_INK[1], T: S_INK[2], L: S_INK[6], J: S_INK[5] };
+  const sprintPages = [
+    {
+      title: "SPRINT: 40 LINES",
+      art: <MiniBoard w={8} h={8} size={10} ink={sInk} cells={{ "7,0": "I", "7,1": "I", "7,2": "I", "7,3": "I", "7,4": "O", "7,5": "O", "6,4": "O", "6,5": "O", "7,6": "L", "7,7": "L", "6,7": "L", "5,7": "L" }} />,
+      body: "Clear 40 lines as fast as you can on an 8×8 board. Rows and columns both count. The clock starts on your first move. Same pieces for everyone on a ranked run: the server checks every placement and its time.",
+    },
+    {
+      title: "THE CONTROLS",
+      art: (
+        <div className="tb-t grid gap-x-5 gap-y-1" style={{ gridTemplateColumns: "auto auto" }}>
+          {[["move", "mouse"], ["place", "left click / C"], ["swap piece", "right click"], ["turn", "S · D · A (180)"], ["retry", "R"], ["forfeit", "Esc"]].map(([a, b]) => (
+            <React.Fragment key={a}><span style={{ color: UI.dim }}>{a}</span><span className="tb-b">{b}</span></React.Fragment>
+          ))}
+        </div>
+      ),
+      body: "The piece follows your mouse and always stays on the board. You hold two pieces: swap between them, turn the one in play, click to drop it. The next five are on the right. Every key and mouse button can be rebound in Settings.",
+    },
+    {
+      title: "ULTRA: 2 MINUTES",
+      art: (
+        <div className="tb-t grid gap-x-5 gap-y-1" style={{ gridTemplateColumns: "auto auto" }}>
+          {[["1 line", "100"], ["2 lines", "300"], ["3 lines", "500"], ["4 lines", "800"], ["each more", "+400"], ["all clear", "3000 × combo"]].map(([a, b]) => (
+            <React.Fragment key={a}><span style={{ color: UI.dim }}>{a}</span><span className="tb-b" style={{ color: GOLD }}>{b}</span></React.Fragment>
+          ))}
+        </div>
+      ),
+      body: "Score as much as you can in two minutes. Clearing on back-to-back pieces builds a combo that multiplies every clear (×1.5, ×2, ×2.5…); a piece that clears nothing ends it. Big clears and all clears inside a long combo are where the points are.",
+    },
+    {
+      title: "RECORDS AND REPLAYS",
+      art: <div className="tb-t tb-b" style={{ color: ACCENTS.terminal }}>T-TERMINAL</div>,
+      body: "Signed in, your best Sprint time and Ultra score go on the T-Terminal leaderboards once the server has replayed them. Every finished run is kept in REPLAYS with its real timing — watch it back, or save it as a video.",
+    },
+  ];
+  const mInk = { A: colors.you, B: colors.special, S: colors.rival };
+  const marathonPages = [
+    {
+      title: "MARATHON",
+      art: <MiniBoard w={7} h={7} size={12} ink={mInk} cells={{ "6,0": "A", "6,1": "A", "6,2": "A", "5,0": "A", "6,4": "B", "6,5": "B", "5,5": "B", "5,6": "B", "4,3": "S", "4,4": "S" }} />,
+      body: "A solo puzzle for high scores on a 7×7 board. You hold three pieces; place any of them anywhere it fits, turned any way. Fill a row or a column and it clears. It ends when none of your three pieces fits anywhere.",
+    },
+    {
+      title: "SCORING",
+      art: (
+        <div className="tb-t grid gap-x-5 gap-y-1" style={{ gridTemplateColumns: "auto auto" }}>
+          {[["placing", "1 per square"], ["clearing", "10 per square"], ["× lines", "cleared at once"], ["× streak", "clears in a row"], ["× level", "+10% a level"]].map(([a, b]) => (
+            <React.Fragment key={a}><span style={{ color: UI.dim }}>{a}</span><span className="tb-b" style={{ color: GOLD }}>{b}</span></React.Fragment>
+          ))}
+        </div>
+      ),
+      body: "Clears pay far more than placing. Clearing two lines at once doubles them; a clear within three moves of the last keeps your streak going and multiplies again. The level rises every 10 lines and every clear pays 10% more per level.",
+    },
+    {
+      title: "SURVIVING",
+      art: <div className="flex items-center justify-center gap-3"><Stack style={{ color: MODE_INK.marathon, width: 40, height: 40 }} /></div>,
+      body: "From level 3, each new bag carries more big, awkward pieces, so the board always closes in. Keep the middle open, keep a place for the long pieces, and don't fill a line you can't finish. On a phone, drag a piece to the board and tap the big turn button with your other hand.",
+    },
+  ];
+  // More on Control: the rating.
+  pages.push({
+    title: "RANKED AND RATING",
+    art: <div className="flex items-center justify-center gap-2">{RANKS.filter((_, i) => i % 2 === 1 || i === RANKS.length - 1).map((r) => <RankIcon key={r.name} rank={r} size={34} />)}</div>,
+    body: `Ranked Control and Blitz each have a Glicko-2 rating. After ${PLACEMENT_GAMES} placement matches you get a rank, from F up through C, B, A and S to X. The ± is how sure the rating is; it narrows as you play. Win against stronger players to climb faster.`,
+  });
+  const BOOKS = { control: pages, blitz: blitzPages, sprint: sprintPages, marathon: marathonPages };
+  const TAB_INK = { control: MODE_INK.ranked, blitz: MODE_INK.blitz, sprint: MODE_INK.sprint, marathon: MODE_INK.marathon };
+  const list = BOOKS[mode] || pages;
   const p = list[page];
   const last = page === list.length - 1;
 
@@ -3190,23 +3288,23 @@ function HowToModal({ colors, loadout, onClose }) {
       {list.map((_, i) => (
         <div key={i} style={{
           flex: 1, height: 2, borderRadius: 2,
-          background: i <= page ? (mode === "blitz" ? "#F29A4A" : colors.you) : UI.line,
+          background: i <= page ? TAB_INK[mode] : UI.line,
           transition: "background 200ms",
         }} />
       ))}
     </div>
   );
   const tabs = (
-    <div className="flex gap-1.5">
-      {[["control", "CONTROL"], ["blitz", "BLITZ"]].map(([k, label]) => (
+    <div className="flex flex-wrap gap-1.5">
+      {[["control", "CONTROL"], ["blitz", "BLITZ"], ["sprint", "SPRINT · ULTRA"], ["marathon", "MARATHON"]].map(([k, label]) => (
         <button key={k} onClick={() => setMode(k)} aria-pressed={mode === k} className="tb-t px-3"
-          style={{ height: 30, ...(mode === k ? skFill(k === "blitz" ? "#F29A4A" : colors.you) : glass(UI.line)), color: mode === k ? UI.text : UI.dim }}>{label}</button>
+          style={{ height: 30, ...(mode === k ? skFill(TAB_INK[k]) : glass(UI.line)), color: mode === k ? UI.text : UI.dim }}>{label}</button>
       ))}
     </div>
   );
   const art = (
     <div className="rounded py-5 flex items-center justify-center"
-      style={{ background: UI.ground, ...sk(UI.line), minHeight: wide ? 170 : 132 }}>
+      style={{ background: UI.ground, ...sk(UI.line), minHeight: wide ? 170 : 104 }}>
       <div style={wide ? { zoom: 1.3 } : undefined}>{p.art}</div>
     </div>
   );
@@ -3250,9 +3348,9 @@ function HowToModal({ colors, loadout, onClose }) {
         <div className="pt-4 pb-1">
           <div className="mb-3">{tabs}</div>
           {progress}
-          <div className="tb-t mb-4" style={{ color: UI.dim }}>{p.title}</div>
-          <div className="mb-4">{art}</div>
-          <div className="tb-t mb-5" style={{ minHeight: 96 }}>{p.body}</div>
+          <div className="tb-t mb-2" style={{ color: UI.dim }}>{p.title}</div>
+          <div className="mb-3">{art}</div>
+          <div className="tb-t mb-3" style={{ minHeight: 96 }}>{p.body}</div>
           {buttons}
         </div>
       )}
@@ -3263,60 +3361,13 @@ function HowToModal({ colors, loadout, onClose }) {
 /* ============================================================
    MENU
    ============================================================ */
-/** A pen underline that tapers at both ends: two loose strokes, never quite parallel. */
-/**
- * The title, drawn as pixel art rather than set in a font: a bigger font
- * would mean bigger pixels. Letters are 19×25 pixels with thin 2-pixel
- * strokes, shaded in bands from your colour to your rival's.
- */
-/** The TESELLA letters, W×H pixels each with two-pixel strokes. */
-const LOGO_WORD = "TESELLA";
-function makeLogo(W, H) {
-  const mid = Math.floor(W / 2), midY = Math.round(H / 2) - 1;
-  const glyph = (paint) => { const g = Array.from({ length: H }, () => Array(W).fill(0)); paint((x, y) => { if (x >= 0 && y >= 0 && x < W && y < H) g[y][x] = 1; }); return g; };
-  const rect = (set, x0, y0, w, h) => { for (let y = y0; y < y0 + h; y++) for (let x = x0; x < x0 + w; x++) set(x, y); };
-  const L = {
-    T: (s2) => { rect(s2, 0, 0, W, 2); rect(s2, mid - 1, 0, 2, H); },
-    E: (s2) => { rect(s2, 0, 0, 2, H); rect(s2, 0, 0, W, 2); rect(s2, 0, midY, W - 2, 2); rect(s2, 0, H - 2, W, 2); },
-    S: (s2) => {
-      rect(s2, 2, 0, W - 2, 2); rect(s2, 0, 2, 2, midY - 2); rect(s2, 2, midY, W - 4, 2);
-      rect(s2, W - 2, midY + 2, 2, H - midY - 4); rect(s2, 0, H - 2, W - 2, 2);
-      s2(1, 1); s2(W - 3, midY + 1); s2(W - 2, midY + 1); s2(W - 2, H - 2);
-    },
-    L: (s2) => { rect(s2, 0, 0, 2, H); rect(s2, 0, H - 2, W, 2); },
-    A: (s2) => { rect(s2, 2, 0, W - 4, 2); rect(s2, 0, 2, 2, H - 2); rect(s2, W - 2, 2, 2, H - 2); rect(s2, 2, midY, W - 4, 2); s2(1, 1); s2(W - 2, 1); },
-  };
-  return LOGO_WORD.split("").map((ch) => glyph(L[ch]));
-}
-const LOGOS = { big: [13, 19, 4, makeLogo(13, 19)], small: [9, 13, 3, makeLogo(9, 13)] };
+/** The title: TESELLA in the game's font, bold capitals. */
 
 function PixelLogo({ small = false }) {
-  const P = usePx();
-  const [W, H, GAP, letters] = LOGOS[small ? "small" : "big"];
-  const total = letters.length * W + (letters.length - 1) * GAP;
-  // One rect per horizontal run, per row band colour.
-  const runs = [];
-  letters.forEach((g, li) => g.forEach((row, y) => {
-    let x = 0;
-    while (x < W) {
-      if (!row[x]) { x++; continue; }
-      const st = x; while (x < W && row[x]) x++;
-      runs.push([li * (W + GAP) + st, y, x - st]);
-    }
-  }));
-  const BANDS = 6;
   return (
-    <svg aria-label="Tesella" role="img" className={small ? undefined : "tb-bob"} viewBox={`0 0 ${total + 1} ${H + 1}`}
-      style={{ width: (total + 1) * P, height: (H + 1) * P, display: "block", margin: "0 auto", shapeRendering: "crispEdges" }}>
-      {runs.map(([x, y, w], i) => <rect key={`s${i}`} x={x + 1} y={y + 1} width={w} height={1} fill="rgba(0,0,0,.55)" />)}
-      {runs.map(([x, y, w], i) => {
-        const band = Math.min(BANDS - 1, Math.floor((y / H) * BANDS));
-        return <rect key={i} x={x} y={y} width={w} height={1}
-          style={{ fill: `color-mix(in srgb, var(--tb-you) ${100 - band * 19}%, var(--tb-rival))` }} />;
-      })}
-      {/* A one-pixel highlight along the top of each letter. */}
-      {runs.filter(([, y]) => y === 0).map(([x, y, w], i) => <rect key={`h${i}`} x={x} y={y} width={w} height={1} fill="rgba(255,255,255,.75)" />)}
-    </svg>
+    <div className={small ? "flex justify-center" : "flex justify-center tb-bob"}>
+      <PixelWord text="TESELLA" from="var(--tb-you)" to="var(--tb-rival)" scale={small ? 2 : 3} />
+    </div>
   );
 }
 
@@ -3341,11 +3392,11 @@ function PixelRule({ count = 18 }) {
 }
 const SINK_MS = 300;
 
-function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout, theme, setTheme }) {
-  const [modal, setShown] = useState(null);
+function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout, theme, setTheme, initialModal = null }) {
+  const [modal, setShown] = useState(initialModal);
   // Where the menu is heading: set the moment a page is asked for, so the
   // title starts gliding up while the buttons are still sinking.
-  const [pending, setPending] = useState(null);
+  const [pending, setPending] = useState(initialModal);
   // While true, whatever is showing under the title is sinking out.
   const [leaving, setLeaving] = useState(false);
   const swap = useRef(null);
@@ -3395,9 +3446,6 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
   }, [pending, base, modal]);
   const authed = useAuth() === "authed";
   const verified = !!profile?.emailVerified;
-  const tr = profile?.rating ? Math.round(profile.rating.r) : null;
-  const placed = !!profile?.stats && profile.stats.games >= PLACEMENT_GAMES;
-  const rank = tr !== null ? RANKS[rankIndexFor(tr)] : null;
   const online = useOnline();
   const notice = useNotice();
 
@@ -3504,18 +3552,22 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
             <div className="pt-4 pb-2 tb-t" style={{ color: UI.text }}>Your account and everything stored with it has been deleted.</div>
           </Popup>)}
       {modal === "PLAY" && (
-        <PlayModal status={status} authed={authed} verified={verified} placed={placed} rank={rank} tr={tr}
+        <PlayModal status={status} authed={authed} verified={verified} profile={profile}
           onClose={() => setModal(null)}
           onPick={(t) => {
             if (t === "MATCHMAKING" || t === "BLITZ") {
               if (status !== "online") return;
               if (!authed) return setModal("login");
               if (!verified) return setModal("VERIFY");
+              // Ranked: its own lobby, in place of PLAY.
+              return setModal(t === "BLITZ" ? "LOBBY:blitz" : "LOBBY:control");
             }
             setModal(null);
             onPick(t);
           }} />
       )}
+      {modal?.startsWith("LOBBY:") && <RankedLobby mode={modal.slice(6)} profile={profile} loadout={loadout} onClose={() => setModal("PLAY")} />}
+      {!modal?.startsWith("LOBBY:") && <QueuePill onOpen={() => setModal(`LOBBY:${qstore.mode || qstore.found || "blitz"}`)} />}
       </InlineCtx.Provider>
     </div>
   );
@@ -3524,10 +3576,11 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
 /* ============================================================
    PLAY — every way to play, in a little underwater night sky
    ============================================================ */
-const MODE_INK = { blitz: "#F29A4A", sprint: "#6FD3E0", ultra: "#F2B880", ranked: "#E8C95A", unranked: "#A9A7B4", ai: "#B9B6AC", marathon: "#8FD694", turns: "#EC93B8", private: "#A68BF0" };
+// Ranked: dark green. The AIs: grey. Sprint yellow, Ultra red, Marathon blue, private purple.
+const MODE_INK = { blitz: "#F29A4A", ranked: "#2FA36B", ai: "#A9A7B4", sprint: "#F2D45C", ultra: "#F0606A", marathon: "#5C9DF2", turns: "#EC93B8", private: "#A68BF0" };
 
 /** A mode: a pane of clear, lightly tinted glass, like a board square. Light sweeps it on hover. */
-function ModeCard({ big = false, ink, icon: Icon, title, sub, note, onClick, disabled, delay = 0, h, style }) {
+function ModeCard({ big = false, ink, icon: Icon, title, sub, note, noteInk, onClick, disabled, delay = 0, h, style }) {
   const tint = (n) => `color-mix(in srgb, ${ink} ${n}%, transparent)`;
   return (
     <button onClick={onClick} disabled={disabled} aria-label={title}
@@ -3545,10 +3598,10 @@ function ModeCard({ big = false, ink, icon: Icon, title, sub, note, onClick, dis
         <>
           <span className="flex justify-between items-start gap-2">
             <Icon style={{ color: ink, width: "calc(var(--p) * 13)", height: "calc(var(--p) * 13)" }} />
-            {note && <span className="tb-t text-right" style={{ color: ink }}>{note}</span>}
+            {note && <span className="tb-t tb-b text-right" style={{ color: noteInk || ink }}>{note}</span>}
           </span>
           <span className="flex-1" />
-          <PixelWord text={title} from="var(--tb-text)" to={ink} />
+          <PixelWord text={title} from="var(--tb-text)" to={ink} scale={1.6} />
         </>
       ) : (
         // Small cards: the icon sits beside the title, one line saved.
@@ -3562,8 +3615,9 @@ function ModeCard({ big = false, ink, icon: Icon, title, sub, note, onClick, dis
   );
 }
 
-function PlayModal({ status, authed, verified, placed, rank, tr, onPick, onClose }) {
+function PlayModal({ status, authed, verified, profile, onPick, onClose }) {
   const phone = useCompact();
+  const q = useQueueMode(), found = useQueueFound();
   useEffect(() => { sfx.open(); }, []);
   useEffect(() => { const k = (e) => e.key === "Escape" && onClose(); window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, [onClose]);
   const online = status === "online";
@@ -3571,7 +3625,25 @@ function PlayModal({ status, authed, verified, placed, rank, tr, onPick, onClose
   const best = Math.max(Number(store.get("tb:marathonBest")) || 0, net.profile?.marathon?.best || 0);
   const open = net.profile?.marathonOpen;
   const off = online ? null : "needs the server";
-  const rankedInk = MODE_INK.ranked;
+  // While you search for (or have found) a ranked match, everything else waits.
+  const busy = !!(q || found);
+  const now = useTick(1000, !!q);
+  const lock = (mode) => busy && q !== mode && found !== mode;
+  const ranked = (mode) => {
+    if (!online) return { sub: phone ? "offline" : "needs the server" };
+    if (!authed) return { sub: phone ? "needs an account" : "account required" };
+    if (!verified) return { sub: "verify your email" };
+    if (q === mode) return { sub: `searching · ${fmtWait(now - qstore.since)}`, note: "…" };
+    const i = rankedInfo(mode, profile);
+    return i.placed ? { sub: `${i.tr} glicko ±${i.rd}`, note: i.rank.name, noteInk: i.rank.color } : { sub: `${Math.min(i.games, PLACEMENT_GAMES)}/${PLACEMENT_GAMES} placement matches`, note: "UNPLACED" };
+  };
+  const rb = ranked("blitz"), rc = ranked("control");
+  const half = (a, b) => (
+    <div className="flex w-full" style={{ gap: 8 }}>
+      <div style={{ flex: 1, minWidth: 0 }}>{a}</div>
+      <div style={{ flex: 1, minWidth: 0 }}>{b}</div>
+    </div>
+  );
   return (
     // In place of the menu's buttons: just the modes.
     <InlineFrame title="PLAY" label="Play" onClose={onClose} maxW={phone ? 480 : 600}
@@ -3581,50 +3653,275 @@ function PlayModal({ status, authed, verified, placed, rank, tr, onPick, onClose
               <div className="flex flex-col min-w-0" style={{ flex: 1, gap: 8 }}>
                 {phone ? (
                   // On a phone Marathon is the Blitz mode.
-                  <ModeCard big ink={MODE_INK.marathon} icon={Stack} title="MARATHON" h={96} delay={0}
+                  <ModeCard big ink={MODE_INK.marathon} icon={Stack} title="MARATHON" h={96} delay={0} disabled={lock()}
                     sub={open ? `resume · ${open.score.toLocaleString("en-US")}` : "solo, 7×7"}
                     note={best ? `BEST ${best.toLocaleString("en-US")}` : null} onClick={() => onPick("MARATHON")} />
                 ) : (
                   <>
-                    <ModeCard big ink={MODE_INK.blitz} icon={Clock} title="BLITZ" h={100} delay={0}
-                      sub={!online ? "needs the server" : !authed ? "account required" : !verified ? "verify your email" : "ranked 1v1"}
-                      note={net.profile?.blitz?.rating ? `${Math.round(net.profile.blitz.rating.r)}` : null}
-                      disabled={!online} onClick={() => onPick("BLITZ")} />
-                    <ModeCard ink={MODE_INK.blitz} icon={Robot} title="VS BOT" sub="blitz · skill 1–10" h={56} delay={200} onClick={() => onPick("BLITZBOT")} />
-                    <div className="flex" style={{ gap: 8, width: "100%" }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <ModeCard ink={MODE_INK.sprint} icon={Clock} title="SPRINT" sub={sprintBest.get() ? `best ${fmtClock(sprintBest.get())}` : "40 lines"} h={58} delay={400} onClick={() => onPick("SPRINT")} />
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <ModeCard ink={MODE_INK.ultra} icon={Flag} title="ULTRA" sub={ultraBest.get() ? `best ${ultraBest.get().toLocaleString("en-US")}` : "2 min"} h={58} delay={600} onClick={() => onPick("ULTRA")} />
-                      </div>
-                    </div>
-                    <ModeCard ink={MODE_INK.marathon} icon={Stack} title="MARATHON" h={58} delay={300}
-                      sub={open ? `resume · ${open.score.toLocaleString("en-US")}` : best ? `best ${best.toLocaleString("en-US")}` : "solo high score"} onClick={() => onPick("MARATHON")} />
+                    <ModeCard big ink={MODE_INK.ranked} icon={Clock} title="BLITZ" h={100} delay={0}
+                      sub={rb.sub} note={rb.note} noteInk={rb.noteInk}
+                      disabled={!online || lock("blitz")} onClick={() => onPick("BLITZ")} />
+                    {half(
+                      <ModeCard ink={MODE_INK.ai} icon={Robot} title="VS BOT" sub="skill 1–10" h={56} delay={200} disabled={lock()} onClick={() => onPick("BLITZBOT")} />,
+                      <ModeCard ink={MODE_INK.marathon} icon={Stack} title="MARATHON" h={56} delay={300} disabled={lock()}
+                        sub={open ? `resume · ${open.score.toLocaleString("en-US")}` : best ? `best ${best.toLocaleString("en-US")}` : "solo high score"} onClick={() => onPick("MARATHON")} />,
+                    )}
+                    {half(
+                      <ModeCard ink={MODE_INK.sprint} icon={Clock} title="SPRINT" sub={sprintBest.get() ? `best ${fmtClock(sprintBest.get())}` : "40 lines"} h={56} delay={400} disabled={lock()} onClick={() => onPick("SPRINT")} />,
+                      <ModeCard ink={MODE_INK.ultra} icon={Flag} title="ULTRA" sub={ultraBest.get() ? `best ${ultraBest.get().toLocaleString("en-US")}` : "2 min"} h={56} delay={600} disabled={lock()} onClick={() => onPick("ULTRA")} />,
+                    )}
                   </>
                 )}
               </div>
               <div className="flex flex-col min-w-0 items-end" style={{ flex: 1, gap: 8 }}>
-                <ModeCard big ink={rankedInk} icon={Trophy} title="CONTROL" h={phone ? 96 : 100} delay={500}
-                  sub={!online ? (phone ? "offline" : "needs the server") : !authed ? (phone ? "needs an account" : "account required") : !verified ? "verify your email" : placed ? "ranked 1v1" : "10 games to a rank"}
-                  note={online && authed && verified ? (placed ? `${rank.name} · ${tr}` : "UNPLACED") : null}
-                  disabled={!online} onClick={() => onPick("MATCHMAKING")} />
-                <div className={phone ? "flex flex-col w-full" : "flex w-full"} style={{ gap: 8 }}>
-                  <div style={{ flex: phone ? undefined : 1.12, minWidth: 0 }}>
-                    <ModeCard ink={MODE_INK.unranked} icon={Wifi} title="UNRANKED" sub={off || (phone ? "guests too" : "anyone, guests too")} h={56} delay={200} disabled={!online} onClick={() => onPick("UNRANKED")} />
-                  </div>
-                  <div style={{ flex: phone ? undefined : 1, minWidth: 0 }}>
-                    <ModeCard ink={MODE_INK.private} icon={Lock} title="PRIVATE" sub={off || "a room code"} h={56} delay={650} disabled={!online} onClick={() => onPick("PRIVATE")} />
-                  </div>
-                </div>
-                <div className="w-full">
-                  <ModeCard ink={MODE_INK.ai} icon={Robot} title="VS AI" sub="strength 1–10" h={56} delay={800} onClick={() => onPick("DIFFICULTY")} />
-                </div>
+                <ModeCard big ink={MODE_INK.ranked} icon={Trophy} title="CONTROL" h={phone ? 96 : 100} delay={500}
+                  sub={rc.sub} note={rc.note} noteInk={rc.noteInk}
+                  disabled={!online || lock("control")} onClick={() => onPick("MATCHMAKING")} />
+                {half(
+                  <ModeCard ink={MODE_INK.ai} icon={Robot} title="VS AI" sub="strength 1–10" h={56} delay={800} disabled={lock()} onClick={() => onPick("DIFFICULTY")} />,
+                  <ModeCard ink={MODE_INK.private} icon={Lock} title="PRIVATE" sub={off || "a room code"} h={56} delay={650} disabled={!online || lock()} onClick={() => onPick("PRIVATE")} />,
+                )}
                 {/* Pass-and-play only makes sense on one phone in two hands. */}
-                {phone && <div className="w-full"><ModeCard ink={MODE_INK.turns} icon={People} title="TURN BASED" sub="1 device" h={56} delay={300} onClick={() => onPick("TURNBASED")} /></div>}
+                {phone && <div className="w-full"><ModeCard ink={MODE_INK.turns} icon={People} title="TURN BASED" sub="1 device" h={56} delay={300} disabled={lock()} onClick={() => onPick("TURNBASED")} /></div>}
               </div>
             </div>
     </InlineFrame>
+  );
+}
+
+/* ============================================================
+   RANKED QUEUE — kept while you wander the menu
+   ============================================================ */
+const qstore = { mode: null, since: 0, found: null, subs: new Set() };
+const qemit = () => qstore.subs.forEach((f) => f());
+const useQueueMode = () => useSyncExternalStore((f) => { qstore.subs.add(f); return () => qstore.subs.delete(f); }, () => qstore.mode);
+const useQueueFound = () => useSyncExternalStore((f) => { qstore.subs.add(f); return () => qstore.subs.delete(f); }, () => qstore.found);
+function startQueue(mode, loadout) {
+  if (qstore.mode || qstore.found) return;
+  if (mode === "blitz") net.blitzQueue(); else net.queue(loadout, false);
+  qstore.mode = mode; qstore.since = Date.now(); qemit();
+  sfx.pick();
+}
+function stopQueue() {
+  if (!qstore.mode) return;
+  if (qstore.mode === "blitz") net.blitzCancel(); else net.unqueue();
+  qstore.mode = null; qemit();
+}
+const useLobby = () => useSyncExternalStore(subs.online, () => net.lobby);
+/** The time now, refreshed every `ms` while `on`. */
+function useTick(ms, on = true) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { if (!on) return undefined; const h = setInterval(() => setNow(Date.now()), ms); return () => clearInterval(h); }, [ms, on]);
+  return now;
+}
+const fmtWait = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+
+/** A ranked mode's standing for a player: rating, rank, placement. */
+function rankedInfo(mode, profile) {
+  const r = mode === "blitz" ? profile?.blitz?.rating : profile?.rating;
+  const games = mode === "blitz" ? (profile?.blitz?.games || 0) : (profile?.stats?.games || 0);
+  const tr = r ? Math.round(r.r) : 1500;
+  return { tr, rd: r ? Math.round(r.rd) : 350, games, placed: games >= PLACEMENT_GAMES, rank: RANKS[rankIndexFor(tr)] };
+}
+
+
+/**
+ * A ranked mode's lobby, in place of the menu's buttons (like PLAY): your
+ * rank and rating, who's around, and one big PLAY. Queueing carries on if
+ * you leave this for the menu, settings or a theme; only other games wait.
+ */
+function RankedLobby({ mode, profile, loadout, onClose }) {
+  const P = usePx();
+  const q = useQueueMode(), found = useQueueFound();
+  const now = useTick(500, !!q);
+  const lobby = useLobby(), online = useOnline();
+  useEffect(() => { sfx.open(); }, []);
+  useEffect(() => { const k = (e) => e.key === "Escape" && onClose(); window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, [onClose]);
+  const info = rankedInfo(mode, profile);
+  const mine = q === mode, other = q && q !== mode, matched = found === mode;
+  const ink = MODE_INK.ranked;
+  const count = (k) => lobby?.[k]?.[mode] ?? 0;
+  const games = mode === "blitz" ? profile?.blitz : profile?.stats;
+  return (
+    <InlineFrame title={mode === "blitz" ? "BLITZ" : "CONTROL"} label={`${mode} ranked`} onClose={onClose} maxW={440}
+      aside={<span className="tb-t text-right" style={{ color: UI.text, opacity: 0.6 }}>{online ? `${online} online` : ""}</span>}>
+      <div className="flex flex-col items-center text-center" style={{ gap: 5 * P, paddingTop: 4 * P }}>
+        <div className="tb-t" style={{ color: UI.dim }}>{mode === "blitz" ? "8×8 race · spikes send junk" : "simultaneous turns · own the board"}</div>
+        {/* Your standing. */}
+        <div className="flex items-center" style={{ gap: 5 * P }}>
+          <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
+            <RankIcon rank={info.placed ? info.rank : null} size={28 * P} />
+            <span className="tb-t tb-b" style={{ color: info.placed ? info.rank.color : UI.dim }}>{info.placed ? info.rank.name : "UNPLACED"}</span>
+          </div>
+          <div className="flex flex-col items-start" style={{ gap: P }}>
+            {info.placed ? (
+              <>
+                <span className="tb-t tb-b tabular-nums" style={{ fontSize: "2em", lineHeight: 1.1 }}>{info.tr}</span>
+                <span className="tb-t" style={{ color: UI.dim }}>GLICKO ±{info.rd}</span>
+              </>
+            ) : (
+              <>
+                <span className="tb-t tb-b tabular-nums" style={{ fontSize: "2em", lineHeight: 1.1 }}>{Math.min(info.games, PLACEMENT_GAMES)}/{PLACEMENT_GAMES}</span>
+                <span className="tb-t" style={{ color: UI.dim }}>PLACEMENT MATCHES</span>
+              </>
+            )}
+            <span className="tb-t" style={{ color: UI.dim }}>{games?.games || 0} played · {games?.wins || 0} won</span>
+          </div>
+        </div>
+        {/* The one button. */}
+        <button onClick={() => (matched ? null : mine ? stopQueue() : !other && startQueue(mode, loadout))} disabled={!!other || matched}
+          aria-label={mine ? "Cancel search" : "Play"}
+          className={`flex flex-col items-center justify-center ${mine ? "tb-pulse" : ""} disabled:opacity-40`}
+          style={{ width: 210, height: 110, gap: 6, ...skFill(ink), color: UI.text, clipPath: CLIP }}>
+          {mine || matched
+            ? <span style={{ fontFamily: '"Silkscreen", monospace', fontWeight: 700, fontSize: "calc(var(--p) * 13)", lineHeight: 1 }}>{matched ? "FOUND" : "SEARCHING"}</span>
+            : <PixelWord text="PLAY" from="var(--tb-text)" to={ink} scale={2} />}
+          <span className="tb-t" style={{ color: UI.text, opacity: 0.85 }}>
+            {matched ? "match found" : mine ? `${fmtWait(now - qstore.since)} · click to cancel` : `${mode === "blitz" ? "ranked blitz" : "ranked control"}`}
+          </span>
+        </button>
+        {other && <div className="tb-t" style={{ color: GOLD }}>You're searching for {q === "blitz" ? "Blitz" : "Control"}. Cancel that first.</div>}
+        <div className="flex justify-center tb-t" style={{ gap: 6 * P, color: UI.dim }}>
+          <span><span className="tb-b" style={{ color: UI.text }}>{count("playing")}</span> in game</span>
+          <span><span className="tb-b" style={{ color: UI.text }}>{count("queueing")}</span> searching</span>
+        </div>
+        <div className="tb-t" style={{ color: UI.dim, opacity: 0.7 }}>You can leave this screen while you search.</div>
+      </div>
+    </InlineFrame>
+  );
+}
+
+/** Over the menu while you search: how long, and back to the lobby. */
+function QueuePill({ onOpen }) {
+  const P = usePx();
+  const q = useQueueMode(), found = useQueueFound();
+  const now = useTick(500, !!q);
+  if (!q && !found) return null;
+  return (
+    <button onClick={onOpen} className="absolute tb-t tb-pulse" style={{ top: `calc(env(safe-area-inset-top, 0px) + ${4 * P}px)`, left: "50%", transform: "translateX(-50%)", zIndex: 30,
+      padding: `${2 * P}px ${5 * P}px`, ...skFill(MODE_INK.ranked), color: UI.text }}>
+      {found ? "MATCH FOUND" : `SEARCHING ${q === "blitz" ? "BLITZ" : "CONTROL"} · ${fmtWait(now - qstore.since)}`}
+    </button>
+  );
+}
+
+/* ============================================================
+   COUNTDOWN — 3, 2, 1 before every game, in bold type
+   ============================================================ */
+let wipeDoneAt = 0; // when the wave on screen (if any) will have rolled away
+/** When a game started now should say GO: three seconds after any wave has passed. */
+const goTime = (ms = 3000) => Math.max(performance.now(), wipeDoneAt - 250) + ms;
+function Countdown({ goAt, block = true }) {
+  const [now, setNow] = useState(() => performance.now());
+  useEffect(() => {
+    let raf;
+    const f = () => { const t = performance.now(); setNow(t); if (t < goAt + 700) raf = requestAnimationFrame(f); };
+    raf = requestAnimationFrame(f);
+    return () => cancelAnimationFrame(raf);
+  }, [goAt]);
+  const left = goAt - now;
+  const waiting = left > 0;
+  // Nothing moves until GO.
+  useEffect(() => {
+    if (!waiting || !block) return undefined;
+    const stop = (e) => { if (e.key !== "Escape") { e.stopPropagation(); e.preventDefault(); } };
+    window.addEventListener("keydown", stop, true);
+    return () => window.removeEventListener("keydown", stop, true);
+  }, [waiting, block]);
+  const n = Math.ceil(left / 1000);
+  useEffect(() => { if (n >= 1 && n <= 3) sfx.rotate(1); else if (n === 0) sfx.pick(); }, [n]);
+  if (left < -600) return null;
+  return (
+    <div className="fixed inset-0 flex items-center justify-center" style={{ zIndex: 55, pointerEvents: waiting && block ? "all" : "none" }}
+      onPointerDown={(e) => { if (waiting) { e.stopPropagation(); e.preventDefault(); } }}>
+      {left <= 3000 && (
+        <span key={n} className="tb-dive" style={{
+          fontFamily: '"Silkscreen", ui-monospace, monospace', fontWeight: 700, fontSize: "calc(var(--p) * 48)", lineHeight: 1,
+          color: n > 0 ? "var(--tb-text)" : GOLD, textShadow: "calc(var(--p) * 2) calc(var(--p) * 2) 0 rgba(0,0,0,.45)",
+        }}>{n > 0 ? n : "GO"}</span>
+      )}
+    </div>
+  );
+}
+
+/* ============================================================
+   MATCH FOUND — a ping, the screen goes white, the tide; the two of
+   you either side of a wave; it parts on the board; 3, 2, 1.
+   ============================================================ */
+const INTRO = { ping: 1000, show: 3000, part: 600, count: 3000 };
+function VersusIntro({ intro, wipe, onScreen, onDone }) {
+  const P = usePx();
+  const [phase, setPhase] = useState("ping"); // ping → white → show → part → count
+  const [profileOf, setProfileOf] = useState(null);
+  useEffect(() => {
+    sfx.sonar();
+    const ts = [];
+    ts.push(setTimeout(() => {
+      setPhase("white");
+      wipe(() => { onScreen(); setPhase("show"); ts.push(setTimeout(() => setPhase("part"), INTRO.show)); ts.push(setTimeout(() => setPhase("count"), INTRO.show + INTRO.part)); });
+    }, INTRO.ping));
+    return () => ts.forEach(clearTimeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const goAt = intro.goAt;
+  useEffect(() => {
+    if (phase !== "count") return undefined;
+    const t = setTimeout(onDone, Math.max(0, goAt - performance.now()) + 700);
+    return () => clearTimeout(t);
+  }, [phase, goAt, onDone]);
+  const side = (p, right) => (
+    <div className="flex flex-col items-center" style={{ gap: 3 * P }}>
+      <button onClick={() => setProfileOf(p.name)} aria-label={`${p.name}'s profile`} className="tb-dive" style={{ animationDelay: right ? "180ms" : "0ms" }}>
+        <Avatar name={p.name} size={46 * P} ring={right ? "var(--tb-rival)" : "var(--tb-you)"} />
+      </button>
+      <span style={{ fontFamily: '"Silkscreen", monospace', fontWeight: 700, fontSize: "calc(var(--p) * 14)", color: "#1d1b33" }}>{p.name}</span>
+      <span className="tb-t tb-b" style={{ color: p.rank ? p.rank.color : "#5b587a", textShadow: "0 0 0 #000" }}>
+        {p.placed && p.rank ? `${p.rank.name} · ` : ""}{p.rating ?? "—"}
+      </span>
+    </div>
+  );
+  const parting = phase === "part" || phase === "count";
+  const half = (which) => ({
+    position: "absolute", inset: 0, background: "#F4F6FB",
+    clipPath: which === "a" ? "polygon(0 0, 100% 0, 100% 38%, 0 62%)" : "polygon(0 62%, 100% 38%, 100% 100%, 0 100%)",
+    transform: parting ? (which === "a" ? "translateY(-70%)" : "translateY(70%)") : "none",
+    transition: `transform ${INTRO.part}ms cubic-bezier(.6,0,.4,1)`,
+  });
+  return (
+    <>
+      {phase === "white" && <div className="fixed inset-0 tb-fade" style={{ zIndex: 58, background: "#F4F6FB" }} />}
+      {(phase === "show" || phase === "part") && (
+        <div className="fixed inset-0 font-mono" style={{ zIndex: 57, overflow: "hidden" }}>
+          <div style={half("a")}>
+            <div className="absolute flex items-center justify-center" style={{ left: 0, top: 0, width: "60%", height: "52%" }}>{side(intro.me, false)}</div>
+          </div>
+          <div style={half("b")}>
+            <div className="absolute flex items-center justify-center" style={{ right: 0, bottom: 0, width: "60%", height: "52%" }}>{side(intro.opp, true)}</div>
+          </div>
+          {/* The wave slashing between you. */}
+          <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 100 100" preserveAspectRatio="none"
+            style={{ opacity: parting ? 0 : 1, transition: `opacity ${INTRO.part}ms`, shapeRendering: "crispEdges" }}>
+            <defs>
+              <linearGradient id="vsSea" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stopColor="var(--tb-you)" /><stop offset=".5" stopColor="var(--tb-special)" /><stop offset="1" stopColor="var(--tb-rival)" />
+              </linearGradient>
+            </defs>
+            <path className="tb-vswave" fill="url(#vsSea)"
+              d="M-10 63 Q 5 58 15 60 T 40 54 T 65 48 T 90 41 T 115 36 L 115 32 Q 100 36 90 35 T 65 42 T 40 48 T 15 54 T -10 58 Z" />
+            <path className="tb-vswave2" fill="rgba(255,255,255,.75)"
+              d="M-10 60 Q 5 56 15 57 T 40 51 T 65 45 T 90 38 T 115 33 L 115 34 Q 100 37 90 37 T 65 44 T 40 50 T 15 56 T -10 61 Z" />
+          </svg>
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ opacity: parting ? 0 : 1, transition: "opacity 200ms" }}>
+            <span style={{ fontFamily: '"Silkscreen", monospace', fontWeight: 700, fontSize: "calc(var(--p) * 22)", color: "#fff", textShadow: "calc(var(--p) * 1.5) calc(var(--p) * 1.5) 0 rgba(29,27,51,.6)", transform: "rotate(-12deg)" }}>VS</span>
+          </div>
+          <div className="absolute inset-x-0 flex justify-center tb-t" style={{ bottom: `calc(env(safe-area-inset-bottom, 0px) + ${4 * P}px)`, color: "#5b587a" }}>
+            {intro.mode === "blitz" ? "RANKED BLITZ" : "RANKED CONTROL"} · click a player to see their profile
+          </div>
+        </div>
+      )}
+      {phase === "count" && <Countdown goAt={goAt} />}
+      {profileOf && <div style={{ position: "fixed", inset: 0, zIndex: 59 }}><ProfilePopup name={profileOf} onClose={() => setProfileOf(null)} /></div>}
+    </>
   );
 }
 
@@ -3651,115 +3948,6 @@ function Difficulty({ onStart, onBack, colors }) {
         <button onClick={() => onStart(lv)} className="w-full rounded tb-t" style={{ height: 50, ...skFill(UI.text), color: UI.text }}>
           START MATCH
         </button>
-      </Scaled>
-    </div>
-  );
-}
-
-/* ============================================================
-   MATCHMAKING — driven by the server queue
-   ============================================================ */
-const BAND_CAP = 600;
-
-// After this long with no opponent, offer the AI instead of a longer wait.
-const LONELY_AFTER_S = 30;
-
-function Matchmaking({ profile, loadout, colors, onCancel, onPlayAi, unranked = false }) {
-  const search = useSearch();
-  const found = useFound();
-  useEffect(() => { if (found) sfx.matchFound(); }, [found]);
-  const status = useStatus();
-
-  useEffect(() => {
-    net.queue(loadout, unranked);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const tr = profile?.rating ? Math.round(profile.rating.r) : 1500;
-  const rank = RANKS[rankIndexFor(tr)];
-  const oppRank = found ? RANKS[rankIndexFor(found.opponent.rating)] : null;
-  const band = search?.band ?? 40;
-  const elapsed = search?.elapsed ?? 0;
-
-  return (
-    <div className="tb-screen tb-safe w-full flex flex-col items-center justify-center px-6 font-mono" style={{ color: UI.text }}>
-      <Scaled className="w-full" style={{ maxWidth: 330 }}>
-        {!found ? (
-          <>
-            <div className="text-center mb-8">
-              <div className="tb-t tb-pulse mb-2" style={{ color: colors.you }}>{unranked ? "UNRANKED · SEARCHING" : "SEARCHING"}</div>
-              <div className="tb-t tabular-nums">{elapsed.toFixed(1)}s</div>
-            </div>
-
-            <div className="mb-6">
-              <div className="flex justify-between tb-t mb-2" style={{ color: UI.dim }}>
-                <span>±{band} TR</span>
-                <span>{search?.queued ?? 1} in queue</span>
-              </div>
-              <div className="relative h-9 rounded overflow-hidden" style={{ background: UI.cell }}>
-                <div className="absolute inset-y-0" style={{
-                  left: `${Math.max(0, 50 - (band / (BAND_CAP * 2)) * 100)}%`,
-                  right: `${Math.max(0, 50 - (band / (BAND_CAP * 2)) * 100)}%`,
-                  background: `${colors.you}22`,
-                  borderLeft: `1px solid ${colors.you}88`,
-                  borderRight: `1px solid ${colors.you}88`,
-                  transition: "left 200ms linear, right 200ms linear",
-                }} />
-                <div className="absolute inset-y-0" style={{ left: "50%", width: 2, background: colors.you, transform: "translateX(-1px)" }} />
-              </div>
-              <div className="text-center tb-t mt-2 flex items-center justify-center gap-1.5"
-                style={{ color: status === "online" ? UI.dim : GOLD }}>
-                {status !== "online" && <WifiOff size={11} />}
-                {unranked ? "ratings don't change" : `${tr} TR · ${rank.name}`}
-              </div>
-            </div>
-
-            <div className="tb-t text-center mb-8" style={{ color: UI.dim }}>
-              {status === "online"
-                ? null
-                : status === "kicked"
-                ? "You signed in somewhere else. Reload to take this session back."
-                : "Lost the server — reconnecting. You'll rejoin the queue automatically."}
-            </div>
-
-            {elapsed >= LONELY_AFTER_S && (
-              <div className="mb-3 tb-fade">
-                <div className="tb-t italic text-center mb-2" style={{ color: UI.dim }}>
-                  Quiet right now. Play the AI instead?
-                </div>
-                <button onClick={() => { net.unqueue(); onPlayAi(); }} className="w-full tb-t"
-                  style={{ height: 46, ...skFill(UI.text), color: UI.text }}>
-                  PLAY THE AI
-                </button>
-              </div>
-            )}
-            <button onClick={() => { net.unqueue(); onCancel(); }} className="w-full rounded tb-t" style={{ height: 46, ...sk(UI.line), color: UI.dim }}>
-              CANCEL
-            </button>
-          </>
-        ) : (
-          <div className="text-center">
-            <div className="tb-t mb-7" style={{ color: UI.dim }}>MATCH FOUND</div>
-            <div className="flex items-center justify-center gap-4 mb-6">
-              <div className="flex-1">
-                <div className="rounded mx-auto flex items-center justify-center mb-2" style={{ width: 52, height: 52, background: `${rank.color}1F`, ...sk(rank.color) }}>
-                  <span className="tb-t" style={{ color: rank.color }}>{rank.name}</span>
-                </div>
-                <div className="tb-t truncate">{profile.name}</div>
-                <div className="tb-t" style={{ color: UI.dim }}>{tr}</div>
-              </div>
-              <span className="tb-t" style={{ color: UI.dim }}>VS</span>
-              <div className="flex-1">
-                <div className="rounded mx-auto flex items-center justify-center mb-2" style={{ width: 52, height: 52, background: `${oppRank.color}1F`, ...sk(oppRank.color) }}>
-                  <span className="tb-t" style={{ color: oppRank.color }}>{oppRank.name}</span>
-                </div>
-                <div className="tb-t truncate">{found.opponent.name}</div>
-                <div className="tb-t" style={{ color: UI.dim }}>{found.opponent.rating}</div>
-              </div>
-            </div>
-            <div className="tb-t" style={{ color: UI.dim }}>{found.gap} TR apart</div>
-          </div>
-        )}
       </Scaled>
     </div>
   );
@@ -3821,6 +4009,7 @@ function MPiece({ id, rot = 0, cell, gap, ink, faint = false }) {
 
 function MarathonGame({ theme, onExit }) {
   useEffect(() => { sky.slow = true; return () => { sky.slow = false; }; }, []);
+  const [goAt] = useState(() => goTime()); // 3-2-1 before the first move
   const P = usePx();
   const wipe = useContext(WipeCtx);
   const compact = useCompact();
@@ -4072,6 +4261,7 @@ function MarathonGame({ theme, onExit }) {
 
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono select-none" style={{ color: UI.text, ...(compact ? { touchAction: "none" } : null) }}>
+      <Countdown goAt={goAt} />
       <div className="tb-col relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
         <div ref={stageRef} className="flex-1 min-h-0 flex flex-col items-center">
           <div style={{ flex: 1, minHeight: 4 * P }} />
@@ -4266,6 +4456,7 @@ function SprintGame({ onExit, ultra = false }) {
   const P = usePx();
   const [stageRef, stage] = useSize();
   const keys = useSyncExternalStore(subscribeSprintKeys, getSprintKeys);
+  // In on the tide, no countdown: the clock starts on your first move.
   const [r, setRun] = useState(() => freshSprint(ultra));
   // Key handlers read and write this copy at once, so two presses in one frame both count.
   const live = useRef(r);
@@ -4280,10 +4471,15 @@ function SprintGame({ onExit, ultra = false }) {
   // The clock: ticks every frame while a run is going.
   useEffect(() => {
     let raf;
-    const loop = () => { raf = requestAnimationFrame(loop); const c = live.current; if (c.startAt && !c.endAt) setClock(performance.now()); };
+    const loop = () => {
+      raf = requestAnimationFrame(loop);
+      const c = live.current, t = performance.now();
+      if (!c.startAt && !c.result && c.goAt && t >= c.goAt) { commit({ ...c, startAt: c.goAt }); return; }
+      if (c.startAt && !c.endAt) setClock(t);
+    };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, []);
+  }, [commit]);
 
   const mode = ultra ? "ultra" : "sprint";
   const [ranked, setRanked] = useState(null); // the server's answer about the last run
@@ -4291,7 +4487,7 @@ function SprintGame({ onExit, ultra = false }) {
   // A seed from the server replaces the local one, as long as the run hasn't started.
   useEffect(() => net.on("soloSeed", (m) => {
     const c = live.current;
-    if (m.mode === mode && !c.startAt && !c.result) commit(freshSprint(ultra, m.seed, true));
+    if (m.mode === mode && !c.startAt && !c.result) commit({ ...freshSprint(ultra, m.seed, true), goAt: c.goAt });
   }), [mode, ultra, commit]);
   useEffect(() => net.on("soloResult", (m) => setRanked(m)), []);
   useEffect(() => { askSeed(); }, [askSeed]);
@@ -4519,16 +4715,16 @@ function SprintGame({ onExit, ultra = false }) {
                 }))}
               </div>
               {vanish && <VanishLayer key={vanish.key} cleared={vanish.cleared} cell={cell} gap={g} ink={S_INK} />}
-              {r.pop && (
-                <div key={r.pop.key} className="absolute flex justify-center pointer-events-none tb-rise" style={{ left: 0, right: 0, bottom: 4 * P, zIndex: 4 }}>
-                  <span className="tb-t tb-b" style={{ color: GOLD, padding: `${P}px ${3 * P}px`, background: "color-mix(in srgb, var(--tb-panel-solid) 82%, transparent)", clipPath: CLIP1, textShadow: `${P}px ${P}px 0 rgba(0,0,0,.6)` }}>{r.pop.text}</span>
-                </div>
-              )}
               {!r.startAt && !r.result && (
                 <div className="absolute inset-x-0 flex justify-center pointer-events-none" style={{ top: 2 * P }}>
                   <span className="tb-t" style={{ color: UI.text, padding: `${P}px ${3 * P}px`, background: "color-mix(in srgb, var(--tb-panel-solid) 80%, transparent)" }}>
                     {ultra ? "2 MINUTES · THE CLOCK STARTS ON YOUR FIRST MOVE" : "THE CLOCK STARTS ON YOUR FIRST MOVE"}
                   </span>
+                </div>
+              )}
+              {r.pop && (
+                <div key={r.pop.key} className="absolute flex justify-center pointer-events-none tb-rise" style={{ left: 0, right: 0, bottom: 4 * P, zIndex: 4 }}>
+                  <span className="tb-t tb-b" style={{ color: GOLD, padding: `${P}px ${3 * P}px`, background: "color-mix(in srgb, var(--tb-panel-solid) 82%, transparent)", clipPath: CLIP1, textShadow: `${P}px ${P}px 0 rgba(0,0,0,.6)` }}>{r.pop.text}</span>
                 </div>
               )}
             </div>
@@ -4579,7 +4775,7 @@ const cloneSt = (st) => ({ ...st, board: st.board.map((row) => row.slice()), han
  *           by the server's copy if they ever disagree.
  *   vs bot  the same game against the Blitz bot, skill 1-10 (speed and smarts).
  */
-function BlitzGame({ onExit, online = false, colors }) {
+function BlitzGame({ onExit, online = false, colors, onRequeue }) {
   useGameMusic();
   useEffect(() => { sky.slow = true; return () => { sky.slow = false; }; }, []);
   const P = usePx();
@@ -4594,12 +4790,13 @@ function BlitzGame({ onExit, online = false, colors }) {
     const me = newSprint(seed, Infinity), bot = newSprint(seed, Infinity);
     return { seed, me, bot, act: sSpawn(me, 0), startAt: performance.now() + startIn, result: null, reason: null, sent: { me: 0, bot: 0 }, flash: null, vanish: { me: null, bot: null }, ratings: null, log: [] };
   };
-  // vs bot: waits on the skill picker. online: waits for a match.
-  const [g, setG] = useState(null);
+  // vs bot: waits on the skill picker. Online: the match found in the lobby (its intro has played).
+  const joining = () => { const b = net.blitz; return online && b && !b.over && b.seed != null ? b : null; };
+  const [g, setG] = useState(() => { const b = joining(); return b ? fresh(b.seed, Math.max(0, b.countdown - (Date.now() - b.got))) : null; });
   const live = useRef(g);
   const commit = useCallback((next) => { live.current = next; setG(next); }, []);
   const [now, setNow] = useState(() => performance.now());
-  const [chatM, setChatM] = useState(null);
+  const [chatM, setChatM] = useState(joining);
   const [showEnd, setShowEnd] = useState(false);
   const boardEl = useRef(null);
   const mouse = useRef(null);
@@ -4611,14 +4808,13 @@ function BlitzGame({ onExit, online = false, colors }) {
   }, []);
   const playing = (c) => c && !c.result && performance.now() >= c.startAt;
   const startBot = useCallback(() => { blitzSkill.set(skill); setShowEnd(false); commit(fresh(newSprintSeed(), BLITZ_COUNTDOWN * 1000)); }, [skill, commit]);
-  const findMatch = useCallback(() => { setShowEnd(false); commit(null); net.blitzQueue(); }, [commit]);
+  const findMatch = useCallback(() => { onRequeue?.(); }, [onRequeue]);
   const oppName = online ? (chatM?.opponent?.name || "OPPONENT") : `BOT · SKILL ${blitzSkill.get()}`;
   const myName = net.profile?.name || "YOU";
 
   // Online: the server's messages.
   useEffect(() => {
     if (!online) return undefined;
-    net.blitzQueue(); // (the screen starts on "finding a match")
     const offs = [
       net.on("blitzStart", (b) => { setShowEnd(false); commit(fresh(b.seed, b.countdown)); setChatM(b); }),
       net.on("blitz", (b) => setChatM(b)),
@@ -4652,7 +4848,7 @@ function BlitzGame({ onExit, online = false, colors }) {
           sent: m.sent ? { me: m.sent[m.you], bot: m.sent[other] } : c.sent });
       }),
     ];
-    return () => { offs.forEach((f) => f()); net.blitzCancel(); };
+    return () => { offs.forEach((f) => f()); };
   }, [online, commit, myName]);
   // The opponent's name, kept with the game for the replay.
   useEffect(() => { if (g && online && chatM?.opponent?.name && g.oppName !== chatM.opponent.name) commit({ ...live.current, oppName: chatM.opponent.name }); }, [g, online, chatM, commit]);
@@ -4878,7 +5074,6 @@ function BlitzGame({ onExit, online = false, colors }) {
     );
   };
 
-  const count = g ? Math.ceil((g.startAt - now) / 1000) : 0;
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono select-none" style={{ color: UI.text, cursor: g && !g.result ? "crosshair" : undefined }}>
       <div ref={stageRef} className="relative flex-1 min-h-0 flex flex-col items-center w-full mx-auto px-3" style={{ maxWidth: 1600 }}>
@@ -4893,16 +5088,15 @@ function BlitzGame({ onExit, online = false, colors }) {
         ) : online ? (
           // Looking for an opponent.
           <div className="flex flex-col items-center tb-t" style={{ gap: 4 * P }}>
-            <span className="tb-pulse" style={{ color: "#F29A4A" }}>FINDING A BLITZ MATCH…</span>
-            <span style={{ color: UI.dim }}>{net.profile?.blitz?.rating ? `${Math.round(net.profile.blitz.rating.r)} BLITZ RATING` : "your first Blitz match"}</span>
-            <button onClick={onExit} className="tb-t px-4" style={{ height: 38, ...sk(UI.line), color: UI.dim }}>CANCEL</button>
+            <span className="tb-pulse" style={{ color: UI.dim }}>JOINING THE MATCH…</span>
+            <button onClick={onExit} className="tb-t px-4" style={{ height: 38, ...sk(UI.line), color: UI.dim }}>MENU</button>
           </div>
         ) : (
-          // The bot's skill: 1 (a piece every 2 s, careless) to 10 (2 a second, hunts big spikes).
+          // The bot's skill: 1 (~0.6 a second, careless) to 10 (~3 a second, hunts big spikes).
           <div className="flex flex-col items-center tb-t" style={{ gap: 4 * P, width: 300 }}>
             <div className="flex items-baseline justify-between w-full"><span style={{ color: UI.dim }}>BOT SKILL</span><span className="tb-b" style={{ color: "#F29A4A" }}>{skill}</span></div>
             <PixelSlider min={1} max={10} value={skill} onChange={setSkill} ink="#F29A4A" label="Bot skill" className="w-full" />
-            <span style={{ color: UI.dim }}>{botPps(skill).toFixed(2)} pieces a second · {skill >= 8 ? "hunts combos and big spikes" : skill >= 5 ? "looks ahead" : "plays loosely"}</span>
+            <span style={{ color: UI.dim }}>about {botPps(skill).toFixed(1)} pieces a second · {skill >= 8 ? "hunts combos and big spikes" : skill >= 5 ? "looks ahead" : "plays loosely"}</span>
             <button onClick={startBot} className="tb-t px-6" style={{ height: 40, ...skFill("#F29A4A"), color: UI.text }}>START</button>
           </div>
         )}
@@ -4912,11 +5106,8 @@ function BlitzGame({ onExit, online = false, colors }) {
             : <ForfeitButton ranked={online} onConfirm={() => act("forfeit")} />}
         </div>
         <div style={{ flex: 2, minHeight: 2 * P }} />
-        {g && count > 0 && !g.result && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ zIndex: 10 }}>
-            <div key={count} className="tb-dive"><PixelWord text={String(count)} from="var(--tb-text)" to="#F29A4A" scale={6} /></div>
-          </div>
-        )}
+        {/* vs bot: 3-2-1 here. Online, the match-found intro counts down. */}
+        {g && !online && !g.result && <Countdown key={g.startAt} goAt={g.startAt} block={false} />}
       </div>
       {online && g && chatM && <ChatDock m={{ chat: chatM.chat || [], you: chatM.you, opponent: chatM.opponent, chatError: chatM.chatError }} colors={colors} />}
     </div>
@@ -4971,6 +5162,7 @@ const lockKind = (raw) => (!raw || raw.type === "pass" ? "pass" : raw.type === "
 
 function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart }) {
   useEffect(() => { sky.slow = true; return () => { sky.slow = false; }; }, []);
+  const [goAt] = useState(() => goTime()); // 3-2-1 before the first move
   const solo = mode === "SOLO";
   // TURN BASED is pass-and-play under the normal rules: both choose, then reveal.
   const turnBased = mode === "TURNBASED";
@@ -5147,7 +5339,10 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
     if (phase !== "AI_THINK") return;
     const t = setTimeout(() => {
       const pieceB = currentPiece(decks.B);
-      const raw = aiPickAction({ board, pins, meters }, pieceB, "B", aiLevel, LEVELS.length);
+      // The top strength plays the turn as simultaneous: it predicts your reply (see aiPickActionDeep).
+      const raw = aiLevel >= LEVELS.length
+        ? aiPickActionDeep({ board, pins, meters }, pieceB, "B", currentPiece(decks.A), { next: upcoming(decks.B)[0] })
+        : aiPickAction({ board, pins, meters }, pieceB, "B", aiLevel, LEVELS.length);
       // Stamps → what they hit (an AI pin stamp only pins its own squares, and pays for those).
       const move = raw ? normalizeAction(board, pins, meters.B, "B", pieceB, raw).move || null : null;
       logRef.current.push(encodeTurn(encodeAction(rawARef.current?.raw, rawARef.current?.piece), encodeAction(move ? raw : null, pieceB)));
@@ -5216,6 +5411,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
 
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ color: UI.text }}>
+      <Countdown goAt={goAt} />
       <div className="tb-col relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: PHONE_W }}>
         <div ref={stageRef} className="flex-1 min-h-0 flex flex-col items-center">
           <div style={{ flex: 1, minHeight: 4 * P }} />
@@ -5737,28 +5933,6 @@ function GuestNameForm() {
 }
 
 /** Unranked: anyone (guests too) against whoever's searching. Ratings don't move. */
-function Unranked({ status, profile, loadout, colors, onBack, onPlayAi }) {
-  const auth = useAuth();
-  const P = usePx();
-  if (auth === "authed" || auth === "guest") {
-    return <Matchmaking unranked profile={profile} loadout={loadout} colors={colors} onCancel={onBack} onPlayAi={onPlayAi} />;
-  }
-  return (
-    <div className="tb-screen tb-safe w-full flex flex-col items-center justify-center px-5 font-mono" style={{ color: UI.text }}>
-      <Scaled className="w-full" style={{ maxWidth: 340 }}>
-        <div className="flex items-center justify-between mb-4">
-          <button onClick={onBack} className="flex items-center gap-1 tb-t py-2" style={{ color: UI.dim }}><ChevronLeft size={13} /> MENU</button>
-          <div className="tb-t" style={{ color: UI.dim }}>UNRANKED</div>
-        </div>
-        <div style={{ padding: 6 * P, ...glass(UI.line) }}>
-          {status === "online" ? <GuestNameForm /> : <div className="tb-t text-center py-6" style={{ color: UI.dim }}>Connecting to the server…</div>}
-        </div>
-        <div className="tb-t text-center mt-3" style={{ color: UI.dim, opacity: 0.75 }}>Unranked games don't change your rating.</div>
-      </Scaled>
-    </div>
-  );
-}
-
 /** The link a friend opens to land straight in your room. */
 const roomLink = (code) => `${location.origin}${location.pathname}?room=${code}`;
 
@@ -6169,10 +6343,8 @@ function soloFrames(rec) {
   return out;
 }
 
-function SoloReplayViewer({ rec, onBack }) {
-  const P = usePx();
-  const frames = useMemo(() => soloFrames(rec), [rec]);
-  const end = frames[frames.length - 1].t;
+/** Playback over real time, shared by the solo and Blitz replays. */
+function useTimedPlayback(end) {
   const [time, setTime] = useState(0);
   const [playing, setPlaying] = useState(true);
   const [speed, setSpeed] = useState(1);
@@ -6189,59 +6361,110 @@ function SoloReplayViewer({ rec, onBack }) {
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
   }, [playing, speed, end]);
-  const seek = (t) => { live.current.time = t; setTime(t); };
-  const i = frameAt(frames, time);
-  const f = frames[i];
-  useReplaySfx(frames, i, playing, false);
-  const marathon = rec.kind === "marathon";
-  const N = marathon ? M_SIZE : S_SIZE;
-  const cell = 9 * P, gap = P;
-  const ink = (v) => (marathon ? M_INK[v] : S_INK_ALL[v]);
-  const just = new Set((f.cells || []).map(([r, c]) => r * N + c));
+  const seek = useCallback((t) => { live.current.time = Math.max(0, Math.min(end, t)); setTime(live.current.time); }, [end]);
+  useEffect(() => {
+    const on = (e) => {
+      if (e.target && e.target.tagName === "INPUT") return;
+      if (e.key === " ") { e.preventDefault(); if (live.current.time >= end) { seek(0); setPlaying(true); } else setPlaying((p) => !p); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); seek(live.current.time + 2000); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); seek(live.current.time - 2000); }
+    };
+    window.addEventListener("keydown", on);
+    return () => window.removeEventListener("keydown", on);
+  }, [end, seek]);
+  return { time, playing, setPlaying, speed, setSpeed, seek };
+}
+
+/** The page every replay uses: a header, the boards as big as fit, the transport at the bottom. */
+function ReplayPage({ onBack, head, aside, stageRef, children, pb, rec, frames, ink, label }) {
+  const P = usePx();
+  const compact = useCompact();
+  const d = useBubble(compact);
+  const { time, playing, setPlaying, speed, setSpeed, seek } = pb;
+  const end = frames[frames.length - 1].t;
   return (
-    <div className="tb-screen tb-safe w-full flex flex-col items-center font-mono" style={{ color: UI.text }}>
-      <div className="flex flex-col items-center" style={{ gap: 3 * P, paddingTop: 6 * P }}>
-        <div className="flex flex-col tb-t" style={{ width: Math.max(N * (cell + gap) + 40 * P, 320), gap: P }}>
-          <button onClick={onBack} className="flex items-center gap-1 py-1 self-start" style={{ color: UI.dim }}><ChevronLeft size={13} /> REPLAYS</button>
-          <span className="text-center" style={{ color: UI.text }}>{rec.kind.toUpperCase()}{rec.name ? ` · ${rec.name}` : ""}</span>
-          <span className="text-center" style={{ color: UI.dim }}>{fmtDate(rec.date)}</span>
+    <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ color: UI.text }}>
+      <div className="relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: 1500 }}>
+        <div className="flex items-center justify-between shrink-0 pt-3 pb-1 gap-2">
+          <button onClick={onBack} className="flex items-center gap-1 tb-t py-2" style={{ color: UI.dim }}><ChevronLeft size={13} /> REPLAYS</button>
+          <div className="tb-t truncate text-center" style={{ color: UI.dim }}>{head}</div>
+          <div className="flex items-center gap-1 shrink-0">{aside}</div>
         </div>
-        <span className="tb-t tb-b tabular-nums" style={{ color: "var(--tb-you)" }}>
-          {marathon ? `${f.score.toLocaleString("en-US")}` : fmtClock(rec.kind === "ultra" ? Math.max(0, S_ULTRA_MS - time) : time)}
-        </span>
-        <div className="flex items-start" style={{ gap: 4 * P }}>
-          <div style={{ display: "grid", gridTemplateColumns: `repeat(${N}, ${cell}px)`, gap }}>
-            {f.board.map((row, r) => row.map((v, c) => (
-              <div key={r * N + c} style={{ width: cell, height: cell, position: "relative", clipPath: CLIP1, ...(v === null ? GLASS : null), outline: just.has(r * N + c) ? `${P}px solid ${UI.text}` : "none" }}>
-                {v !== null && <Ink size={cell} color={ink(v)} />}
-              </div>
-            )))}
-          </div>
-          {!marathon && (
-            <div className="flex flex-col items-start" style={{ gap: 2 * P }}>
-              {f.hand.map((id, k) => <div key={k} className="flex items-center justify-center" style={{ width: 30 * P, height: 14 * P, ...glass(UI.line) }}><SPiece id={id} cell={3 * P} gap={P} /></div>)}
-              {f.queue.map((id, k) => <Ink key={k} size={6 * P} color={S_INK_ALL[id]} />)}
+        <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center">{children}</div>
+        {/* Transport: start · back · play · forward · end, speed, a scrubber, and the video. */}
+        <div className="shrink-0 flex flex-col items-center gap-2 pt-2 pb-3">
+          <PixelSlider min={0} max={Math.max(1, Math.ceil(end / 100))} value={Math.round(time / 100)} onChange={(v) => { setPlaying(false); seek(v * 100); }}
+            ink={ink} label="Replay position" className="w-full" style={{ maxWidth: 720 }} />
+          <div className="flex items-center justify-center flex-wrap" style={{ gap: 2 * P }}>
+            <Bubble w={d} h={d} label="Start" onClick={() => { setPlaying(false); seek(0); }}><First /></Bubble>
+            <Bubble w={d} h={d} label="Back 2 seconds" onClick={() => seek(time - 2000)}><ChevronLeft /></Bubble>
+            <Bubble w={d + 8} h={d} label={playing ? "Pause" : "Play"} tint={ink} fill={30}
+              onClick={() => { if (time >= end) { seek(0); setPlaying(true); } else setPlaying(!playing); }}>{playing ? <Pause /> : <Play />}</Bubble>
+            <Bubble w={d} h={d} label="Forward 2 seconds" onClick={() => seek(time + 2000)}><ChevronRight /></Bubble>
+            <Bubble w={d} h={d} label="End" onClick={() => { setPlaying(false); seek(end); }}><span style={{ display: "inline-flex", transform: "scaleX(-1)" }}><First /></span></Bubble>
+            <div className="flex items-center" style={{ gap: P, marginLeft: 2 * P }}>
+              {SPEEDS.map((sp) => (
+                <button key={sp} onClick={() => setSpeed(sp)} className="tb-t px-1.5"
+                  style={{ height: d * P, ...(speed === sp ? skFill(UI.text) : glass(UI.line)), color: speed === sp ? UI.text : UI.dim }}>{sp}×</button>
+              ))}
             </div>
-          )}
-        </div>
-        <div className="flex tb-t" style={{ gap: 8 * P }}>
-          {rec.kind === "ultra" && <span>SCORE <span className="tb-b">{f.score.toLocaleString("en-US")}</span></span>}
-          <span>LINES <span className="tb-b">{f.lines}</span></span>
-          {!marathon && <span>PIECES <span className="tb-b">{f.pieces}</span></span>}
-        </div>
-        <PixelSlider min={0} max={Math.max(1, Math.ceil(end / 100))} value={Math.round(time / 100)} onChange={(v) => { setPlaying(false); seek(v * 100); }} label="Replay position" style={{ width: N * (cell + gap) + 40 * P }} />
-        <div className="flex items-center" style={{ gap: 2 * P }}>
-          <button onClick={() => { if (time >= end) seek(0); setPlaying(!playing); }} className="tb-t px-3" style={{ height: 32, ...glass(UI.line), color: UI.text }}>{playing ? "PAUSE" : "PLAY"}</button>
-          <button onClick={() => seek(0)} className="tb-t px-3" style={{ height: 32, ...glass(UI.line), color: UI.text }}>RESTART</button>
-          {SPEEDS.map((s) => (
-            <button key={s} onClick={() => setSpeed(s)} className="tb-t px-2" aria-pressed={speed === s} style={{ height: 32, ...(speed === s ? skFill(UI.text) : glass(UI.line)), color: UI.text }}>{s}×</button>
-          ))}
-          <VideoButton rec={rec} frames={frames} onStart={() => setPlaying(false)} />
+            <VideoButton rec={rec} frames={frames} onStart={() => setPlaying(false)} />
+          </div>
+          <div className="tb-t tabular-nums" style={{ color: UI.dim }}>{label}</div>
         </div>
       </div>
     </div>
   );
 }
+
+function SoloReplayViewer({ rec, onBack }) {
+  const P = usePx();
+  const frames = useMemo(() => soloFrames(rec), [rec]);
+  const end = frames[frames.length - 1].t;
+  const pb = useTimedPlayback(end);
+  const { time, playing } = pb;
+  const i = frameAt(frames, time);
+  const f = frames[i];
+  useReplaySfx(frames, i, playing, false);
+  const [stageRef, stage] = useSize();
+  const marathon = rec.kind === "marathon";
+  const N = marathon ? M_SIZE : S_SIZE, gap = P;
+  // As big as the stage allows: the board, and beside it the pieces in hand and next.
+  const cols = N + (marathon ? 0 : 3.4);
+  const cell = Math.max(4 * P, Math.min(26 * P, Math.floor(Math.min((stage.w - 16 * P) / cols, (stage.h - 30 * P) / N) / P) * P));
+  const ink = (v) => (marathon ? M_INK[v] : S_INK_ALL[v]);
+  const just = new Set((f.cells || []).map(([r, c]) => r * N + c));
+  const clock = marathon ? f.score.toLocaleString("en-US") : fmtClock(rec.kind === "ultra" ? Math.max(0, S_ULTRA_MS - time) : time);
+  const half = Math.max(P, Math.floor(cell / 2 / P) * P - P);
+  return (
+    <ReplayPage onBack={onBack} stageRef={stageRef} pb={pb} rec={rec} frames={frames} ink={marathon ? MODE_INK.marathon : rec.kind === "ultra" ? MODE_INK.ultra : MODE_INK.sprint}
+      head={<>{rec.kind.toUpperCase()}{rec.name ? ` · ${rec.name}` : ""} · {fmtDate(rec.date)}</>}
+      label={[rec.kind === "ultra" || marathon ? `score ${f.score.toLocaleString("en-US")}` : null, `${f.lines} lines`, !marathon ? `${f.pieces} pieces` : null].filter(Boolean).join(" · ")}>
+      <div className="flex flex-col items-center" style={{ gap: 3 * P }}>
+        <span className="tb-t tb-b tabular-nums" style={{ color: "var(--tb-you)", fontSize: "1.4em" }}>{clock}</span>
+        <div className="flex items-start" style={{ gap: 4 * P }}>
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${N}, ${cell}px)`, gap }}>
+            {f.board.map((row, r) => row.map((v, c) => (
+              <div key={r * N + c} style={{ width: cell, height: cell, position: "relative", clipPath: Math.round(cell / P) >= 9 ? CLIP : CLIP1, ...(v === null ? GLASS : null) }}>
+                {v !== null && <Ink size={cell} color={ink(v)} />}
+                {just.has(r * N + c) && <div className="absolute inset-0" style={{ boxShadow: `inset 0 0 0 ${P}px ${UI.text}` }} />}
+              </div>
+            )))}
+          </div>
+          {!marathon && (
+            <div className="flex flex-col items-start" style={{ gap: 2 * P }}>
+              {f.hand.map((id, k) => <div key={k} className="flex items-center justify-center" style={{ width: Math.round(cell * 2.3), height: Math.round(cell * 1.4), ...glass(UI.line) }}><SPiece id={id} cell={half} gap={P} /></div>)}
+              <div className="flex flex-col items-center" style={{ gap: 2 * P, padding: 2 * P, ...glass(UI.line) }}>
+                {f.queue.map((id, k) => <Ink key={k} size={Math.round(cell * 0.8)} color={S_INK_ALL[id]} />)}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </ReplayPage>
+  );
+}
+
 
 /**
  * A Blitz replay: both boards rebuilt from the seed and the match log, in
@@ -6279,57 +6502,47 @@ function BlitzReplayViewer({ rec, colors, onBack }) {
   const P = usePx();
   const frames = useMemo(() => blitzFrames(rec), [rec]);
   const end = frames[frames.length - 1].t;
-  const [time, setTime] = useState(0);
-  const [playing, setPlaying] = useState(true);
-  const [speed, setSpeed] = useState(1);
-  const live = useRef({ time: 0 });
-  useEffect(() => {
-    if (!playing) return undefined;
-    let raf, last = performance.now();
-    const loop = (now) => {
-      raf = requestAnimationFrame(loop);
-      const t = Math.min(end, live.current.time + (now - last) * speed);
-      last = now; live.current.time = t; setTime(t);
-      if (t >= end) setPlaying(false);
-    };
-    raf = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf);
-  }, [playing, speed, end]);
-  const seek = (t) => { live.current.time = t; setTime(t); };
+  const pb = useTimedPlayback(end);
+  const { time, playing } = pb;
   const i = frameAt(frames, time);
   const f = frames[i];
   useReplaySfx(frames, i, playing, true);
+  const [stageRef, stage] = useSize();
   const me = rec.you || "A", them = me === "A" ? "B" : "A";
-  // As big as the window allows: two boards and their strips across, the controls under them.
-  const [vw, vh] = [typeof window === "undefined" ? 800 : window.innerWidth, typeof window === "undefined" ? 600 : window.innerHeight];
-  const cell = Math.max(6, Math.min(16, Math.floor(Math.min((vw - 40) / P / 25, (vh - 70 * P - 120) / P / 9.5)))) * P, gap = P;
+  const gap = P;
+  // Two boards with their strips, as big as fit side by side.
+  const cell = Math.max(4 * P, Math.min(20 * P, Math.floor(Math.min((stage.w - 24 * P) / (2 * (S_SIZE + 3.2) + 1), (stage.h - 30 * P) / (S_SIZE + 1.6)) / P) * P));
+  const half = Math.max(P, Math.floor(cell / 2 / P) * P - P);
   const inkOf = (id) => (sIsJunk(id) ? JUNK_INK : S_INK[id]);
-  // The last placement on each side, outlined; junk that just landed, flagged.
   const lastOf = (side) => { for (let k = i; k > 0; k--) if (frames[k].side === side && frames[k].cells) return frames[k]; return null; };
   const side = (s) => {
     const b = f[s], lp = lastOf(s);
     const just = new Set(lp && time - lp.t < 400 ? lp.cells.map(([r, c]) => r * S_SIZE + c) : []);
     const junkNow = f.side === s && f.junk && time - f.t < 700;
     const secs = Math.max(0.001, time / 1000);
+    const bw = S_SIZE * (cell + gap) - gap;
     return (
-      <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
-        <div className="flex items-center justify-between tb-t" style={{ width: S_SIZE * (cell + gap) + Math.round(cell * 2.2) + 3 * P }}>
-          <span className="truncate" style={{ color: s === me ? colors.you : colors.rival }}>{rec.names?.[s] || s}{rec.winner === s ? " ★" : ""}</span>
+      <div className="flex flex-col" style={{ gap: 2 * P }}>
+        <div className="flex items-center justify-between tb-t" style={{ width: bw }}>
+          <span className="truncate" style={{ color: s === me ? colors.you : colors.rival }}>{rec.names?.[s] || s}{rec.winner === s && time >= end ? " ★" : ""}</span>
           {junkNow && <span className="tb-b" style={{ color: UI.bad }}>+ JUNK {f.junk}</span>}
         </div>
         <div className="flex items-start" style={{ gap: 3 * P }}>
           <div style={{ display: "grid", gridTemplateColumns: `repeat(${S_SIZE}, ${cell}px)`, gap }}>
             {b.board.map((row, r) => row.map((v, c) => (
-              <div key={r * S_SIZE + c} style={{ width: cell, height: cell, position: "relative", clipPath: CLIP1, ...(v === null ? GLASS : null), outline: just.has(r * S_SIZE + c) ? `${P}px solid ${UI.text}` : "none" }}>
+              <div key={r * S_SIZE + c} style={{ width: cell, height: cell, position: "relative", clipPath: Math.round(cell / P) >= 9 ? CLIP : CLIP1, ...(v === null ? GLASS : null) }}>
                 {v !== null && <Ink size={cell} color={inkOf(v)} />}
+                {just.has(r * S_SIZE + c) && <div className="absolute inset-0" style={{ boxShadow: `inset 0 0 0 ${P}px ${UI.text}` }} />}
               </div>
             )))}
           </div>
           <div className="flex flex-col items-start" style={{ gap: 2 * P }}>
-            {b.hand.map((id, k) => <div key={k} className="flex items-center justify-center" style={{ width: Math.round(cell * 2.2), height: Math.round(cell * 1.3), ...glass(UI.line) }}><SPiece id={id} cell={Math.max(P, Math.floor(cell / (sIsJunk(id) ? 4 : 2.4) / P) * P)} gap={P} /></div>)}
-            {b.queue.map((id, k) => (
-              <div key={k} className="relative flex items-center justify-center"><Ink size={Math.round(cell * 0.7)} color={inkOf(id)} />{sIsJunk(id) && <span className="absolute tb-t" style={{ color: UI.text }}>{sJunkLevel(id)}</span>}</div>
-            ))}
+            {b.hand.map((id, k) => <div key={k} className="flex items-center justify-center" style={{ width: Math.round(cell * 2.2), height: Math.round(cell * 1.3), ...glass(UI.line) }}><SPiece id={id} cell={sIsJunk(id) ? Math.max(P, Math.floor(half / 2 / P) * P) : half} gap={P} /></div>)}
+            <div className="flex flex-col items-center" style={{ gap: 2 * P, padding: 2 * P, ...glass(UI.line) }}>
+              {b.queue.map((id, k) => (
+                <div key={k} className="relative flex items-center justify-center"><Ink size={Math.round(cell * 0.7)} color={inkOf(id)} />{sIsJunk(id) && <span className="absolute tb-t" style={{ color: UI.text }}>{sJunkLevel(id)}</span>}</div>
+              ))}
+            </div>
           </div>
         </div>
         <div className="flex tb-t" style={{ gap: 5 * P, color: UI.dim }}>
@@ -6340,28 +6553,12 @@ function BlitzReplayViewer({ rec, colors, onBack }) {
       </div>
     );
   };
-  const W = 2 * (S_SIZE * (cell + gap) + Math.round(cell * 2.2) + 3 * P) + 10 * P;
   return (
-    <div className="tb-screen tb-safe w-full flex flex-col items-center font-mono" style={{ color: UI.text }}>
-      <div className="flex flex-col items-center" style={{ gap: 3 * P, paddingTop: 6 * P }}>
-        <div className="flex flex-col tb-t" style={{ width: W, gap: P }}>
-          <button onClick={onBack} className="flex items-center gap-1 py-1 self-start" style={{ color: UI.dim }}><ChevronLeft size={13} /> REPLAYS</button>
-          <span className="text-center">{rec.ranked ? "BLITZ · RANKED" : "BLITZ"}</span>
-          <span className="text-center" style={{ color: UI.dim }}>{fmtDate(rec.date)}</span>
-        </div>
-        <span className="tb-t tb-b tabular-nums" style={{ color: "#F29A4A" }}>{fmtClock(time)}</span>
-        <div className="flex items-start" style={{ gap: 10 * P }}>{side(me)}{side(them)}</div>
-        <PixelSlider min={0} max={Math.max(1, Math.ceil(end / 100))} value={Math.round(time / 100)} onChange={(v) => { setPlaying(false); seek(v * 100); }} label="Replay position" style={{ width: W }} />
-        <div className="flex items-center" style={{ gap: 2 * P }}>
-          <button onClick={() => { if (time >= end) seek(0); setPlaying(!playing); }} className="tb-t px-3" style={{ height: 32, ...glass(UI.line), color: UI.text }}>{playing ? "PAUSE" : "PLAY"}</button>
-          <button onClick={() => seek(0)} className="tb-t px-3" style={{ height: 32, ...glass(UI.line), color: UI.text }}>RESTART</button>
-          {SPEEDS.map((sp) => (
-            <button key={sp} onClick={() => setSpeed(sp)} className="tb-t px-2" aria-pressed={speed === sp} style={{ height: 32, ...(speed === sp ? skFill(UI.text) : glass(UI.line)), color: UI.text }}>{sp}×</button>
-          ))}
-          <VideoButton rec={rec} frames={frames} onStart={() => setPlaying(false)} />
-        </div>
-      </div>
-    </div>
+    <ReplayPage onBack={onBack} stageRef={stageRef} pb={pb} rec={rec} frames={frames} ink={MODE_INK.ranked}
+      head={<><span style={{ color: colors.you }}>{rec.names?.[me] || "YOU"}</span> vs <span style={{ color: colors.rival }}>{rec.names?.[them] || "?"}</span> · {rec.ranked ? "BLITZ · RANKED" : "BLITZ"} · {fmtDate(rec.date)}</>}
+      label={fmtClock(time)}>
+      <div className="flex items-start" style={{ gap: 10 * P }}>{side(me)}{side(them)}</div>
+    </ReplayPage>
   );
 }
 
@@ -6593,7 +6790,7 @@ function RatingPanel({ from, to, rdFrom, rdTo }) {
       <div className="w-full tb-rise" style={{ padding: 4 * P, ...GLASS, clipPath: CLIP, animationDelay: "200ms" }}>
         <div className="flex items-center" style={{ gap: 4 * P }}>
           <div className="flex flex-col items-center shrink-0" style={{ gap: 2 * P }}>
-            <Ink size={14 * P} color={rank.color} />
+            <RankIcon rank={rank} size={20 * P} />
             <span className="tb-t" style={{ color: rank.color }}>{rank.name}</span>
           </div>
           <div className="flex-1 min-w-0 flex flex-col items-start" style={{ gap: 3 * P }}>
@@ -6681,7 +6878,35 @@ export default function TurfBlocks() {
   const [replayId, setReplayId] = useState(null);
   // The wave between a finished match and its result screen.
   const [wipeRun, setWipeRun] = useState(null);
-  const wipe = useCallback((atMiddle) => setWipeRun((cur) => cur || { id: Date.now(), atMiddle }), []);
+  const wipe = useCallback((atMiddle) => setWipeRun((cur) => {
+    if (cur) return cur;
+    wipeDoneAt = performance.now() + WIPE_IN_MS + WIPE_HOLD_MS + WIPE_OUT_MS;
+    return { id: Date.now(), atMiddle };
+  }), []);
+  // A ranked match found: the ping, the white, the tide, the two of you, 3-2-1.
+  const [intro, setIntro] = useState(null);
+  const [menuModal, setMenuModal] = useState(null); // the panel the menu opens on (back from a match: the lobby)
+  useEffect(() => {
+    const begin = (mode, opp) => {
+      if (qstore.mode !== mode) return false;
+      qstore.mode = null; qstore.found = mode; qemit();
+      const me = net.profile, mi = rankedInfo(mode, me);
+      const or = opp?.rating ?? null;
+      const oi = or != null ? RANKS[rankIndexFor(or)] : null;
+      setIntro({
+        id: Date.now(), mode, goAt: performance.now() + INTRO.ping + WIPE_IN_MS + INTRO.show + INTRO.part + INTRO.count,
+        me: { name: me?.name || "YOU", rating: mi.tr, rank: mi.rank, placed: mi.placed },
+        opp: { name: opp?.name || "OPPONENT", rating: or, rank: oi, placed: false },
+      });
+      return true;
+    };
+    const offF = net.on("found", (f) => { if (f && !f.room) begin("control", f.opponent); });
+    const offB = net.on("blitzStart", (b) => {
+      if (b.resume) { setScreen("BLITZ"); return; }
+      begin("blitz", b.opponent);
+    });
+    return () => { offF(); offB(); };
+  }, [setScreen]);
 
   const status = useStatus();
   const profile = useProfile();
@@ -6697,7 +6922,7 @@ export default function TurfBlocks() {
     const offT = net.on("token", (t) => store.set("tb:token", t));
     const offD = net.on("accountDeleted", () => { store.set("tb:token", ""); setScreen("MENU"); });
     const offM = net.on("match", (m) => {
-      if (m && m.board && !m.over) setScreen((cur) => (cur === "RESULT" ? cur : "RANKED"));
+      if (m && m.board && !m.over && !qstore.found) setScreen((cur) => (cur === "RESULT" ? cur : "RANKED"));
     });
     return () => { offT(); offM(); offD(); };
   }, [setScreen]);
@@ -6855,6 +7080,10 @@ export default function TurfBlocks() {
         background-size: 160% 160%, 170% 170%, 150% 150%;
         animation: tbTide 16s ease-in-out infinite;
       }
+      /* The wave between the two players before a ranked match. */
+      @keyframes tbVsWave { 0%,100% { transform: translate(0, 0) } 50% { transform: translate(-3px, 1.2px) } }
+      .tb-vswave { animation: tbVsWave 1.6s ease-in-out infinite; }
+      .tb-vswave2 { animation: tbVsWave 1.1s ease-in-out infinite reverse; }
       /* A band of light runs down the glass once, like a caustic. */
       @keyframes tbRipple { from { top: -30%; opacity: .9 } to { top: 110%; opacity: 0 } }
       .tb-ripple { height: 26%; background: linear-gradient(180deg, transparent, rgba(255,255,255,.13) 45%, color-mix(in srgb, var(--tb-you) 20%, transparent) 55%, transparent); animation: tbRipple .8s cubic-bezier(.3,.6,.4,1) .05s both; }
@@ -6906,19 +7135,14 @@ export default function TurfBlocks() {
   if (screen === "MENU")
     view = (
       <Menu
+        initialModal={menuModal}
         onPick={(t) => {
+          setMenuModal(null);
           if (t === "DIFFICULTY") setScreen("DIFFICULTY");
-          else if (t === "MATCHMAKING") setScreen("MATCHMAKING");
           else if (t === "PRIVATE") setScreen("PRIVATE");
-          else if (t === "UNRANKED") setScreen("UNRANKED");
           else if (t === "REPLAYS") setScreen("REPLAYS");
-          else if (t === "MARATHON") { setSeed((s) => s + 1); setScreen("MARATHON"); }
-          else if (t === "SPRINT") { setSeed((s) => s + 1); setScreen("SPRINT"); }
-          else if (t === "ULTRA") { setSeed((s) => s + 1); setScreen("ULTRA"); }
-          else if (t === "BLITZ") { setSeed((s) => s + 1); setScreen("BLITZ"); }
-          else if (t === "BLITZBOT") { setSeed((s) => s + 1); setScreen("BLITZBOT"); }
-          else if (t === "TURNBASED") { setSeed((s) => s + 1); setScreen("TURNBASED"); }
-          else { setSeed((s) => s + 1); setScreen("HOTSEAT"); }
+          // Every game mode: in on the tide (the game then counts down from 3).
+          else if (["MARATHON", "SPRINT", "ULTRA", "BLITZBOT", "TURNBASED", "HOTSEAT"].includes(t)) wipe(() => { setSeed((s) => s + 1); setScreen(t); });
         }}
         loadout={loadout} setLoadout={setLoadout}
         colors={colors} profile={profile} status={status}
@@ -6930,7 +7154,7 @@ export default function TurfBlocks() {
     view = (
       <Difficulty colors={colors}
         onBack={() => setScreen("MENU")}
-        onStart={(lv) => { setAiLevel(lv); setSeed((s) => s + 1); setScreen("SOLO"); }} />
+        onStart={(lv) => wipe(() => { setAiLevel(lv); setSeed((s) => s + 1); setScreen("SOLO"); })} />
     );
   else if (screen === "REPLAYS")
     view = <ReplayList onOpen={(id) => { setReplayId(id); setScreen("REPLAY"); }} onBack={() => setScreen("MENU")} />;
@@ -6940,20 +7164,10 @@ export default function TurfBlocks() {
       : replays.get(replayId)?.kind
       ? <SoloReplayViewer rec={replays.get(replayId)} onBack={() => setScreen("REPLAYS")} />
       : <ReplayViewer id={replayId} theme={theme} colors={colors} onBack={() => setScreen("REPLAYS")} />;
-  else if (screen === "UNRANKED")
-    view = (
-      <Unranked status={status} profile={profile} loadout={loadout} colors={colors}
-        onBack={() => setScreen("MENU")} onPlayAi={() => setScreen("DIFFICULTY")} />
-    );
   else if (screen === "PRIVATE")
     view = (
       <PrivateRoom status={status} onBack={() => setScreen("MENU")}
         pendingCode={pendingRoom} clearPending={clearPendingRoom} />
-    );
-  else if (screen === "MATCHMAKING")
-    view = (
-      <Matchmaking profile={profile} loadout={loadout} colors={colors}
-        onCancel={() => setScreen("MENU")} onPlayAi={() => setScreen("DIFFICULTY")} />
     );
   else if (screen === "RANKED")
     view = (
@@ -6969,12 +7183,12 @@ export default function TurfBlocks() {
           net.clearMatch();
           // Private: back to the room and ask for a rematch. Ranked: queue again.
           if (over?.rated === false && over.room) { net.rematch(); setScreen("PRIVATE"); }
-          else if (over?.rated === false) setScreen("UNRANKED");
-          else setScreen("MATCHMAKING");
+          else { startQueue("control", loadout); setMenuModal("LOBBY:control"); setScreen("MENU"); }
         }} />
     );
   else if (screen === "BLITZ" || screen === "BLITZBOT")
-    view = <BlitzGame key={`${screen}${seed}`} online={screen === "BLITZ"} colors={colors} onExit={() => setScreen("MENU")} />;
+    view = <BlitzGame key={`${screen}${seed}`} online={screen === "BLITZ"} colors={colors} onExit={() => setScreen("MENU")}
+      onRequeue={() => { startQueue("blitz", loadout); setMenuModal("LOBBY:blitz"); setScreen("MENU"); }} />;
   else if (screen === "SPRINT" || screen === "ULTRA")
     view = <SprintGame key={`${screen}${seed}`} ultra={screen === "ULTRA"} onExit={() => setScreen("MENU")} />;
   else if (screen === "MARATHON")
@@ -6992,6 +7206,11 @@ export default function TurfBlocks() {
     <WipeCtx.Provider value={wipe}>
     <InkStyle.Provider value={theme.stroke}>
       <PixelSky theme={theme} />{shell}{view}
+      {intro && (
+        <VersusIntro key={intro.id} intro={intro} wipe={wipe}
+          onScreen={() => { qstore.found = null; qemit(); setMenuModal(null); setScreen(intro.mode === "blitz" ? "BLITZ" : "RANKED"); }}
+          onDone={() => setIntro(null)} />
+      )}
       {wipeRun && (
         <Wipe key={wipeRun.id} theme={theme} onMiddle={wipeRun.atMiddle} onDone={() => setWipeRun(null)} />
       )}

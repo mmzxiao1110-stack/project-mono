@@ -31,7 +31,7 @@ await Promise.all([login(A), login(Bc)]);
 for (const c of [A, Bc]) c.ws.send(JSON.stringify({ t: "blitzQueue" }));
 for (let i = 0; i < 100 && !(A.st && Bc.st); i++) await sleep(100);
 ok(A.st && Bc.st && A.you !== Bc.you, `matched (${A.name} ${A.you}, ${Bc.name} ${Bc.you})`);
-await sleep(3100);
+await sleep(Math.max(A.startAt, Bc.startAt) - Date.now() + 100);
 const next = { A: 0, B: 0 };
 const t0 = Date.now();
 while (!A.end && Date.now() - t0 < 300000) {

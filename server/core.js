@@ -51,7 +51,7 @@ import {
 } from "./limits.js";
 import { Queue } from "./queue.js";
 import { Match } from "./match.js";
-import { BlitzMatch } from "./blitz.js";
+import { BlitzMatch, blitzRates } from "./blitz.js";
 import { newRating } from "../shared/glicko.js";
 import { unref } from "./timers.js";
 
@@ -81,7 +81,8 @@ const publicProfile = (p, acct) => ({
   rating: p.rating,
   stats: p.stats,
   marathon: p.marathon || null,
-  blitz: p.blitz ? { rating: p.blitz.rating, games: p.blitz.games, wins: p.blitz.wins } : null,
+  card: p.card || null,
+  blitz: p.blitz ? { rating: p.blitz.rating, games: p.blitz.games, wins: p.blitz.wins, ...blitzRates(p.blitz) } : null,
   sprint: p.sprint ? { best: p.sprint.best, pieces: p.sprint.pieces, games: p.sprint.games, at: p.sprint.at } : null,
   ultra: p.ultra ? { best: p.ultra.best, lines: p.ultra.lines, games: p.ultra.games, at: p.ultra.at } : null,
   marathonOpen: p.marathonOpen ? { score: p.marathonOpen.score, lines: p.marathonOpen.lines, at: p.marathonOpen.at } : null,
@@ -91,6 +92,8 @@ const publicProfile = (p, acct) => ({
   provider: acct ? acct.provider : "password",
 });
 
+// The match-found intro before a ranked Control match starts (the 3-2-1 follows on the board).
+const INTRO_MS = 4800;
 /** Pairs two queued players into a match: ranked, or unranked (no rating change). */
 const pairUp = (rated) => (a, b, gap) => {
   const sa = sockets.get(a.playerId);
@@ -125,7 +128,8 @@ const pairUp = (rated) => (a, b, gap) => {
     `${b.profile.name} (${Math.round(b.rating.r)}) — ${Math.round(gap)} TR apart`
   );
 
-  setTimeout(() => match.start(), 1400);
+  // Ranked: time for the match-found intro (ping, wave, the two players) first.
+  setTimeout(() => match.start(), rated ? INTRO_MS : 1400);
 };
 /** Pairs two Blitz players (ranked, verified accounts). */
 const pairBlitz = (a, b) => {
@@ -139,11 +143,17 @@ const pairBlitz = (a, b) => {
   inMatch.set(a.profile.playerId, { match, side: "A" });
   inMatch.set(b.profile.playerId, { match, side: "B" });
   console.log(`[blitz] ${match.id}: ${a.profile.name} vs ${b.profile.name}`);
-  setTimeout(() => match.start(), 600);
+  match.start();
 };
 const queue = new Queue(pairUp(true));         // ranked
 const casualQueue = new Queue(pairUp(false));  // unranked: anyone, guests included; ratings don't move
 const blitzQueue = new Queue(pairBlitz);      // Blitz, ranked
+/** Players queueing and in a game, per ranked mode. */
+function lobbyCounts() {
+  let control = 0, blitz = 0;
+  for (const { match } of inMatch.values()) { if (match instanceof BlitzMatch) blitz++; else if (match.rated) control++; }
+  return { queueing: { control: queue.size, blitz: blitzQueue.size }, playing: { control, blitz } };
+}
 const leaveQueues = (id) => { queue.remove(id); casualQueue.remove(id); blitzQueue.remove(id); };
 
 /* ---------- guests ----------
@@ -622,6 +632,17 @@ async function handle(ws, msg) {
 
     /* ---------- Blitz 1v1 ---------- */
 
+    // The two colours of your profile card.
+    case "setCard": {
+      if (!ws.userId || isGuest(ws.userId)) return;
+      const ok = (c) => typeof c === "string" && /^#[0-9a-f]{6}$/i.test(c);
+      if (!Array.isArray(msg.card) || msg.card.length !== 2 || !msg.card.every(ok)) return fail(ws, "Bad colours.");
+      const p = getProfile(ws.userId);
+      if (!p) return;
+      p.card = msg.card.map((c) => c.toUpperCase());
+      saveProfile(p);
+      return send(ws, { t: "profile", profile: publicProfile(p, getAccount(ws.userId)) });
+    }
     case "blitzQueue": {
       if (isGuest(ws.userId)) return fail(ws, "Make an account to play Blitz.");
       const acct = getAccount(ws.userId);
@@ -875,7 +896,7 @@ export function connect(conn, ip) {
   conn.blocked = new Set();
   conn.tokens = messageLimit.burst;
   conn.tokensAt = Date.now();
-  send(conn, { t: "online", n: clients.size, host: hostName });
+  send(conn, { t: "online", n: clients.size, host: hostName, ...lobbyCounts() });
   return true;
 }
 
@@ -941,13 +962,15 @@ export function startTimers() {
     }
   }, 30_000)));
   // "N online" on the menu, so nobody queues into an empty lobby blind.
-  let lastOnline = -1;
+  // With how many are queueing and playing each ranked mode, for the lobbies.
+  let lastOnline = "";
   timers.push(unref(setInterval(() => {
-    const n = clients.size;
-    if (n === lastOnline) return;
-    lastOnline = n;
-    for (const conn of clients) send(conn, { t: "online", n });
-  }, 5_000)));
+    const msg = { t: "online", n: clients.size, ...lobbyCounts() };
+    const key = JSON.stringify(msg);
+    if (key === lastOnline) return;
+    lastOnline = key;
+    for (const conn of clients) send(conn, msg);
+  }, 3_000)));
   // Rooms nobody is using, guests nobody is playing as, and Marathon games
   // left open for half a day are let go.
   timers.push(unref(setInterval(() => {

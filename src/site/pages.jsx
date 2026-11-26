@@ -73,6 +73,21 @@ export function About() {
    NEWS — sea green
    ============================================================ */
 const NEWS = [
+  { v: "v0.36.0", date: "NOV 2026", title: "STRONGER BOTS", items: [
+    "VS BOT skill 10 is a new bot found by simulation: it looks three placements ahead, hunts combos, keeps its board open and plans for the junk it sees coming. It beat the old skill 10 by 17 to 4.",
+    "VS AI strength 10 now plays Control's turns as what they are, simultaneous: it predicts your likely move and picks what holds up best against it. It beat the old top level 42 to 18.",
+  ] },
+  { v: "v0.35.0", date: "NOV 2026", title: "RANKED LOBBIES, MATCH INTROS, PROFILE CARDS", items: [
+    "BLITZ and CONTROL each have their own lobby: your rank, your Glicko, who's playing and searching, and one big PLAY. Keep searching while you change settings or themes.",
+    "A match found: a sonar ping, the tide, you and your opponent either side of a wave (click them to see their profile), then 3-2-1.",
+    "Every game mode starts on the tide and counts down 3-2-1; Sprint and Ultra clocks start at GO.",
+    "Profile cards in your own colours, with Blitz PPS, APM and VS. Full stats on T-Terminal.",
+    "New mode colours; unranked play is gone (private rooms stay). Titles are now bold type.",
+    "Replays: big boards and the controls at the bottom, the same for every mode.",
+    "Rank emblems drawn as pixel art, from a plain F plate to a shining X diamond.",
+    "How to Play: Control, Blitz, Sprint · Ultra and Marathon, each with its own pages.",
+    "Sprint and Ultra start straight after the tide (the clock starts on your first move); VS BOT and VS AI count down.",
+  ] },
   { v: "v0.34.0", date: "NOV 2026", title: "REPLAYS YOU CAN HEAR AND SAVE", items: [
     "Replays play the game's sounds, and the menu music fades out while you watch.",
     "SAVE VIDEO: Sprint, Ultra, Marathon and Blitz replays can be saved as a video with sound.",

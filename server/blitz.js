@@ -20,7 +20,23 @@ import { glickoUpdate } from "../shared/glicko.js";
 import { saveProfile } from "./store.js";
 import { unref } from "./timers.js";
 
-export const COUNTDOWN_MS = 3000;
+// From the match being found to the first piece: the client's match-found
+// intro (ping, wave, the two players) and then its 3-2-1.
+export const COUNTDOWN_MS = 8600;
+
+/**
+ * A player's Blitz rates over all their games, like tetr.io's:
+ *   pps  pieces a second
+ *   apm  attack (junk levels sent) a minute
+ *   vs   attack plus junk dealt with (junk levels placed), a minute, x 100/60
+ *        (tetr.io's VS scale: a minute's worth, per hundred seconds)
+ */
+export function blitzRates(b) {
+  const min = (b?.ms || 0) / 60000;
+  if (!min) return { pps: null, apm: null, vs: null };
+  const r = (x) => Math.round(x * 100) / 100;
+  return { pps: r(b.pieces / (b.ms / 1000)), apm: r(b.sentLv / min), vs: r(((b.sentLv + b.junkLv) / min) * (100 / 60)) };
+}
 const GRACE_MS = 15000;
 const LOG_MAX = 8000;
 
@@ -36,6 +52,7 @@ export class BlitzMatch {
     this.over = false;
     this.grace = {};
     this.log = [];
+    this.tally = { A: { sentLv: 0, junkLv: 0 }, B: { sentLv: 0, junkLv: 0 } };
   }
   note(entry) { if (this.log.length < LOG_MAX) this.log.push([Math.max(0, Date.now() - this.startsAt), ...entry]); }
   other(side) { return side === "A" ? "B" : "A"; }
@@ -65,6 +82,7 @@ export class BlitzMatch {
       const to = this.other(side);
       receiveJunk(this.st[to], level);
       this.note([to, -1, level]);
+      this.tally[side].sentLv += level;
       this.sent[side]++;
       this.send(to, { t: "blitzJunk", level, at: this.st[to].pieces });
       this.broadcast(to);
@@ -78,11 +96,13 @@ export class BlitzMatch {
     const { slot, rot, r, c } = msg;
     if (![slot, rot, r, c].every(Number.isInteger) || slot < 0 || slot >= HAND || rot < 0 || rot > 3) return "Bad placement.";
     const s = shapeOf(st.hand[slot], rot);
+    const placing = st.hand[slot];
     if (!place(st, { slot, id: st.hand[slot], rot, cr: r + s.h / 2, cc: c + s.w / 2 })) {
       this.send(side, this.view(side)); // out of step: here's the real board
       return null;
     }
     this.note([side, slot, rot, r, c]);
+    if (placing >= 100) this.tally[side].junkLv += placing - 100;
     const L = st.last;
     if (L.lines) noteClear(st, L.lines, Date.now(), L.allClear, L.id);
     this.broadcast(side);
@@ -115,7 +135,10 @@ export class BlitzMatch {
         const p = this.seats[side].profile;
         const b = p.blitz || { games: 0, wins: 0 };
         const before = Math.round((side === "A" ? ra : rb).r);
-        p.blitz = { ...b, rating: next[side], games: (b.games || 0) + 1, wins: (b.wins || 0) + (side === winner ? 1 : 0), at: Date.now() };
+        const ms = Math.max(0, Date.now() - this.startsAt), t = this.tally[side];
+        p.blitz = { ...b, rating: next[side], games: (b.games || 0) + 1, wins: (b.wins || 0) + (side === winner ? 1 : 0), at: Date.now(),
+          pieces: (b.pieces || 0) + this.st[side].pieces, ms: (b.ms || 0) + ms, sentLv: (b.sentLv || 0) + t.sentLv, junkLv: (b.junkLv || 0) + t.junkLv,
+          best: Math.max(b.best || 0, t.sentLv) };
         saveProfile(p);
         ratings[side] = { before, after: Math.round(next[side].r), rdBefore: Math.round((side === "A" ? ra : rb).rd), rdAfter: Math.round(next[side].rd) };
       }
