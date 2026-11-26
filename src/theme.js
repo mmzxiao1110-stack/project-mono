@@ -69,8 +69,7 @@ export const STROKES = {
   flat: { label: "FLAT" },
   pixel: { label: "PIXEL" },
   outline: { label: "OUTLINE" },
-  retro: { label: "RETRO" },   // chunky old-console bevel: big pixels, a hard dark edge
-  sand: { label: "SAND" },     // a grainy, chalky noise texture over the colour
+  sand: { label: "CHALK" },    // the colour under a little square of the menu sky's dither
 };
 
 // Space between squares, in pixel units (--p), not screen px. Squares never touch.

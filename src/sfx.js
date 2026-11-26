@@ -343,10 +343,10 @@ const spread = (i, n) => (n > 1 ? (i / (n - 1)) * 1.2 - 0.6 : 0);
 const COMBO_TOP = 7; // the combo melody climbs one octave of the scale, A to A
 
 /** The chip voice: a pulse wave in a deep, watery room (a low-pass that closes, a little wobble, lots of echo). */
-function chip(c, t, m, { vol = 0.03, d = 0.45, duty = "p25", pan = 0, wet = 0.7, steps = null } = {}) {
+function chip(c, t, m, { vol = 0.03, d = 0.45, duty = "p25", pan = 0, wet = 0.7, steps = null, a = 0.002 } = {}) {
   const f = mtof(m);
-  tone(c, t, { wave: duty, f, to: steps ? mtof(steps) : null, glide: 3 * FRAME, steps: !!steps, vol, a: 0.002, d, pan, wet, lp: [7000, 1400, 1.2], vib: 0.0035 });
-  tone(c, t, { wave: "sine", f: f / 2, vol: vol * 0.35, a: 0.004, d: d * 0.8, pan: -pan, wet });
+  tone(c, t, { wave: duty, f, to: steps ? mtof(steps) : null, glide: 3 * FRAME, steps: !!steps, vol, a, d, pan, wet, lp: [7000, 1400, 1.2], vib: 0.0035 });
+  tone(c, t, { wave: "sine", f: f / 2, vol: vol * 0.35, a: a * 2, d: d * 0.8, pan: -pan, wet });
 }
 /** A low harp string: a soft pluck that darkens as it rings, with a slightly detuned twin. */
 function harp(c, t, m, { vol = 0.05, d = 1.6, pan = 0, wet = 0.5 } = {}) {
@@ -373,9 +373,9 @@ function piano(c, t, m, { vol = 0.018, d = 3, pan = 0, wet = 1 } = {}) {
   hiss(c, t, { type: "lowpass", f: 2200, q: 0.7, vol: vol * 0.5, d: 0.025, pan, wet: 0.4 });
 }
 /** The crisp stab: a bright chip A over its third, ringing out under water (`base` moves it by octaves). */
-function stab(c, t, { vol = 0.036, base = A5 } = {}) {
-  chip(c, t, za(7, base), { vol, d: 0.7 });
-  chip(c, t, za(4, base), { vol: vol * 0.6, d: 0.7 });
+function stab(c, t, { vol = 0.036, base = A5, a = 0.002 } = {}) {
+  chip(c, t, za(7, base), { vol, d: 0.7, a });
+  chip(c, t, za(4, base), { vol: vol * 0.6, d: 0.7, a });
 }
 /** A rolled run on the harp through the scale from degree a to b. */
 function harpRun(c, t, a, b, { step = 0.04, base = A3, vol = 0.04, d = 1.4 } = {}) {
@@ -643,11 +643,11 @@ export const sfx = {
       muffle(c, t, { vol: 0.3, f: 110 });
     });
   },
-  /** Danger: the stab two octaves down, short and low, repeated while your stack is near the top. */
+  /** Danger: the stab two octaves down, fading in softly, every 2 seconds while your stack is near the top. */
   zgAlarm() {
-    play("zgAlarm", 300, (c, t) => {
-      stab(c, t, { vol: 0.04, base: A3 - 12 });
-      tone(c, t, { wave: "sine", f: mtof(33), vol: 0.07, a: 0.004, d: 0.25, wet: 0.2 });
+    play("zgAlarm", 1000, (c, t) => {
+      stab(c, t, { vol: 0.04, base: A3 - 12, a: 0.06 });
+      tone(c, t, { wave: "sine", f: mtof(33), vol: 0.06, a: 0.07, d: 0.35, wet: 0.2 });
     });
   },
   /** A sample of the key, when MINOR KEY is switched. */

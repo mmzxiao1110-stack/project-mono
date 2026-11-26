@@ -768,22 +768,26 @@ const inkOf = (owner) => (owner === "S" ? { stroke: "cross", dir: 1 } : { stroke
  * `fluid` fills its box instead.
  */
 /**
- * The SAND texture: 8×8 pixels of grain (light and dark specks, edges a touch
- * darker), drawn once, laid over a square's colour and scaled up with hard
- * pixel edges.
+ * The CHALK texture: a little patch of the menu's sky. Light at the top,
+ * shade at the bottom, the bands meeting in the same ordered (Bayer) dither
+ * the sky uses, plus a few specks of grain; laid over a square's colour and
+ * scaled up with hard pixel edges.
  */
-const SAND_TEX = (() => {
+const CHALK_TEX = (() => {
   if (typeof document === "undefined") return null;
   try {
-    const n = 8, cv = document.createElement("canvas");
+    const n = 16, cv = document.createElement("canvas");
     cv.width = cv.height = n;
     const g = cv.getContext("2d");
-    let seed = 7;
+    let seed = 11;
     const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
     for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-      const edge = x === 0 || y === 0 ? 0.1 : x === n - 1 || y === n - 1 ? -0.16 : 0;
-      const v = (rnd() - 0.5) * 0.34 + edge;
-      g.fillStyle = v >= 0 ? `rgba(255,255,255,${v.toFixed(3)})` : `rgba(0,0,0,${(-v).toFixed(3)})`;
+      // Two tones, mixed by the sky's ordered (Bayer) dither: mostly light at the top, mostly dark at the bottom,
+      // a checker in between. Now and then a speck of grain.
+      const v = 0.82 - (y * 0.75 + x * 0.25) / n * 0.7;
+      const on = BAYER[(y % 4) * 4 + (x % 4)] < v;
+      const a = (on ? 0.12 : -0.09) + (rnd() < 0.06 ? (rnd() - 0.5) * 0.24 : 0);
+      g.fillStyle = a >= 0 ? `rgba(255,255,255,${a.toFixed(3)})` : `rgba(0,0,0,${(-a).toFixed(3)})`;
       g.fillRect(x, y, 1, 1);
     }
     return cv.toDataURL();
@@ -842,22 +846,11 @@ function Ink({ size, color, stroke, fluid = false, className, style }) {
     look = { background: `${dither("rgba(0,0,0,.45)")}, ${rings(art >= 8 ? 3 : art >= 5 ? 2 : 1)}` };
   } else if (kind === "outline") {
     look = { boxShadow: `inset 0 0 0 ${PX} ${c.light}, inset 0 0 0 ${px(2)} ${c.dark}`, background: `color-mix(in srgb, ${color} 14%, transparent)` };
-  } else if (kind === "retro") {
-    // An old console's block: a hard near-black edge, a light top-left bevel, a dark bottom-right one,
-    // a bright corner glint, all in chunky pixels (an eighth of the square each).
-    const u = fluid ? "12.5%" : `${Math.max(P, Math.round(size / 8))}px`;
-    const in1 = `calc(100% - 2 * ${u})`, far = `calc(100% - 2 * ${u})`;
-    look = { background: [
-      layer("rgba(255,255,255,.85)", u, u, u, u),
-      layer(c.light, u, u, in1, u), layer(c.light, u, u, u, in1),
-      layer(c.dark, u, far, in1, u), layer(c.dark, far, u, u, in1),
-      layer(c.base, u, u, in1, in1),
-      "#101015",
-    ].join(", ") };
   } else if (kind === "sand") {
-    // Chalk / sand: the colour under a grainy pixel noise, like a block in a voxel game.
-    look = SAND_TEX
-      ? { background: `url(${SAND_TEX}) 0 0 / 100% 100% no-repeat, ${c.base}`, imageRendering: "pixelated" }
+    // CHALK: the colour under a small square of the menu sky's dither.
+    look = CHALK_TEX
+      // Tiled at the sky's own pixel size (2 UI pixels a texel), so a square looks cut from the background.
+      ? { background: `url(${CHALK_TEX}) 0 0 / ${32 * P}px ${32 * P}px repeat, ${c.base}`, imageRendering: "pixelated" }
       : { background: c.base };
   } else if (kind === "flat") {
     look = { background: `${layer(c.base, 0, 0, `calc(100% - ${PX})`, `calc(100% - ${PX})`)}, ${c.dark}` };
@@ -1975,6 +1968,10 @@ function SettingsModal({ name, rename, status, theme, setTheme, onClose }) {
       <Row label="COLOURBLIND MARKS">
         <Toggle on={theme.colorblind} onClick={() => set({ colorblind: !theme.colorblind })} />
       </Row>
+      <Row label="VISUAL EFFECTS">
+        {/* Off: a plain background, flat squares, nothing moving: like an exported replay video. */}
+        <Toggle on={theme.vfx !== false} onClick={() => set({ vfx: theme.vfx === false })} />
+      </Row>
       <Row label="ANIMATION">
         <Toggle on={theme.motion} onClick={() => set({ motion: !theme.motion })} />
       </Row>
@@ -2585,7 +2582,7 @@ function ThemeModal({ theme, setTheme, onClose }) {
       {tab === "blocks" && (
         <div className="pb-2">
           <div className="tb-t mb-2" style={{ color: UI.dim }}>STROKE</div>
-          <div className={`grid grid-cols-5 gap-2 ${wide ? "mb-3" : "mb-5"}`}>
+          <div className={`grid grid-cols-4 gap-2 ${wide ? "mb-3" : "mb-5"}`}>
             {Object.entries(STROKES).map(([k, st]) => {
               const on = theme.stroke === k;
               return (
@@ -3111,7 +3108,7 @@ function MiniBoard({ w, h, cells, size = 15, ink }) {
 
 function HowToModal({ colors, loadout, onClose }) {
   const [page, setPage] = useState(0);
-  const [mode, setModeNow] = useState(() => (["blitz", "sprint", "marathon"].includes(store.get("tb:howMode")) ? store.get("tb:howMode") : "control"));
+  const [mode, setModeNow] = useState(() => (["blitz", "tower"].includes(store.get("tb:howMode")) ? store.get("tb:howMode") : "control"));
   const setMode = (m) => { setModeNow(m); setPage(0); store.set("tb:howMode", m); };
   const ink = { A: colors.you, B: colors.rival, S: colors.special };
 
@@ -3269,72 +3266,40 @@ function HowToModal({ colors, loadout, onClose }) {
     body: "Junk arrives sixth in your forecast, so you see it coming five pieces ahead. Leave room for it: an open corner or edge fits most junk. A big junk piece placed well can even finish a line for you. If your board fills past half, take any clear you can — singles included — to dig out.",
   });
   const sInk = { I: S_INK[0], O: S_INK[1], T: S_INK[2], L: S_INK[6], J: S_INK[5] };
-  const sprintPages = [
+  const keyRow = (rows, ink = UI.text) => (
+    <div className="tb-t grid gap-x-5 gap-y-1" style={{ gridTemplateColumns: "auto auto" }}>
+      {rows.map(([a, b]) => <React.Fragment key={a}><span style={{ color: UI.dim }}>{a}</span><span className="tb-b" style={{ color: ink }}>{b}</span></React.Fragment>)}
+    </div>
+  );
+  const towerPages = [
     {
-      title: "SPRINT: 40 LINES",
-      art: <MiniBoard w={8} h={8} size={10} ink={sInk} cells={{ "7,0": "I", "7,1": "I", "7,2": "I", "7,3": "I", "7,4": "O", "7,5": "O", "6,4": "O", "6,5": "O", "7,6": "L", "7,7": "L", "6,7": "L", "5,7": "L" }} />,
-      body: "Clear 40 lines as fast as you can on an 8×8 board. Rows and columns both count. The clock starts on your first move. Same pieces for everyone on a ranked run: the server checks every placement and its time.",
+      title: "TOWER: HEAD TO HEAD",
+      art: <MiniBoard w={10} h={8} size={9} ink={sInk} cells={{ "7,0": "J", "7,1": "J", "7,2": "J", "6,0": "J", "7,3": "O", "7,4": "O", "6,3": "O", "6,4": "O", "7,5": "T", "7,6": "T", "7,7": "T", "6,6": "T", "7,8": "L", "6,8": "L", "5,8": "L", "5,9": "L" }} />,
+      body: "Falling-block rules on a 10-wide board, with no gravity: a piece stays where it is until you move it. You and your opponent get the same pieces. Clear lines to send garbage rows at them; the first to top out loses.",
     },
     {
       title: "THE CONTROLS",
-      art: (
-        <div className="tb-t grid gap-x-5 gap-y-1" style={{ gridTemplateColumns: "auto auto" }}>
-          {[["move", "mouse"], ["place", "left click / C"], ["swap piece", "right click"], ["turn", "S · D · A (180)"], ["retry", "R"], ["forfeit", "Esc"]].map(([a, b]) => (
-            <React.Fragment key={a}><span style={{ color: UI.dim }}>{a}</span><span className="tb-b">{b}</span></React.Fragment>
-          ))}
-        </div>
-      ),
-      body: "The piece follows your mouse and always stays on the board. You hold two pieces: swap between them, turn the one in play, click to drop it. The next five are on the right. Every key and mouse button can be rebound in Settings.",
+      art: keyRow([["move", "← →"], ["soft drop", "↓ (instant, no lock)"], ["hard drop", "SPACE"], ["turn", "↑ · Z · A (180)"], ["hold", "C (any time)"]]),
+      body: "Soft drop sends the piece straight to the floor without locking it; hold it down to slide and turn along the floor. Hard drop locks it. Hold swaps with the held piece as often as you like. DAS, ARR and every key are in Settings.",
     },
     {
-      title: "ULTRA: 2 MINUTES",
-      art: (
-        <div className="tb-t grid gap-x-5 gap-y-1" style={{ gridTemplateColumns: "auto auto" }}>
-          {[["1 line", "100"], ["2 lines", "300"], ["3 lines", "500"], ["4 lines", "800"], ["each more", "+400"], ["all clear", "3000 × combo"]].map(([a, b]) => (
-            <React.Fragment key={a}><span style={{ color: UI.dim }}>{a}</span><span className="tb-b" style={{ color: GOLD }}>{b}</span></React.Fragment>
-          ))}
-        </div>
-      ),
-      body: "Score as much as you can in two minutes. Clearing on back-to-back pieces builds a combo that multiplies every clear (×1.5, ×2, ×2.5…); a piece that clears nothing ends it. Big clears and all clears inside a long combo are where the points are.",
+      title: "SPINS",
+      art: keyRow([["T", "3 of 4 corners filled"], ["mini", "front corners open"], ["S Z L J I", "can't move out"]], S_INK[2]),
+      body: "Every piece can spin. A T counts when three corners around it are filled after a turn; the others when they're turned into a spot they can't move left, right or up out of. Spins send the most.",
     },
     {
-      title: "RECORDS AND REPLAYS",
-      art: <div className="tb-t tb-b" style={{ color: ACCENTS.terminal }}>T-TERMINAL</div>,
-      body: "Signed in, your best Sprint time and Ultra score go on the T-Terminal leaderboards once the server has replayed them. Every finished run is kept in REPLAYS with its real timing — watch it back, or save it as a video.",
+      title: "GARBAGE",
+      art: keyRow([["double", "1"], ["triple", "2"], ["quad", "4"], ["spin", "2 a line"], ["back-to-back", "+1"], ["combo", "up to +5"], ["all clear", "+10"]], GOLD),
+      body: "What you send cancels what's coming at you first. Waiting garbage shows as a red bar beside your board and lands when you lock a piece that clears nothing, 8 rows at most. Near the top, your corners flash red and a low alarm sounds.",
+    },
+    {
+      title: "RANKED",
+      art: keyRow([["rating", "Glicko"], ["placement", `${PLACEMENT_GAMES} matches`], ["replays", "every match"], ["ladder", "T-TERMINAL"]], MODE_INK.ranked),
+      body: "Your moves are what's sent: the server plays every piece itself, and your opponent sees your game exactly as you play it. Every match is saved as a replay, and the TOWER ladder is on T-Terminal. VS BOT is the same game against a bot, skill 1–10.",
     },
   ];
-  const mInk = { A: colors.you, B: colors.special, S: colors.rival };
-  const marathonPages = [
-    {
-      title: "MARATHON",
-      art: <MiniBoard w={7} h={7} size={12} ink={mInk} cells={{ "6,0": "A", "6,1": "A", "6,2": "A", "5,0": "A", "6,4": "B", "6,5": "B", "5,5": "B", "5,6": "B", "4,3": "S", "4,4": "S" }} />,
-      body: "A solo puzzle for high scores on a 7×7 board. You hold three pieces; place any of them anywhere it fits, turned any way. Fill a row or a column and it clears. It ends when none of your three pieces fits anywhere.",
-    },
-    {
-      title: "SCORING",
-      art: (
-        <div className="tb-t grid gap-x-5 gap-y-1" style={{ gridTemplateColumns: "auto auto" }}>
-          {[["placing", "1 per square"], ["clearing", "10 per square"], ["× lines", "cleared at once"], ["× streak", "clears in a row"], ["× level", "+10% a level"]].map(([a, b]) => (
-            <React.Fragment key={a}><span style={{ color: UI.dim }}>{a}</span><span className="tb-b" style={{ color: GOLD }}>{b}</span></React.Fragment>
-          ))}
-        </div>
-      ),
-      body: "Clears pay far more than placing. Clearing two lines at once doubles them; a clear within three moves of the last keeps your streak going and multiplies again. The level rises every 10 lines and every clear pays 10% more per level.",
-    },
-    {
-      title: "SURVIVING",
-      art: <div className="flex items-center justify-center gap-3"><Stack style={{ color: MODE_INK.marathon, width: 40, height: 40 }} /></div>,
-      body: "From level 3, each new bag carries more big, awkward pieces, so the board always closes in. Keep the middle open, keep a place for the long pieces, and don't fill a line you can't finish. On a phone, drag a piece to the board and tap the big turn button with your other hand.",
-    },
-  ];
-  // More on Control: the rating.
-  pages.push({
-    title: "RANKED AND RATING",
-    art: <div className="flex items-center justify-center gap-2">{RANKS.filter((_, i) => i % 2 === 1 || i === RANKS.length - 1).map((r) => <RankIcon key={r.name} rank={r} size={34} />)}</div>,
-    body: `Ranked Control and Blitz each have a Glicko-2 rating. After ${PLACEMENT_GAMES} placement matches you get a rank, from F up through C, B, A and S to X. The ± is how sure the rating is; it narrows as you play. Win against stronger players to climb faster.`,
-  });
-  const BOOKS = { control: pages, blitz: blitzPages, sprint: sprintPages, marathon: marathonPages };
-  const TAB_INK = { control: MODE_INK.ranked, blitz: MODE_INK.blitz, sprint: MODE_INK.sprint, marathon: MODE_INK.marathon };
+  const BOOKS = { control: pages, blitz: blitzPages, tower: towerPages };
+  const TAB_INK = { control: MODE_INK.ranked, blitz: MODE_INK.blitz, tower: MODE_INK.zerog };
   const list = BOOKS[mode] || pages;
   const p = list[page];
   const last = page === list.length - 1;
@@ -3353,7 +3318,7 @@ function HowToModal({ colors, loadout, onClose }) {
   );
   const tabs = (
     <div className="flex flex-wrap gap-1.5">
-      {[["control", "CONTROL"], ["blitz", "BLITZ"], ["sprint", "SPRINT · ULTRA"], ["marathon", "MARATHON"]].map(([k, label]) => (
+      {[["control", "CONTROL"], ["blitz", "BLITZ"], ["tower", "TOWER"]].map(([k, label]) => (
         <button key={k} onClick={() => setMode(k)} aria-pressed={mode === k} className="tb-t px-3"
           style={{ height: 30, ...(mode === k ? skFill(TAB_INK[k]) : glass(UI.line)), color: mode === k ? UI.text : UI.dim }}>{label}</button>
       ))}
@@ -3508,7 +3473,7 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
 
   return (
     <div ref={rootRef} className="tb-screen tb-safe relative w-full flex items-center justify-center px-5 font-mono overflow-hidden" style={{ color: UI.text }}>
-      <AmbientField colors={colors} theme={theme} paused={false} />
+      {theme.vfx !== false && <AmbientField colors={colors} theme={theme} paused={false} />}
       <div className="absolute inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse at 50% 46%, color-mix(in srgb, var(--tb-ground) 45%, transparent) 0%, color-mix(in srgb, var(--tb-ground) 20%, transparent) 50%, transparent 80%)" }} />
 
       {/* Water over the sky while a panel is open: soft drifting light, no dark in it. */}
@@ -3533,8 +3498,8 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
         {/* One big way in: PLAY opens the modes. */}
         <button onClick={() => setModal("PLAY")}
           className="w-full rounded flex flex-col items-center justify-center gap-1.5 mb-2"
-          style={{ height: 86, paddingTop: 4, ...skFill("var(--tb-you)") }}>
-          <PixelWord text="PLAY" from="var(--tb-text)" to="var(--tb-you)" />
+          style={{ height: 86, paddingTop: 4, ...skFill(MENU_GREEN) }}>
+          <PixelWord text="PLAY" from="var(--tb-text)" to="#3FA872" />
           {status === "online" && online !== null ? (
             <span className="tb-t" style={{ color: UI.dim }}>{online === 1 ? "just you online right now" : `${online} people online`}</span>
           ) : (
@@ -3550,16 +3515,16 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
         )}
 
         <div className="flex gap-2 mb-2">
-          {/* Replays (yellow) and T-TERMINAL, the player hub. */}
+          {/* Replays and T-TERMINAL (blue), the player hub. Everything but PLAY and T-TERMINAL is the same dark grey glass. */}
           <button onClick={() => onPick("REPLAYS")} aria-label="Replays"
             className="flex-1 rounded flex items-center justify-center gap-2 min-w-0 px-2"
-            style={{ height: 38, ...skFill(GOLD), color: UI.text }}>
-            <span style={{ color: GOLD, display: "flex" }}><Film /></span>
+            style={{ height: 38, ...glass(UI.line), color: UI.text }}>
+            <span style={{ color: UI.dim, display: "flex" }}><Film /></span>
             <span className="tb-t">REPLAYS</span>
           </button>
           <a href="/terminal" className="flex-1 rounded flex items-center justify-center gap-2 no-underline"
-            style={{ height: 38, ...skFill(ACCENTS.terminal), color: UI.text }}>
-            <span style={{ color: ACCENTS.terminal, display: "flex" }}><TerminalIcon /></span>
+            style={{ height: 38, ...skFill(MENU_BLUE), color: UI.text }}>
+            <span style={{ color: "#8FB4F0", display: "flex" }}><TerminalIcon /></span>
             <span className="tb-t">T-TERMINAL</span>
           </a>
         </div>
@@ -3580,7 +3545,7 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
         <div className="grid grid-cols-4 gap-2 mt-2">
           {[["about", "ABOUT"], ["news", "NEWS"], ["download", "APP"], ["help", "HELP"]].map(([k, label]) => (
             <a key={k} href={`/${k}`} className="rounded flex items-center justify-center no-underline"
-              style={{ height: 38, ...glass(`color-mix(in srgb, ${ACCENTS[k]} 55%, transparent)`), color: ACCENTS[k] }}>
+              style={{ height: 38, ...glass(UI.line), color: UI.dim }}>
               <span className="tb-t">{label}</span>
             </a>
           ))}
@@ -3634,7 +3599,8 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
    PLAY — every way to play, in a little underwater night sky
    ============================================================ */
 // Ranked: dark green. The AIs: grey. Sprint yellow, Ultra red, Marathon blue, private purple.
-const MODE_INK = { blitz: "#F29A4A", ranked: "#2FA36B", ai: "#A9A7B4", sprint: "#F2D45C", ultra: "#F0606A", marathon: "#5C9DF2", turns: "#EC93B8", private: "#A68BF0", zerog: "#7FE3F0" };
+const MENU_GREEN = "#1E6B45", MENU_BLUE = "#2B4E8C"; // PLAY, the three ranked modes / T-TERMINAL
+const MODE_INK = { blitz: "#F29A4A", ranked: MENU_GREEN, ai: "#A9A7B4", sprint: "#F2D45C", ultra: "#F0606A", marathon: "#5C9DF2", turns: "#EC93B8", private: "#A68BF0", zerog: "#7FE3F0" };
 
 /** A mode: a pane of clear, lightly tinted glass, like a board square. Light sweeps it on hover. */
 function ModeCard({ big = false, ink, icon: Icon, title, sub, note, noteInk, onClick, disabled, delay = 0, h, style }) {
@@ -5239,12 +5205,12 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
     return () => cancelAnimationFrame(raf);
   }, [bump, versus, online, rec]);
 
-  // Danger (your stack within 5 rows of the top): a low stab, over and over, until you dig out.
+  // Danger (your stack within 5 rows of the top): a low stab every 2 seconds until you dig out.
   useEffect(() => {
     const h = setInterval(() => {
       const r = run.current;
       if (!r.result && r.st.cur && r.startAt && zgDanger(r.st.board)) sfx.zgAlarm();
-    }, 650);
+    }, 2000);
     return () => clearInterval(h);
   }, []);
 
@@ -5385,9 +5351,9 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
   const g = P;
   const side = 2 * P; // the small gap between the board and the panels beside it
   const availH = stage.h - 24 * P - (versus ? 30 * P : 0); // a versus game has its small title on top // the whole height (one row more is kept free above the board for the floating piece)
-  const fitW = (stage.w - 24 * P - 9 * g) / (versus ? 40 : 19); // the board, both side columns (and in a versus game the opponent's board) must fit across
+  const fitW = (stage.w - 24 * P - 9 * g) / (versus ? 38 : 19); // the board, both side columns (and in a versus game the opponent's board) must fit across
   // In a versus game the two boards sit side by side, so each is a little smaller.
-  const cell = Math.max(4 * P, Math.min(40 * P, Math.floor(Math.min((availH - ZG_SHOW * g) / (ZG_SHOW + 1) * (versus ? 0.82 : 1), fitW) / P) * P));
+  const cell = Math.max(4 * P, Math.min(40 * P, Math.floor(Math.min((availH - ZG_SHOW * g) / (ZG_SHOW + 1) * (versus ? 0.9 : 1), fitW) / P) * P));
   // Text and buttons grow with the board.
   const zoom = Math.max(1, cell / (8 * P));
   const font = Math.round(8 * P * Math.min(zoom, 1.6));
@@ -6520,7 +6486,7 @@ function Wipe({ theme, onMiddle, onDone }) {
   useEffect(() => {
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     sfx.wipe();
-    if (!theme.motion || reduced) { onMiddle(); onDone(); return; }
+    if (!theme.motion || theme.vfx === false || reduced) { onMiddle(); onDone(); return; }
     const cv = ref.current;
     const ctx = cv.getContext("2d");
     const W = Math.max(1, Math.ceil(window.innerWidth / P)), H = Math.max(1, Math.ceil(window.innerHeight / P));
@@ -7944,7 +7910,7 @@ export default function TurfBlocks() {
         100% { transform: translateY(calc(var(--p) * -60)); opacity: 0 }
       }
       .tb-bubble { background: color-mix(in srgb, white 75%, var(--tb-you)); box-shadow: 0 0 calc(var(--p) * 2) color-mix(in srgb, var(--tb-you) 70%, transparent); animation-name: tbBubble; animation-timing-function: steps(14); animation-fill-mode: both; }
-      ${theme.motion ? "" : ".tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-bob,.tb-runner,.tb-line,.tb-vanish,.tb-rise,.tb-float,.tb-twinkle,.tb-drop-in,.tb-sheen,.tb-dive,.tb-flow > *,.tb-cols > *,.tb-tide { animation: none !important } .tb-ripple,.tb-bubble { display: none }"}
+      ${theme.motion && theme.vfx !== false ? "" : ".tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-bob,.tb-runner,.tb-line,.tb-vanish,.tb-rise,.tb-float,.tb-twinkle,.tb-drop-in,.tb-sheen,.tb-dive,.tb-flow > *,.tb-cols > *,.tb-tide { animation: none !important } .tb-ripple,.tb-bubble { display: none }"}
       @media (prefers-reduced-motion: reduce) {
         .tb-contest,.tb-drop,.tb-fadein,.tb-pulse,.tb-fade,.tb-pop,.tb-shine,.tb-bob,.tb-runner,.tb-line,.tb-rise,.tb-dive,.tb-flow > *,.tb-cols > *,.tb-tide { animation: none !important }
         .tb-ripple,.tb-bubble { display: none }
@@ -8059,8 +8025,11 @@ export default function TurfBlocks() {
   return (
     <PxContext.Provider value={P}>
     <WipeCtx.Provider value={wipe}>
-    <InkStyle.Provider value={theme.stroke}>
-      <PixelSky theme={theme} />{shell}{view}
+    <InkStyle.Provider value={theme.vfx === false ? "flat" : theme.stroke}>
+      {theme.vfx === false
+        ? <div aria-hidden="true" className="fixed inset-0" style={{ zIndex: 0, background: "linear-gradient(var(--tb-ground), var(--tb-panel-solid))" }} />
+        : <PixelSky theme={theme} />}
+      {shell}{view}
       {intro && (
         <VersusIntro key={intro.id} intro={intro} wipe={wipe}
           onScreen={() => { qstore.found = null; qemit(); setMenuModal(null); setScreen(intro.mode === "blitz" ? "BLITZ" : intro.mode === "tower" ? "TOWER" : "RANKED"); }}
