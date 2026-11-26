@@ -15,6 +15,7 @@ import { RANKS, PLACEMENT_GAMES } from "../../shared/glicko.js";
 import { VERSION_LABEL } from "../version.js";
 import { apiGet, rankColor, timeAgo, playtime } from "./api.js";
 import { ProfileCard } from "./profileCard.jsx";
+import { RankIcon } from "./rankIcon.jsx";
 
 const px = (n) => `calc(var(--p) * ${n})`;
 
@@ -44,8 +45,8 @@ export function RankBadge({ rank }) {
   if (!rank) return <span className="tb-t" style={{ color: "var(--tb-dim)" }}>—</span>;
   const c = rankColor(rank);
   return (
-    <span className="tb-t tb-b inline-flex items-center justify-center" style={{ minWidth: px(16), height: px(12), padding: `0 ${px(2)}`, color: c, ...glass(c), background: `color-mix(in srgb, ${c} 22%, transparent)` }}>
-      {rank}
+    <span className="tb-t tb-b inline-flex items-center" style={{ gap: px(1), color: c }}>
+      <RankIcon rank={rank} size={`calc(var(--p) * 14)`} />{rank}
     </span>
   );
 }

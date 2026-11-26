@@ -11,6 +11,7 @@ import { apiGet } from "./site/api.js";
 import { ACCENTS } from "./site/colors.js";
 import { PixelWord } from "./site/kit.jsx";
 import { Avatar, ProfileCard } from "./site/profileCard.jsx";
+import { RankIcon } from "./site/rankIcon.jsx";
 import { cardFromProfile, CARD_DEFAULT } from "./site/profileData.js";
 
 /* The rules live in one place and the server imports the same file. */
@@ -2114,10 +2115,7 @@ function StatsModal({ profile, status, onClose, onLogout, onDelete }) {
   const rankCard = (
     <div className="mt-3 rounded p-4" style={{ ...glass(UI.line) }}>
       <div className="flex items-center gap-4">
-        <div className="rounded flex items-center justify-center shrink-0"
-          style={{ width: 74, height: 74, background: placed ? `${rank.color}1F` : UI.cell, ...sk(placed ? rank.color : UI.line) }}>
-          <span className="text-3xl" style={{ color: placed ? rank.color : UI.dim }}>{placed ? rank.name : "–"}</span>
-        </div>
+        <RankIcon rank={placed ? rank : null} size={74} />
         <div className="min-w-0 flex-1">
           {placed ? (
             <>
@@ -2153,11 +2151,9 @@ function StatsModal({ profile, status, onClose, onLogout, onDelete }) {
           const past = placed && i < ri;
           return (
             <div key={r.name} className="flex-1 flex flex-col items-center gap-1.5">
-              <div className="w-full rounded-sm" style={{
-                height: here ? 22 : 12,
-                background: here ? r.color : past ? `${r.color}66` : UI.cell,
-                transition: "height 180ms ease",
-              }} />
+              <div style={{ opacity: here ? 1 : past ? 0.75 : 0.35, filter: here ? "none" : "saturate(.6)" }}>
+                <RankIcon rank={r} size={here ? 30 : 20} />
+              </div>
               <span className="tb-t" style={{ color: here ? r.color : UI.dim, opacity: here ? 1 : 0.5 }}>{r.name}</span>
             </div>
           );
@@ -2952,10 +2948,7 @@ function AccountModal({ profile, onLogout, onClose, onDelete }) {
     <Popup title="ACCOUNT" onClose={onClose} maxW={380}>
       <div className="pt-4">
         <div className="flex items-center gap-4 mb-5">
-          <div className="rounded flex items-center justify-center shrink-0"
-            style={{ width: 62, height: 62, background: placed ? `${rank.color}1F` : UI.ground, ...sk(placed ? rank.color : UI.line) }}>
-            <span className="tb-t" style={{ color: placed ? rank.color : UI.dim }}>{placed ? rank.name : "–"}</span>
-          </div>
+          <RankIcon rank={placed ? rank : null} size={62} />
           <div className="min-w-0">
             <div className="tb-t truncate">{profile.name}</div>
             <div className="tb-t mt-1" style={{ color: UI.dim }}>
@@ -3066,7 +3059,7 @@ function MiniBoard({ w, h, cells, size = 15, ink }) {
 
 function HowToModal({ colors, loadout, onClose }) {
   const [page, setPage] = useState(0);
-  const [mode, setModeNow] = useState(() => (store.get("tb:howMode") === "blitz" ? "blitz" : "control"));
+  const [mode, setModeNow] = useState(() => (["blitz", "sprint", "marathon"].includes(store.get("tb:howMode")) ? store.get("tb:howMode") : "control"));
   const setMode = (m) => { setModeNow(m); setPage(0); store.set("tb:howMode", m); };
   const ink = { A: colors.you, B: colors.rival, S: colors.special };
 
@@ -3169,13 +3162,13 @@ function HowToModal({ colors, loadout, onClose }) {
     {
       title: "SPIKES",
       art: (
-        <div className="tb-t grid gap-x-5 gap-y-1" style={{ gridTemplateColumns: "auto auto" }}>
-          {[["1 line", "1  (2 in a combo)"], ["2 lines", "2  (3 in a combo)"], ["3 lines", "4"], ["4 lines", "6"], ["T piece, 4 lines", "8"], ["all clear", "12"]].map(([a, b]) => (
+        <div className="tb-t grid gap-x-4 gap-y-1" style={{ gridTemplateColumns: "auto auto auto auto" }}>
+          {[["1 line", "1 · combo 2"], ["3 lines", "4"], ["2 lines", "2 · combo 3"], ["4 lines", "6"], ["T, 4 lines", "8"], ["all clear", "12"]].map(([a, b]) => (
             <React.Fragment key={a}><span style={{ color: UI.dim }}>{a}</span><span className="tb-b" style={{ color: GOLD }}>{b}</span></React.Fragment>
           ))}
         </div>
       ),
-      body: "Every clear attacks. Clears less than half a second apart chain into one spike and their levels add up; a clear inside a spike is a combo, and small clears hit harder in a combo. When you stop clearing for half a second, the spike is sent.",
+      body: "Every clear attacks. Clears less than half a second apart chain into one spike and their levels add up — small clears hit harder inside a combo. Stop clearing for half a second and the spike is sent.",
     },
     {
       title: "JUNK",
@@ -3198,7 +3191,94 @@ function HowToModal({ colors, loadout, onClose }) {
       body: "BLITZ is ranked 1v1 online, with its own rating on T-Terminal; the server checks every placement. VS BOT is the same game against a bot from skill 1 (about one piece every two seconds) to 10 (about three a second, and it hunts combos). Every match is saved in REPLAYS.",
     },
   ];
-  const list = mode === "blitz" ? blitzPages : pages;
+  // Blitz pages go deeper: combos, junk, defence.
+  blitzPages.splice(3, 0, {
+    title: "COMBOS AND T-SPINS",
+    art: (
+      <div className="flex items-center justify-center gap-3">
+        <MiniBoard w={8} h={4} size={10} ink={bInk} cells={{ "3,0": "I", "3,1": "I", "3,2": "I", "3,3": "I", "3,5": "L", "3,6": "L", "3,7": "L", "2,7": "L", "2,0": "O", "2,1": "O", "1,0": "O", "1,1": "O" }} />
+        <span className="tb-t tb-b" style={{ color: GOLD }}>→ ×</span>
+      </div>
+    ),
+    body: "Clear again within half a second and it's a combo: the levels stack into one bigger spike. Two quick doubles send more than one triple. A T piece that clears four lines is worth 8 — build a slot for it. An all clear (an empty board) is 12 on its own.",
+  }, {
+    title: "DEFENCE",
+    art: (
+      <div className="flex items-end justify-center gap-4">
+        <SPiece id={S_JUNK + 6} cell={7} gap={1} />
+        <span className="tb-t" style={{ color: UI.dim }}>place it where it costs least</span>
+      </div>
+    ),
+    body: "Junk arrives sixth in your forecast, so you see it coming five pieces ahead. Leave room for it: an open corner or edge fits most junk. A big junk piece placed well can even finish a line for you. If your board fills past half, take any clear you can — singles included — to dig out.",
+  });
+  const sInk = { I: S_INK[0], O: S_INK[1], T: S_INK[2], L: S_INK[6], J: S_INK[5] };
+  const sprintPages = [
+    {
+      title: "SPRINT: 40 LINES",
+      art: <MiniBoard w={8} h={8} size={10} ink={sInk} cells={{ "7,0": "I", "7,1": "I", "7,2": "I", "7,3": "I", "7,4": "O", "7,5": "O", "6,4": "O", "6,5": "O", "7,6": "L", "7,7": "L", "6,7": "L", "5,7": "L" }} />,
+      body: "Clear 40 lines as fast as you can on an 8×8 board. Rows and columns both count. The clock starts on your first move. Same pieces for everyone on a ranked run: the server checks every placement and its time.",
+    },
+    {
+      title: "THE CONTROLS",
+      art: (
+        <div className="tb-t grid gap-x-5 gap-y-1" style={{ gridTemplateColumns: "auto auto" }}>
+          {[["move", "mouse"], ["place", "left click / C"], ["swap piece", "right click"], ["turn", "S · D · A (180)"], ["retry", "R"], ["forfeit", "Esc"]].map(([a, b]) => (
+            <React.Fragment key={a}><span style={{ color: UI.dim }}>{a}</span><span className="tb-b">{b}</span></React.Fragment>
+          ))}
+        </div>
+      ),
+      body: "The piece follows your mouse and always stays on the board. You hold two pieces: swap between them, turn the one in play, click to drop it. The next five are on the right. Every key and mouse button can be rebound in Settings.",
+    },
+    {
+      title: "ULTRA: 2 MINUTES",
+      art: (
+        <div className="tb-t grid gap-x-5 gap-y-1" style={{ gridTemplateColumns: "auto auto" }}>
+          {[["1 line", "100"], ["2 lines", "300"], ["3 lines", "500"], ["4 lines", "800"], ["each more", "+400"], ["all clear", "3000 × combo"]].map(([a, b]) => (
+            <React.Fragment key={a}><span style={{ color: UI.dim }}>{a}</span><span className="tb-b" style={{ color: GOLD }}>{b}</span></React.Fragment>
+          ))}
+        </div>
+      ),
+      body: "Score as much as you can in two minutes. Clearing on back-to-back pieces builds a combo that multiplies every clear (×1.5, ×2, ×2.5…); a piece that clears nothing ends it. Big clears and all clears inside a long combo are where the points are.",
+    },
+    {
+      title: "RECORDS AND REPLAYS",
+      art: <div className="tb-t tb-b" style={{ color: ACCENTS.terminal }}>T-TERMINAL</div>,
+      body: "Signed in, your best Sprint time and Ultra score go on the T-Terminal leaderboards once the server has replayed them. Every finished run is kept in REPLAYS with its real timing — watch it back, or save it as a video.",
+    },
+  ];
+  const mInk = { A: colors.you, B: colors.special, S: colors.rival };
+  const marathonPages = [
+    {
+      title: "MARATHON",
+      art: <MiniBoard w={7} h={7} size={12} ink={mInk} cells={{ "6,0": "A", "6,1": "A", "6,2": "A", "5,0": "A", "6,4": "B", "6,5": "B", "5,5": "B", "5,6": "B", "4,3": "S", "4,4": "S" }} />,
+      body: "A solo puzzle for high scores on a 7×7 board. You hold three pieces; place any of them anywhere it fits, turned any way. Fill a row or a column and it clears. It ends when none of your three pieces fits anywhere.",
+    },
+    {
+      title: "SCORING",
+      art: (
+        <div className="tb-t grid gap-x-5 gap-y-1" style={{ gridTemplateColumns: "auto auto" }}>
+          {[["placing", "1 per square"], ["clearing", "10 per square"], ["× lines", "cleared at once"], ["× streak", "clears in a row"], ["× level", "+10% a level"]].map(([a, b]) => (
+            <React.Fragment key={a}><span style={{ color: UI.dim }}>{a}</span><span className="tb-b" style={{ color: GOLD }}>{b}</span></React.Fragment>
+          ))}
+        </div>
+      ),
+      body: "Clears pay far more than placing. Clearing two lines at once doubles them; a clear within three moves of the last keeps your streak going and multiplies again. The level rises every 10 lines and every clear pays 10% more per level.",
+    },
+    {
+      title: "SURVIVING",
+      art: <div className="flex items-center justify-center gap-3"><Stack style={{ color: MODE_INK.marathon, width: 40, height: 40 }} /></div>,
+      body: "From level 3, each new bag carries more big, awkward pieces, so the board always closes in. Keep the middle open, keep a place for the long pieces, and don't fill a line you can't finish. On a phone, drag a piece to the board and tap the big turn button with your other hand.",
+    },
+  ];
+  // More on Control: the rating.
+  pages.push({
+    title: "RANKED AND RATING",
+    art: <div className="flex items-center justify-center gap-2">{RANKS.filter((_, i) => i % 2 === 1 || i === RANKS.length - 1).map((r) => <RankIcon key={r.name} rank={r} size={34} />)}</div>,
+    body: `Ranked Control and Blitz each have a Glicko-2 rating. After ${PLACEMENT_GAMES} placement matches you get a rank, from F up through C, B, A and S to X. The ± is how sure the rating is; it narrows as you play. Win against stronger players to climb faster.`,
+  });
+  const BOOKS = { control: pages, blitz: blitzPages, sprint: sprintPages, marathon: marathonPages };
+  const TAB_INK = { control: MODE_INK.ranked, blitz: MODE_INK.blitz, sprint: MODE_INK.sprint, marathon: MODE_INK.marathon };
+  const list = BOOKS[mode] || pages;
   const p = list[page];
   const last = page === list.length - 1;
 
@@ -3208,23 +3288,23 @@ function HowToModal({ colors, loadout, onClose }) {
       {list.map((_, i) => (
         <div key={i} style={{
           flex: 1, height: 2, borderRadius: 2,
-          background: i <= page ? (mode === "blitz" ? "#F29A4A" : colors.you) : UI.line,
+          background: i <= page ? TAB_INK[mode] : UI.line,
           transition: "background 200ms",
         }} />
       ))}
     </div>
   );
   const tabs = (
-    <div className="flex gap-1.5">
-      {[["control", "CONTROL"], ["blitz", "BLITZ"]].map(([k, label]) => (
+    <div className="flex flex-wrap gap-1.5">
+      {[["control", "CONTROL"], ["blitz", "BLITZ"], ["sprint", "SPRINT · ULTRA"], ["marathon", "MARATHON"]].map(([k, label]) => (
         <button key={k} onClick={() => setMode(k)} aria-pressed={mode === k} className="tb-t px-3"
-          style={{ height: 30, ...(mode === k ? skFill(k === "blitz" ? "#F29A4A" : colors.you) : glass(UI.line)), color: mode === k ? UI.text : UI.dim }}>{label}</button>
+          style={{ height: 30, ...(mode === k ? skFill(TAB_INK[k]) : glass(UI.line)), color: mode === k ? UI.text : UI.dim }}>{label}</button>
       ))}
     </div>
   );
   const art = (
     <div className="rounded py-5 flex items-center justify-center"
-      style={{ background: UI.ground, ...sk(UI.line), minHeight: wide ? 170 : 132 }}>
+      style={{ background: UI.ground, ...sk(UI.line), minHeight: wide ? 170 : 104 }}>
       <div style={wide ? { zoom: 1.3 } : undefined}>{p.art}</div>
     </div>
   );
@@ -3268,9 +3348,9 @@ function HowToModal({ colors, loadout, onClose }) {
         <div className="pt-4 pb-1">
           <div className="mb-3">{tabs}</div>
           {progress}
-          <div className="tb-t mb-4" style={{ color: UI.dim }}>{p.title}</div>
-          <div className="mb-4">{art}</div>
-          <div className="tb-t mb-5" style={{ minHeight: 96 }}>{p.body}</div>
+          <div className="tb-t mb-2" style={{ color: UI.dim }}>{p.title}</div>
+          <div className="mb-3">{art}</div>
+          <div className="tb-t mb-3" style={{ minHeight: 96 }}>{p.body}</div>
           {buttons}
         </div>
       )}
@@ -3670,7 +3750,7 @@ function RankedLobby({ mode, profile, loadout, onClose }) {
         {/* Your standing. */}
         <div className="flex items-center" style={{ gap: 5 * P }}>
           <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
-            <Ink size={22 * P} color={info.placed ? info.rank.color : UI.dim} />
+            <RankIcon rank={info.placed ? info.rank : null} size={28 * P} />
             <span className="tb-t tb-b" style={{ color: info.placed ? info.rank.color : UI.dim }}>{info.placed ? info.rank.name : "UNPLACED"}</span>
           </div>
           <div className="flex flex-col items-start" style={{ gap: P }}>
@@ -4376,8 +4456,8 @@ function SprintGame({ onExit, ultra = false }) {
   const P = usePx();
   const [stageRef, stage] = useSize();
   const keys = useSyncExternalStore(subscribeSprintKeys, getSprintKeys);
-  // A run counts down 3-2-1; the clock starts at GO.
-  const [r, setRun] = useState(() => ({ ...freshSprint(ultra), goAt: goTime() }));
+  // In on the tide, no countdown: the clock starts on your first move.
+  const [r, setRun] = useState(() => freshSprint(ultra));
   // Key handlers read and write this copy at once, so two presses in one frame both count.
   const live = useRef(r);
   const commit = useCallback((next) => { live.current = next; setRun(next); }, []);
@@ -4411,7 +4491,7 @@ function SprintGame({ onExit, ultra = false }) {
   }), [mode, ultra, commit]);
   useEffect(() => net.on("soloResult", (m) => setRanked(m)), []);
   useEffect(() => { askSeed(); }, [askSeed]);
-  const retry = useCallback(() => { setRanked(null); setShowEnd(false); commit({ ...freshSprint(ultra), goAt: goTime() }); askSeed(); sfx.pick(); }, [commit, ultra, askSeed]);
+  const retry = useCallback(() => { setRanked(null); setShowEnd(false); commit(freshSprint(ultra)); askSeed(); sfx.pick(); }, [commit, ultra, askSeed]);
   const finish = useCallback((cur, result) => {
     const endAt = ultra && result === "time" ? cur.startAt + S_ULTRA_MS : performance.now();
     let newBest = false;
@@ -4458,7 +4538,8 @@ function SprintGame({ onExit, ultra = false }) {
   // Places the piece in play; the same slot comes straight back with the forecast piece, at the cursor.
   const placeNow = useCallback(() => {
     let cur = live.current;
-    if (cur.result || !cur.act || !cur.startAt) return;
+    if (cur.result || !cur.act) return;
+    if (!cur.startAt) cur = { ...cur, startAt: performance.now() };
     if (!sCanPlace(cur.st, cur.act)) { sfx.illegal(); return; }
     const st = cloneSprint(cur.st);
     const slot = cur.act.slot;
@@ -4485,7 +4566,7 @@ function SprintGame({ onExit, ultra = false }) {
     if (cur.result) return;
     if (a === "forfeit") { finish(cur, "forfeit"); return; }
     if (!cur.act) return;
-    if (!cur.startAt) return; // nothing moves until GO
+    if (!cur.startAt) cur = { ...cur, startAt: performance.now() }; // the clock starts on your first action
     if (a === "swap") { commit({ ...cur, act: toMouse(sSpawn(cur.st, 1 - cur.act.slot)) }); sfx.pick(); return; }
     if (a === "cw" || a === "ccw" || a === "r180") {
       const dir = a === "cw" ? 1 : a === "ccw" ? -1 : 2;
@@ -4597,7 +4678,6 @@ function SprintGame({ onExit, ultra = false }) {
 
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono select-none" style={{ color: UI.text, cursor: "crosshair" }}>
-      {!r.result && <Countdown key={r.goAt} goAt={r.goAt} />}
       <div ref={stageRef} className="relative flex-1 min-h-0 flex flex-col items-center w-full mx-auto px-3" style={{ maxWidth: 1600 }}>
         <div style={{ flex: 1, minHeight: 2 * P }} />
         <GameTitle mode={ultra ? "ULTRA" : "SPRINT"} />
@@ -4635,6 +4715,13 @@ function SprintGame({ onExit, ultra = false }) {
                 }))}
               </div>
               {vanish && <VanishLayer key={vanish.key} cleared={vanish.cleared} cell={cell} gap={g} ink={S_INK} />}
+              {!r.startAt && !r.result && (
+                <div className="absolute inset-x-0 flex justify-center pointer-events-none" style={{ top: 2 * P }}>
+                  <span className="tb-t" style={{ color: UI.text, padding: `${P}px ${3 * P}px`, background: "color-mix(in srgb, var(--tb-panel-solid) 80%, transparent)" }}>
+                    {ultra ? "2 MINUTES · THE CLOCK STARTS ON YOUR FIRST MOVE" : "THE CLOCK STARTS ON YOUR FIRST MOVE"}
+                  </span>
+                </div>
+              )}
               {r.pop && (
                 <div key={r.pop.key} className="absolute flex justify-center pointer-events-none tb-rise" style={{ left: 0, right: 0, bottom: 4 * P, zIndex: 4 }}>
                   <span className="tb-t tb-b" style={{ color: GOLD, padding: `${P}px ${3 * P}px`, background: "color-mix(in srgb, var(--tb-panel-solid) 82%, transparent)", clipPath: CLIP1, textShadow: `${P}px ${P}px 0 rgba(0,0,0,.6)` }}>{r.pop.text}</span>
@@ -6700,7 +6787,7 @@ function RatingPanel({ from, to, rdFrom, rdTo }) {
       <div className="w-full tb-rise" style={{ padding: 4 * P, ...GLASS, clipPath: CLIP, animationDelay: "200ms" }}>
         <div className="flex items-center" style={{ gap: 4 * P }}>
           <div className="flex flex-col items-center shrink-0" style={{ gap: 2 * P }}>
-            <Ink size={14 * P} color={rank.color} />
+            <RankIcon rank={rank} size={20 * P} />
             <span className="tb-t" style={{ color: rank.color }}>{rank.name}</span>
           </div>
           <div className="flex-1 min-w-0 flex flex-col items-start" style={{ gap: 3 * P }}>

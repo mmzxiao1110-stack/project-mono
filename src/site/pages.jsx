@@ -80,6 +80,9 @@ const NEWS = [
     "Profile cards in your own colours, with Blitz PPS, APM and VS. Full stats on T-Terminal.",
     "New mode colours; unranked play is gone (private rooms stay). Titles are now bold type.",
     "Replays: big boards and the controls at the bottom, the same for every mode.",
+    "Rank emblems drawn as pixel art, from a plain F plate to a shining X diamond.",
+    "How to Play: Control, Blitz, Sprint · Ultra and Marathon, each with its own pages.",
+    "Sprint and Ultra start straight after the tide (the clock starts on your first move); VS BOT and VS AI count down.",
   ] },
   { v: "v0.34.0", date: "NOV 2026", title: "REPLAYS YOU CAN HEAR AND SAVE", items: [
     "Replays play the game's sounds, and the menu music fades out while you watch.",

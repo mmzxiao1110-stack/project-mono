@@ -9,6 +9,7 @@
  */
 import { RANKS, PLACEMENT_GAMES, rankIndexFor } from "../../shared/glicko.js";
 import { CARD_DEFAULT } from "./profileData.js";
+import { RankIcon } from "./rankIcon.jsx";
 
 const hex = (c) => (/^#[0-9a-f]{6}$/i.test(c || "") ? c : null);
 
@@ -54,7 +55,7 @@ export function ProfileCard({ p, compact = false, children }) {
   );
   const ladder = (label, r, value, left) => (
     <div className="tb-t flex items-center" style={{ gap: px(2), color: "#fff" }}>
-      <span style={{ display: "inline-block", width: px(5), height: px(5), background: r ? r.color : "rgba(255,255,255,.35)", boxShadow: "inset 0 calc(var(--p) * -1) 0 rgba(0,0,0,.3)" }} />
+      <RankIcon rank={r || null} size={px(10)} />
       <span style={{ color: "rgba(255,255,255,.7)" }}>{label}</span>
       <span className="tb-b">{r ? `${r.name} · ${value}` : left}</span>
     </div>
