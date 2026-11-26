@@ -86,6 +86,8 @@ function evalBoard(b) {
  * comboOpen: its last placement cleared and it plays fast enough to chain.
  */
 export function botMove(st, skill = 10, rand = Math.random) {
+  // Skill 10 is the strongest bot found by simulation (see botMoveOP below).
+  if (skill >= 10) return botMoveOP(st, OP_W, rand);
   const smart = (Math.max(1, Math.min(10, skill)) - 1) / 9;
   const chains = skill >= 6 || 1000 / botPps(skill) <= SPIKE_MS;
   const comboOpen = chains && !!st.botComboOpen;

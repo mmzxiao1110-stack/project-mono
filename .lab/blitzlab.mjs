@@ -114,4 +114,5 @@ export function match(moveA, moveB, seed, { skill = 10, maxMs = 240000 } = {}) {
   }
   return { winner: null, t: maxMs, log, sent, lv, st };
 }
-export const base = (st) => baseMove(st, 10);
+// The previous skill-10 brain (skill 10 itself is now botMoveOP).
+export const base = (st) => baseMove(st, 9.999);

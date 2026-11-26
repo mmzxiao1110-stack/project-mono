@@ -22,7 +22,7 @@ import {
   emptyPins, nextMeters, isLegalDelete, isLegalPin, normalizeAction, stampHits,
   isCheckTurn, shrinkBoard,
 } from "../shared/engine.js";
-import { aiPickAction } from "../shared/ai.js";
+import { aiPickAction, aiPickActionDeep } from "../shared/ai.js";
 import {
   SIZE as M_SIZE, PIECES as M_PIECES, newMarathon, newMarathonSeed, placePiece as mPlace, fits as mFits,
   fitsAnywhere as mFitsAnywhere, levelOf as mLevelOf, encodeMoves, decodeMoves, TUNING as M_TUNING, shapeOf as mShape,
@@ -5339,7 +5339,10 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
     if (phase !== "AI_THINK") return;
     const t = setTimeout(() => {
       const pieceB = currentPiece(decks.B);
-      const raw = aiPickAction({ board, pins, meters }, pieceB, "B", aiLevel, LEVELS.length);
+      // The top strength plays the turn as simultaneous: it predicts your reply (see aiPickActionDeep).
+      const raw = aiLevel >= LEVELS.length
+        ? aiPickActionDeep({ board, pins, meters }, pieceB, "B", currentPiece(decks.A), { next: upcoming(decks.B)[0] })
+        : aiPickAction({ board, pins, meters }, pieceB, "B", aiLevel, LEVELS.length);
       // Stamps → what they hit (an AI pin stamp only pins its own squares, and pays for those).
       const move = raw ? normalizeAction(board, pins, meters.B, "B", pieceB, raw).move || null : null;
       logRef.current.push(encodeTurn(encodeAction(rawARef.current?.raw, rawARef.current?.piece), encodeAction(move ? raw : null, pieceB)));

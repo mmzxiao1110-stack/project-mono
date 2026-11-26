@@ -73,6 +73,10 @@ export function About() {
    NEWS — sea green
    ============================================================ */
 const NEWS = [
+  { v: "v0.36.0", date: "NOV 2026", title: "STRONGER BOTS", items: [
+    "VS BOT skill 10 is a new bot found by simulation: it looks three placements ahead, hunts combos, keeps its board open and plans for the junk it sees coming. It beat the old skill 10 by 17 to 4.",
+    "VS AI strength 10 now plays Control's turns as what they are, simultaneous: it predicts your likely move and picks what holds up best against it. It beat the old top level 42 to 18.",
+  ] },
   { v: "v0.35.0", date: "NOV 2026", title: "RANKED LOBBIES, MATCH INTROS, PROFILE CARDS", items: [
     "BLITZ and CONTROL each have their own lobby: your rank, your Glicko, who's playing and searching, and one big PLAY. Keep searching while you change settings or themes.",
     "A match found: a sonar ping, the tide, you and your opponent either side of a wave (click them to see their profile), then 3-2-1.",

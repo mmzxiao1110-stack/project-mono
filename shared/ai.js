@@ -237,7 +237,7 @@ export function aiPickAction(st, piece, owner, level, levels) {
  * by how it fares across those replies after the real turn resolution
  * (contested squares, deletes, clears): mostly the average, partly the worst.
  */
-export function aiPickActionDeep(st, piece, owner, oppPiece, { mine = 10, theirs = 8, caution = 0.35, w: wIn, next = null, ahead = 0.5 } = {}) {
+export function aiPickActionDeep(st, piece, owner, oppPiece, { mine = 10, theirs = 4, caution = 0.7, w: wIn, next = null, ahead = 0.5 } = {}) {
   const w = wIn || { ...TUNED };
   const opp = other(owner);
   const { board: b, pins, meters } = st;
