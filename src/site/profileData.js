@@ -1,8 +1,5 @@
 import { RANKS, PLACEMENT_GAMES, rankIndexFor } from "../../shared/glicko.js";
 
-/** A profile card's colours when the player hasn't picked their own. */
-export const CARD_DEFAULT = ["#2B3D6B", "#6B4C9C"];
-
 /** Your own profile (as the server sends it to you), in /api/player's shape. */
 export function cardFromProfile(profile) {
   if (!profile) return null;

@@ -12,7 +12,8 @@ import { ACCENTS } from "./site/colors.js";
 import { PixelWord } from "./site/kit.jsx";
 import { Avatar, ProfileCard } from "./site/profileCard.jsx";
 import { RankIcon } from "./site/rankIcon.jsx";
-import { cardFromProfile, CARD_DEFAULT } from "./site/profileData.js";
+import { cardFromProfile } from "./site/profileData.js";
+import { SKIES, CARD_INKS, PATTERNS, cleanCard } from "../shared/card.js";
 
 /* The rules live in one place and the server imports the same file. */
 import {
@@ -1778,7 +1779,7 @@ function ProfilePopup({ name, guest = false, onClose }) {
           <div className="tb-t" style={{ color: UI.dim }}>{res.error}</div>
         ) : (
           <>
-            <ProfileCard p={res.data} compact />
+            <ProfileCard p={res.data} compact href={`/terminal#/player/${encodeURIComponent(who)}`} />
             <PlayerRecord p={res.data} onOpen={setWho} />
           </>
         )}
@@ -2053,6 +2054,50 @@ function StatCell({ label, value, sub, color }) {
   );
 }
 
+/**
+ * Your card, and how it looks: a sky, an accent and a pattern, each picked
+ * from a fixed set (like the theme's colours). Changes show at once and are
+ * saved to your account.
+ */
+function CardEditor({ profile }) {
+  const P = usePx();
+  const [sel, setSel] = useState(() => cleanCard(profile.card));
+  const [api, setApi] = useState(null);
+  useEffect(() => {
+    let live = true;
+    apiGet(`/api/player/${encodeURIComponent(profile.name)}`).then((d) => live && setApi(d)).catch(() => {});
+    return () => { live = false; };
+  }, [profile.name]);
+  const pick = (patch) => { const next = { ...sel, ...patch }; setSel(next); net.setCard(next); sfx.pick(); };
+  const p = { ...(api || cardFromProfile(profile)), card: sel };
+  const label = (t) => <span className="tb-t" style={{ color: UI.dim, width: 84, flexShrink: 0 }}>{t}</span>;
+  return (
+    <div className="mt-2 flex flex-col" style={{ gap: 3 * P }}>
+      <ProfileCard p={p} href={`/terminal#/player/${encodeURIComponent(profile.name)}`} />
+      <div className="flex flex-col" style={{ gap: 2 * P, padding: 3 * P, ...glass(UI.line) }}>
+        <div className="flex items-center flex-wrap" style={{ gap: 2 * P }}>
+          {label("SKY")}
+          {Object.entries(SKIES).map(([k, c]) => (
+            <button key={k} onClick={() => pick({ sky: k })} aria-pressed={sel.sky === k} title={k} aria-label={`Sky ${k}`}
+              style={{ width: 30, height: 20, background: `linear-gradient(180deg, ${c[0]}, ${c[1]} 60%, ${c[2]})`, boxShadow: sel.sky === k ? `0 0 0 ${P}px ${UI.text}` : `0 0 0 ${P}px ${UI.line}` }} />
+          ))}
+        </div>
+        <div className="flex items-center flex-wrap" style={{ gap: 2 * P }}>
+          {label("ACCENT")}
+          {CARD_INKS.map((c, i) => <Swatch key={c} color={c} on={sel.accent === i} onClick={() => pick({ accent: i })} size={20} />)}
+        </div>
+        <div className="flex items-center flex-wrap" style={{ gap: 2 * P }}>
+          {label("PATTERN")}
+          {PATTERNS.map((k) => (
+            <button key={k} onClick={() => pick({ pattern: k })} aria-pressed={sel.pattern === k} className="tb-t px-2"
+              style={{ height: 24, ...(sel.pattern === k ? skFill(CARD_INKS[sel.accent]) : glass(UI.line)), color: sel.pattern === k ? UI.text : UI.dim }}>{k.toUpperCase()}</button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function StatsModal({ profile, status, onClose, onLogout, onDelete }) {
   const wide = useWidePanel();
   // No profile has two very different causes. Saying "offline" for both sent
@@ -2089,29 +2134,10 @@ function StatsModal({ profile, status, onClose, onLogout, onDelete }) {
   const next = ri < RANKS.length - 1 ? RANKS[ri + 1] : null;
   const toNext = next ? Math.max(0, Math.ceil(rankMin(ri + 1) - tr)) : 0;
   const winRate = st.games ? Math.round((st.wins / st.games) * 100) : 0;
-  const since = profile.createdAt ? new Date(profile.createdAt).toLocaleDateString(undefined, { month: "short", year: "numeric" }) : "—";
   const mar = profile.marathon;
 
-  const card = cardFromProfile(profile);
-  const cardColors = card.card || CARD_DEFAULT;
-  const who = (
-    <div className="mt-4 flex flex-col gap-2">
-      <ProfileCard p={card} />
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <label className="tb-t flex items-center gap-2" style={{ color: UI.dim }}>
-          CARD COLOURS
-          {[0, 1].map((k) => (
-            <input key={k} type="color" aria-label={`Card colour ${k + 1}`} defaultValue={cardColors[k]}
-              onChange={(e) => { const next = [...cardColors]; next[k] = e.target.value; net.setCard(next[0], next[1]); }}
-              style={{ width: 34, height: 26, ...glass(UI.line) }} />
-          ))}
-        </label>
-        <a href={`/terminal#/player/${encodeURIComponent(profile.name)}`} target="_blank" rel="noopener" className="tb-t no-underline"
-          style={{ padding: "6px 10px", ...skFill(ACCENTS.terminal), color: UI.text }}>FULL PROFILE ON T-TERMINAL</a>
-      </div>
-      <span className="tb-t" style={{ color: UI.dim }}>since {since}</span>
-    </div>
-  );
+  const who = <CardEditor profile={profile} />;
+
   const rankCard = (
     <div className="mt-3 rounded p-4" style={{ ...glass(UI.line) }}>
       <div className="flex items-center gap-4">

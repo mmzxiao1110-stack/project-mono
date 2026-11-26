@@ -73,6 +73,11 @@ export function About() {
    NEWS — sea green
    ============================================================ */
 const NEWS = [
+  { v: "v0.37.0", date: "NOV 2026", title: "PROFILE CARDS, RANK LETTERS", items: [
+    "Your profile card: your picture and big Blitz, Sprint and Ultra cards breaking out of a little dithered sky. Pick its sky, accent and pattern (waves, stars, bubbles or a grid) on your account page.",
+    "Ranks are big shaded pixel letters now, with their + and −.",
+    "Titles are plain white.",
+  ] },
   { v: "v0.36.0", date: "NOV 2026", title: "STRONGER BOTS", items: [
     "VS BOT skill 10 is a new bot found by simulation: it looks three placements ahead, hunts combos, keeps its board open and plans for the junk it sees coming. It beat the old skill 10 by 17 to 4.",
     "VS AI strength 10 now plays Control's turns as what they are, simultaneous: it predicts your likely move and picks what holds up best against it. It beat the old top level 42 to 18.",

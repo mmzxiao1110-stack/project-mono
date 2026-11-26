@@ -52,6 +52,7 @@ import {
 import { Queue } from "./queue.js";
 import { Match } from "./match.js";
 import { BlitzMatch, blitzRates } from "./blitz.js";
+import { cleanCard } from "../shared/card.js";
 import { newRating } from "../shared/glicko.js";
 import { unref } from "./timers.js";
 
@@ -81,7 +82,7 @@ const publicProfile = (p, acct) => ({
   rating: p.rating,
   stats: p.stats,
   marathon: p.marathon || null,
-  card: p.card || null,
+  card: cleanCard(p.card),
   blitz: p.blitz ? { rating: p.blitz.rating, games: p.blitz.games, wins: p.blitz.wins, ...blitzRates(p.blitz) } : null,
   sprint: p.sprint ? { best: p.sprint.best, pieces: p.sprint.pieces, games: p.sprint.games, at: p.sprint.at } : null,
   ultra: p.ultra ? { best: p.ultra.best, lines: p.ultra.lines, games: p.ultra.games, at: p.ultra.at } : null,
@@ -632,14 +633,12 @@ async function handle(ws, msg) {
 
     /* ---------- Blitz 1v1 ---------- */
 
-    // The two colours of your profile card.
+    // Your profile card: a sky, an accent and a pattern, each from a fixed list.
     case "setCard": {
       if (!ws.userId || isGuest(ws.userId)) return;
-      const ok = (c) => typeof c === "string" && /^#[0-9a-f]{6}$/i.test(c);
-      if (!Array.isArray(msg.card) || msg.card.length !== 2 || !msg.card.every(ok)) return fail(ws, "Bad colours.");
       const p = getProfile(ws.userId);
       if (!p) return;
-      p.card = msg.card.map((c) => c.toUpperCase());
+      p.card = cleanCard(msg.card);
       saveProfile(p);
       return send(ws, { t: "profile", profile: publicProfile(p, getAccount(ws.userId)) });
     }

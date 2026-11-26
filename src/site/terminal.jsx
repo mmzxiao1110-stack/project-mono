@@ -346,7 +346,7 @@ function Player({ name }) {
       <SearchBox />
       <Panel color={st.data?.rank ? rankColor(st.data.rank) : undefined}>
         <Status st={st} />
-        {st.data && <ProfileCard p={st.data} />}
+        {st.data && <ProfileCard p={st.data} compact />}
         {st.data && <PlayerRecord p={st.data} />}
       </Panel>
     </div>
