@@ -75,7 +75,8 @@ export function About() {
 const NEWS = [
   { v: "v0.37.0", date: "NOV 2026", title: "PROFILE CARDS, RANK LETTERS", items: [
     "Your profile card: your picture and big Blitz, Sprint and Ultra cards breaking out of a little dithered sky. Pick its sky, accent and pattern (waves, stars, bubbles or a grid) on your account page.",
-    "Ranks are big shaded pixel letters now, with their + and −.",
+    "Ranks are big pixel letters lit from the top left, with a hard shadow down and to the right, and their + and −.",
+    "Glass-bubble mode cards over the same sky, Blitz biggest in the middle; GitHub-style pictures; hover your card and press the pencil to change its colours.",
     "Titles are plain white.",
   ] },
   { v: "v0.36.0", date: "NOV 2026", title: "STRONGER BOTS", items: [

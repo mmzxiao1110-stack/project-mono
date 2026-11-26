@@ -13,7 +13,7 @@ import { PixelWord } from "./site/kit.jsx";
 import { Avatar, ProfileCard } from "./site/profileCard.jsx";
 import { RankIcon } from "./site/rankIcon.jsx";
 import { cardFromProfile } from "./site/profileData.js";
-import { SKIES, CARD_INKS, PATTERNS, cleanCard } from "../shared/card.js";
+import { cleanCard } from "../shared/card.js";
 
 /* The rules live in one place and the server imports the same file. */
 import {
@@ -2060,7 +2060,6 @@ function StatCell({ label, value, sub, color }) {
  * saved to your account.
  */
 function CardEditor({ profile }) {
-  const P = usePx();
   const [sel, setSel] = useState(() => cleanCard(profile.card));
   const [api, setApi] = useState(null);
   useEffect(() => {
@@ -2068,32 +2067,11 @@ function CardEditor({ profile }) {
     apiGet(`/api/player/${encodeURIComponent(profile.name)}`).then((d) => live && setApi(d)).catch(() => {});
     return () => { live = false; };
   }, [profile.name]);
-  const pick = (patch) => { const next = { ...sel, ...patch }; setSel(next); net.setCard(next); sfx.pick(); };
+  const edit = (next) => { const c = cleanCard(next); setSel(c); net.setCard(c); sfx.pick(); };
   const p = { ...(api || cardFromProfile(profile)), card: sel };
-  const label = (t) => <span className="tb-t" style={{ color: UI.dim, width: 84, flexShrink: 0 }}>{t}</span>;
   return (
-    <div className="mt-2 flex flex-col" style={{ gap: 3 * P }}>
-      <ProfileCard p={p} href={`/terminal#/player/${encodeURIComponent(profile.name)}`} />
-      <div className="flex flex-col" style={{ gap: 2 * P, padding: 3 * P, ...glass(UI.line) }}>
-        <div className="flex items-center flex-wrap" style={{ gap: 2 * P }}>
-          {label("SKY")}
-          {Object.entries(SKIES).map(([k, c]) => (
-            <button key={k} onClick={() => pick({ sky: k })} aria-pressed={sel.sky === k} title={k} aria-label={`Sky ${k}`}
-              style={{ width: 30, height: 20, background: `linear-gradient(180deg, ${c[0]}, ${c[1]} 60%, ${c[2]})`, boxShadow: sel.sky === k ? `0 0 0 ${P}px ${UI.text}` : `0 0 0 ${P}px ${UI.line}` }} />
-          ))}
-        </div>
-        <div className="flex items-center flex-wrap" style={{ gap: 2 * P }}>
-          {label("ACCENT")}
-          {CARD_INKS.map((c, i) => <Swatch key={c} color={c} on={sel.accent === i} onClick={() => pick({ accent: i })} size={20} />)}
-        </div>
-        <div className="flex items-center flex-wrap" style={{ gap: 2 * P }}>
-          {label("PATTERN")}
-          {PATTERNS.map((k) => (
-            <button key={k} onClick={() => pick({ pattern: k })} aria-pressed={sel.pattern === k} className="tb-t px-2"
-              style={{ height: 24, ...(sel.pattern === k ? skFill(CARD_INKS[sel.accent]) : glass(UI.line)), color: sel.pattern === k ? UI.text : UI.dim }}>{k.toUpperCase()}</button>
-          ))}
-        </div>
-      </div>
+    <div className="mt-2">
+      <ProfileCard p={p} href={`/terminal#/player/${encodeURIComponent(profile.name)}`} onEdit={edit} />
     </div>
   );
 }

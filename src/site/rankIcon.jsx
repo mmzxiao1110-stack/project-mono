@@ -25,28 +25,28 @@ function build(name, color) {
   const key = name + color;
   if (cache.has(key)) return cache.get(key);
   const letter = GLYPH[name[0]] || GLYPH["?"], mod = MOD[name[1]] || null;
-  const cells = new Map(); // "x,y" -> row within the glyph (for shading)
-  const put = (g, ox, oy) => g.forEach((row, y) => [...row].forEach((b, x) => { if (b === "1") cells.set(`${ox + x},${oy + y}`, y + oy); }));
-  // One pixel of margin all round for the outline; the mark sits mid-height beside the letter.
-  put(letter, 1, 1);
-  if (mod) put(mod, 8, 1 + Math.round((8 - mod.length) / 2));
-  const w = mod ? 16 : 9, h = 10;
+  const cells = new Map(); // "x,y" -> row within the glyph (for the bands)
+  const put = (g, ox, oy) => g.forEach((row, y) => [...row].forEach((b, x) => { if (b === "1") cells.set(`${x + ox},${y + oy}`, y + oy); }));
+  put(letter, 0, 0);
+  if (mod) put(mod, 7, Math.round((8 - mod.length) / 2));
+  const w = mod ? 13 : 6, h = 8;
   const base = hexRgb(color);
   const has = (x, y) => cells.has(`${x},${y}`);
-  const out = { w: w + 1, h: h + 1, px: [] };
-  // Shadow, outline, then the letter in bands.
-  const outline = new Set();
+  // Lit from the top left, like the sun on it: a hard shadow falls down and
+  // to the right; edges facing the light are bright, edges facing away dark.
+  const out = { w: w + 2, h: h + 2, px: [] };
   for (const k of cells.keys()) {
     const [x, y] = k.split(",").map(Number);
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (!has(x + dx, y + dy)) outline.add(`${x + dx},${y + dy}`);
+    for (const [dx, dy, a] of [[2, 2, 0.28], [1, 1, 0.6]]) if (!has(x + dx, y + dy)) out.px.push([x + dx, y + dy, `rgba(6,4,18,${a})`]);
   }
-  for (const k of outline) { const [x, y] = k.split(",").map(Number); out.px.push([x + 1, y + 1, "rgba(0,0,0,.45)"]); }
-  for (const k of outline) { const [x, y] = k.split(",").map(Number); out.px.push([x, y, mix(base, K, 0.72)]); }
   for (const [k, row] of cells) {
     const [x, y] = k.split(",").map(Number);
-    const t = (row - 1) / 7; // 0 top … 1 bottom
-    let c = t < 0.2 ? mix(base, W, 0.55) : t < 0.45 ? mix(base, W, 0.25) : t < 0.75 ? `rgb(${base.join(",")})` : mix(base, K, 0.3);
-    if (!has(x - 1, y) && !has(x, y - 1)) c = mix(base, W, 0.8); // a glint on each top-left corner
+    const t = row / 7;
+    const lit = !has(x, y - 1) || !has(x - 1, y), away = !has(x, y + 1) || !has(x + 1, y);
+    let c = t < 0.35 ? mix(base, W, 0.3) : t < 0.7 ? `rgb(${base.join(",")})` : mix(base, K, 0.18);
+    if (away) c = mix(base, K, 0.35);
+    if (lit) c = mix(base, W, 0.4);
+    if (!has(x, y - 1) && !has(x - 1, y)) c = mix(base, W, 0.85);
     out.px.push([x, y, c]);
   }
   cache.set(key, out);
