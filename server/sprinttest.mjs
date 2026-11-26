@@ -20,17 +20,17 @@ ok(bad === 0, "turning stays on the board and never drifts (centre, edges, corne
 
 // The bag, as the engine deals it: the opening hand and forecast, then every new forecast.
 function dealt(seed, n) {
-  const st = S.newSprint(seed), out = [...st.hand, st.next];
+  const st = S.newSprint(seed), out = [...st.hand, ...st.queue];
   while (out.length < n && !st.over) {
     const m = best(st); if (!m) break;
     S.place(st, { slot: m.slot, id: st.hand[m.slot], rot: m.rot, cr: m.r + m.s.h / 2, cc: m.c + m.s.w / 2 });
-    out.push(st.next);
+    out.push(st.queue[st.queue.length - 1]);
   }
   return out;
 }
 function best(st) {
   let b = null;
-  for (let slot = 0; slot < 3; slot++) for (let rot = 0; rot < 4; rot++) {
+  for (let slot = 0; slot < S.HAND; slot++) for (let rot = 0; rot < 4; rot++) {
     const s = S.shapeOf(st.hand[slot], rot);
     for (let r = 0; r + s.h <= 7; r++) for (let c = 0; c + s.w <= 7; c++) {
       if (!s.cells.every(([dr, dc]) => st.board[r + dr][c + dc] === null)) continue;
