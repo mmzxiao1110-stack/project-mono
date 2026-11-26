@@ -323,6 +323,9 @@ class Net {
 
   /** Marathon: ask for a seed (the server checks the finished game against it). */
   marathonStart() { this.send({ t: "marathonStart" }); }
+  /** Sprint/Ultra: ask for a seed (the finished run is replayed against it to rank it). */
+  soloStart(mode) { this.send({ t: "soloStart", mode }); }
+  soloEnd(mode, seed, moves) { this.send({ t: "soloEnd", mode, seed, moves }); }
   /** Marathon: the finished game, as its moves (see shared/marathon.js encodeMoves). */
   marathonEnd(seed, moves) { this.send({ t: "marathonEnd", seed, moves }); }
   /** Marathon: keep this unfinished game on the server to come back to (signed in only). */
@@ -478,6 +481,19 @@ class Net {
           this.profile = { ...this.profile, marathonOpen: { score: m.score, lines: m.lines, at: Date.now() } };
           this.emit("profile", this.profile);
         }
+        break;
+
+      case "soloSeed":
+        this.emit("soloSeed", m);
+        break;
+
+      case "soloResult":
+        if (m.saved && m.mode && this.profile) {
+          const prev = this.profile[m.mode] || {};
+          this.profile = { ...this.profile, [m.mode]: { ...prev, best: m.best } };
+          this.emit("profile", this.profile);
+        }
+        this.emit("soloResult", m);
         break;
 
       case "marathonResult":

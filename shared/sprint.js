@@ -257,11 +257,17 @@ function junkShape(id, rot) {
  * clear nothing in between don't break it). Each clear adds its lines to the
  * level. When the spike ends, one junk piece of that level goes to the
  * opponent, into their forecast right after the five they can see.
+ * Levels add up linearly: a 4-line clear is 4, another 4 in the same
+ * spike makes 8. An ALL CLEAR (the board left empty) counts as 10 on its
+ * own, or adds 10 to the spike it ends. Single lines send single squares
+ * ("cheese"): legal, but weak, and they can help the opponent.
  */
 export const SPIKE_MS = 500;
-export function noteClear(st, lines, now) {
+export const ALL_CLEAR_LEVELS = 10;
+export function noteClear(st, lines, now, allClear = false) {
   if (!lines) return;
-  st.spike = st.spike && now - st.lastClearAt <= SPIKE_MS ? st.spike + lines : lines;
+  const add = allClear ? ALL_CLEAR_LEVELS : lines;
+  st.spike = st.spike && now - st.lastClearAt <= SPIKE_MS ? st.spike + add : add;
   st.lastClearAt = now;
 }
 /** The junk level to send now (and resets the spike), or 0. */
@@ -274,4 +280,46 @@ export function spikeDue(st, now) {
 /** A junk piece arriving: into the forecast, just after the five on show. */
 export function receiveJunk(st, level) {
   st.queue.splice(Math.min(FORECAST, st.queue.length), 0, JUNK + level);
+}
+
+/* ============================================================
+   Recorded runs (Sprint and Ultra): checked by replaying them
+   ============================================================ */
+
+/**
+ * A run is its seed and its placements, each [t, slot, rot, row, col]:
+ * milliseconds since the clock started, which of the two pieces, how it was
+ * turned, and the top-left of where it went. Replaying it from the seed
+ * gives the same game, so the time or score can't be made up: the server
+ * replays every run it ranks. Placements closer than MIN_GAP_MS apart
+ * (faster than 25 a second) aren't accepted.
+ */
+export const MIN_GAP_MS = 40;
+export const MAX_RUN_MOVES = 3000;
+export function replaySprint(seed, mode, moves) {
+  if (!Number.isInteger(seed) || seed < 0 || !Array.isArray(moves) || !moves.length || moves.length > MAX_RUN_MOVES) return { error: "bad run" };
+  const ultra = mode === "ultra";
+  const st = newSprint(seed, ultra ? Infinity : GOAL);
+  let prev = -Infinity;
+  for (const m of moves) {
+    if (st.over) return { error: "moves after the end" };
+    if (!Array.isArray(m) || m.length !== 5 || !m.every(Number.isInteger)) return { error: "bad move" };
+    const [t, slot, rot, r, c] = m;
+    if (t < 0 || t - prev < (prev === -Infinity ? 0 : MIN_GAP_MS)) return { error: "too fast" };
+    if (ultra && t > ULTRA_MS) return { error: "past the time limit" };
+    if (slot < 0 || slot >= HAND || rot < 0 || rot > 3) return { error: "bad move" };
+    const s = shapeOf(st.hand[slot], rot);
+    const a = { slot, id: st.hand[slot], rot, cr: r + s.h / 2, cc: c + s.w / 2 };
+    const cells = cellsOf(a);
+    if (Math.min(...cells.map((x) => x[0])) !== r || Math.min(...cells.map((x) => x[1])) !== c) return { error: "off the board" };
+    if (!place(st, a)) return { error: "illegal placement" };
+    prev = t;
+  }
+  if (!ultra && !st.won) return { error: "not finished" };
+  return { ms: prev, lines: st.lines, score: st.score, pieces: st.pieces, won: st.won };
+}
+/** The move to record for a placement of piece `a` at time t. */
+export function recordMove(a, t) {
+  const cells = cellsOf(a);
+  return [Math.max(0, Math.round(t)), a.slot, a.rot, Math.min(...cells.map((x) => x[0])), Math.min(...cells.map((x) => x[1]))];
 }

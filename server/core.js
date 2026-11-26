@@ -28,6 +28,7 @@
 import { randomBytes } from "node:crypto";
 import { setOnlineCounter } from "./api.js";
 import { newMarathonSeed, replayMarathon, decodeMoves } from "../shared/marathon.js";
+import { newSprintSeed, replaySprint } from "../shared/sprint.js";
 import { sanitizeLoadout } from "../shared/engine.js";
 import {
   getProfile, saveProfile,
@@ -56,6 +57,7 @@ import { unref } from "./timers.js";
 const sockets = new Map(); // userId -> socket
 const inMatch = new Map(); // userId -> { match, side }
 const marathons = new Map(); // userId -> { seed, at }: the Marathon game each player has open
+const soloRuns = new Map();  // userId -> { mode, seed, at }: the Sprint/Ultra run each player has open
 const lastChat = new Map();  // userId -> the match they last chatted in (its recent lines back a report)
 // Games left open for half a day are forgotten.
 // (swept by startTimers)
@@ -78,6 +80,8 @@ const publicProfile = (p, acct) => ({
   rating: p.rating,
   stats: p.stats,
   marathon: p.marathon || null,
+  sprint: p.sprint ? { best: p.sprint.best, pieces: p.sprint.pieces, games: p.sprint.games, at: p.sprint.at } : null,
+  ultra: p.ultra ? { best: p.ultra.best, lines: p.ultra.lines, games: p.ultra.games, at: p.ultra.at } : null,
   marathonOpen: p.marathonOpen ? { score: p.marathonOpen.score, lines: p.marathonOpen.lines, at: p.marathonOpen.at } : null,
   createdAt: p.createdAt,
   email: acct ? acct.email : null,
@@ -682,6 +686,7 @@ async function handle(ws, msg) {
       leaveQueues(uid);
       leaveRoom(uid);
       marathons.delete(uid);
+      soloRuns.delete(uid);
       lastChat.delete(uid);
       deleteAccountData(uid);
       for (const s of sockets.values()) s.blocked?.delete(uid); // and from the block lists of anyone online
@@ -729,6 +734,44 @@ async function handle(ws, msg) {
       p.marathonOpen = { seed: open.seed, moves: msg.moves, score: res.score, lines: res.lines, at: Date.now() };
       saveProfile(p);
       send(ws, { t: "marathonSaved", ok: true, score: res.score, lines: res.lines });
+      break;
+    }
+
+    /* ---------- Sprint and Ultra: seed from us, run replayed to check it ---------- */
+
+    case "soloStart": {
+      const mode = msg.mode === "ultra" ? "ultra" : "sprint";
+      const seed = newSprintSeed();
+      soloRuns.set(ws.userId, { mode, seed, at: Date.now() });
+      send(ws, { t: "soloSeed", mode, seed });
+      break;
+    }
+
+    case "soloEnd": {
+      const open = soloRuns.get(ws.userId);
+      if (!open || open.seed !== msg.seed || open.mode !== msg.mode) return send(ws, { t: "soloResult", error: "That run wasn't started here." });
+      soloRuns.delete(ws.userId);
+      if (!Array.isArray(msg.moves) || msg.moves.length > 3000) return send(ws, { t: "soloResult", error: "That run couldn't be read." });
+      const res = replaySprint(open.seed, open.mode, msg.moves);
+      if (res.error) return send(ws, { t: "soloResult", error: "That run didn't add up." });
+      // The run can't have taken longer than the time since we gave out its seed.
+      if (res.ms > Date.now() - open.at + 2000) return send(ws, { t: "soloResult", error: "That run's timing didn't add up." });
+      const acct = getAccount(ws.userId);
+      if (!acct || !acct.emailVerified) return send(ws, { t: "soloResult", mode: open.mode, saved: false });
+      const p = getProfile(ws.userId);
+      const run = { seed: open.seed, moves: msg.moves };
+      let newBest;
+      if (open.mode === "sprint") {
+        const m = p.sprint || { best: 0, games: 0 };
+        newBest = !m.best || res.ms < m.best;
+        p.sprint = { ...m, games: m.games + 1, ...(newBest ? { best: res.ms, pieces: res.pieces, at: Date.now(), run } : null) };
+      } else {
+        const m = p.ultra || { best: 0, games: 0 };
+        newBest = res.score > (m.best || 0);
+        p.ultra = { ...m, games: m.games + 1, ...(newBest ? { best: res.score, lines: res.lines, at: Date.now(), run } : null) };
+      }
+      saveProfile(p);
+      send(ws, { t: "soloResult", mode: open.mode, saved: true, newBest, best: p[open.mode].best });
       break;
     }
 
@@ -875,6 +918,7 @@ export function startTimers() {
       if (!sockets.has(id) && !inMatch.has(id) && !roomOf.has(id)) guests.delete(id);
     }
     for (const [k, v] of marathons) if (v.at < now - 12 * 3600e3) marathons.delete(k);
+    for (const [k, v] of soloRuns) if (v.at < now - 3600e3) soloRuns.delete(k);
   }, 60_000)));
 }
 export function stopTimers() {

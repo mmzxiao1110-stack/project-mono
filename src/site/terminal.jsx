@@ -5,6 +5,8 @@
  *   #/search/name      players whose name contains it
  *   #/player/name      one player's record
  *   #/marathon/2       Marathon high scores
+ *   #/sprint/1         Sprint: fastest 40 lines
+ *   #/ultra/1          Ultra: highest 2-minute scores
  * Reads the server's public API (server/api.js).
  */
 import { useEffect, useState } from "react";
@@ -83,14 +85,22 @@ function PlayerTable({ players, showPos = true }) {
   );
 }
 
-/** Marathon high scores: position, name, score, lines. */
-function ScoreTable({ players }) {
+const clock = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, "0")}.${String(Math.floor((ms % 1000) / 10)).padStart(2, "0")}`;
+const BOARDS = {
+  marathon: { title: "MARATHON HIGH SCORES", head: ["SCORE", "LINES"], value: (p) => p.best.toLocaleString("en-US"), extra: (p) => p.lines },
+  sprint: { title: "SPRINT · 40 LINES", head: ["TIME", "PIECES"], value: (p) => clock(p.best), extra: (p) => p.pieces ?? "—" },
+  ultra: { title: "ULTRA · 2 MINUTES", head: ["SCORE", "LINES"], value: (p) => p.best.toLocaleString("en-US"), extra: (p) => p.lines ?? "—" },
+};
+
+/** A records table: position, name, the record, and one more number. */
+function ScoreTable({ players, kind = "marathon" }) {
+  const B = BOARDS[kind];
   if (!players.length) return <div className="tb-t text-center" style={{ color: "var(--tb-dim)", padding: px(6) }}>NO SCORES YET</div>;
   const cols = "3.2em 1fr 6em 3.6em";
   return (
     <div className="flex flex-col" style={{ gap: px(1) }}>
       <div className="tb-t grid" style={{ gridTemplateColumns: cols, gap: px(2), color: "var(--tb-dim)", padding: `0 ${px(3)}` }}>
-        <span>#</span><span>PLAYER</span><span className="text-right">SCORE</span><span className="text-right">LINES</span>
+        <span>#</span><span>PLAYER</span><span className="text-right">{B.head[0]}</span><span className="text-right">{B.head[1]}</span>
       </div>
       {players.map((p, i) => (
         <a key={p.name} href={playerHref(p.name)} className="tb-t grid items-center no-underline"
@@ -98,26 +108,26 @@ function ScoreTable({ players }) {
             background: i % 2 ? "transparent" : "color-mix(in srgb, var(--tb-text) 5%, transparent)" }}>
           <span style={{ color: p.position <= 3 ? "var(--tb-special)" : "var(--tb-dim)" }}>{p.position}</span>
           <span className="truncate">{p.name}</span>
-          <span className="text-right tabular-nums" style={{ color: "var(--tb-special)" }}>{p.best.toLocaleString("en-US")}</span>
-          <span className="text-right tabular-nums" style={{ color: "var(--tb-dim)" }}>{p.lines}</span>
+          <span className="text-right tabular-nums" style={{ color: "var(--tb-special)" }}>{B.value(p)}</span>
+          <span className="text-right tabular-nums" style={{ color: "var(--tb-dim)" }}>{B.extra(p)}</span>
         </a>
       ))}
     </div>
   );
 }
 
-function MarathonBoard({ page }) {
-  const st = useApi(`/api/marathon?page=${page}`);
+function RecordBoard({ kind, page }) {
+  const st = useApi(`/api/${kind}?page=${page}`);
   const d = st.data;
-  const nav = (n) => { location.hash = `#/marathon/${n}`; };
+  const nav = (n) => { location.hash = `#/${kind}/${n}`; };
   return (
     <Panel>
       <div className="flex justify-between items-baseline" style={{ marginBottom: px(4) }}>
-        <span className="tb-t tb-b" style={{ color: "var(--tb-you)" }}>MARATHON HIGH SCORES</span>
+        <span className="tb-t tb-b" style={{ color: "var(--tb-you)" }}>{BOARDS[kind].title}</span>
         {d && <span className="tb-t" style={{ color: "var(--tb-dim)" }}>{d.total} PLAYERS</span>}
       </div>
       <Status st={st} />
-      {d && <ScoreTable players={d.players} />}
+      {d && <ScoreTable players={d.players} kind={kind} />}
       {d && d.pages > 1 && (
         <div className="flex justify-center items-center tb-t" style={{ gap: px(4), marginTop: px(5) }}>
           <button disabled={page <= 1} onClick={() => nav(page - 1)} className="tb-t disabled:opacity-30" style={{ height: px(14), padding: `0 ${px(4)}`, color: "var(--tb-text)", ...glass() }}>‹ PREV</button>
@@ -157,13 +167,15 @@ function Home() {
             </div>
             <PlayerTable players={o.top} />
           </Panel>
-          <Panel>
-            <div className="flex justify-between items-baseline" style={{ marginBottom: px(4) }}>
-              <span className="tb-t tb-b" style={{ color: "var(--tb-you)" }}>MARATHON HIGH SCORES</span>
-              <a href="#/marathon/1" className="tb-t" style={{ color: "var(--tb-you)" }}>ALL SCORES ›</a>
-            </div>
-            <ScoreTable players={o.marathon || []} />
-          </Panel>
+          {["sprint", "ultra", "marathon"].map((k) => (
+            <Panel key={k}>
+              <div className="flex justify-between items-baseline" style={{ marginBottom: px(4) }}>
+                <span className="tb-t tb-b" style={{ color: "var(--tb-you)" }}>{BOARDS[k].title}</span>
+                <a href={`#/${k}/1`} className="tb-t" style={{ color: "var(--tb-you)" }}>ALL ›</a>
+              </div>
+              <ScoreTable players={o[k] || []} kind={k} />
+            </Panel>
+          ))}
           <Panel>
             <div className="tb-t tb-b" style={{ color: "var(--tb-you)", marginBottom: px(4) }}>RANK SPREAD</div>
             {/* One pixel bar per rank, F to X. */}
@@ -272,6 +284,12 @@ export function PlayerRecord({ p, onOpen }) {
         {cell("BEST STREAK", p.bestStreak)}
         {cell("PEAK", p.peakTr != null ? `${p.peakTr}${p.peakRank ? ` ${p.peakRank}` : ""}` : "—")}
       </div>
+      {(p.sprint || p.ultra) && (
+        <div className="grid grid-cols-2" style={{ gap: px(2) }}>
+          {cell("SPRINT BEST", p.sprint ? `${clock(p.sprint.best)}${p.sprint.position ? ` · #${p.sprint.position}` : ""}` : "—", "var(--tb-special)")}
+          {cell("ULTRA BEST", p.ultra ? `${p.ultra.best.toLocaleString("en-US")}${p.ultra.position ? ` · #${p.ultra.position}` : ""}` : "—", "var(--tb-special)")}
+        </div>
+      )}
       {p.marathon && (
         <div className="grid grid-cols-3" style={{ gap: px(2) }}>
           {cell("MARATHON BEST", p.marathon.best.toLocaleString("en-US"), "var(--tb-special)")}
@@ -335,13 +353,13 @@ export default function Terminal() {
         <span className="tb-t" style={{ color: "var(--tb-dim)" }}>PLAYERS · RANKINGS · RECORDS</span>
       </a>
       <div className="flex justify-center" style={{ gap: px(2), marginBottom: px(5) }}>
-        {[["#/", "OVERVIEW", ""], ["#/rankings/1", "RANKINGS", "rankings"], ["#/marathon/1", "MARATHON", "marathon"]].map(([href, label, r]) => (
+        {[["#/", "OVERVIEW", ""], ["#/rankings/1", "CONTROL", "rankings"], ["#/sprint/1", "SPRINT", "sprint"], ["#/ultra/1", "ULTRA", "ultra"], ["#/marathon/1", "MARATHON", "marathon"]].map(([href, label, r]) => (
           <a key={label} href={href} className="tb-t no-underline flex items-center" style={{ height: px(14), padding: `0 ${px(4)}`, color: "var(--tb-text)",
             ...((route || "") === r || (!route && r === "") ? glassFill("var(--tb-you)") : glass()) }}>{label}</a>
         ))}
       </div>
       {route === "rankings" ? <Rankings page={Math.max(1, Number(arg2) || 1)} />
-        : route === "marathon" ? <MarathonBoard page={Math.max(1, Number(arg2) || 1)} />
+        : route === "marathon" || route === "sprint" || route === "ultra" ? <RecordBoard key={route} kind={route} page={Math.max(1, Number(arg2) || 1)} />
         : route === "search" ? <Search q={arg2} />
         : route === "player" ? <Player name={arg2} />
         : <Home />}
