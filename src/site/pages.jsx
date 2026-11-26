@@ -73,6 +73,12 @@ export function About() {
    NEWS — sea green
    ============================================================ */
 const NEWS = [
+  { v: "v0.34.0", date: "NOV 2026", title: "REPLAYS YOU CAN HEAR AND SAVE", items: [
+    "Replays play the game's sounds, and the menu music fades out while you watch.",
+    "SAVE VIDEO: Sprint, Ultra, Marathon and Blitz replays can be saved as a video with sound.",
+    "In replays the next pieces sit right against the board, like your two pieces.",
+    "A new icon with a clear background.",
+  ] },
   { v: "v0.33.0", date: "NOV 2026", title: "BLITZ REPLAYS, NEW END SCREENS", items: [
     "Blitz and VS BOT matches are saved in REPLAYS with both boards and the real time of every piece and every junk drop.",
     "Blitz boards are laid out like Sprint: a piece and your stats on the left, a piece and the forecast on the right, for both players.",
