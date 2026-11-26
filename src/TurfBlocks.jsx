@@ -46,6 +46,11 @@ import {
   loadTheme, saveTheme, applyPreset, editTheme, themeVars,
 } from "./theme.js";
 import { ACTIONS, getKeys, subscribeKeys, setKey, resetKeys, actionFor, keyLabel, canBind } from "./keys.js";
+import { ZG_ACTIONS, HANDLING, SDF_MAX, zgSubscribe, getZgKeys, getZgHandling, setZgKey, setZgHandling, resetZg, zgActionFor } from "./zgKeys.js";
+import {
+  W as Z_W, TOP as Z_TOP, VISIBLE as Z_VISIBLE, NEXT as Z_NEXT, GOAL as Z_GOAL, NAMES as Z_NAMES, newGame as zNewGame, shapeCells as zShapeCells,
+  cellsOf as zCellsOf, dropped as zDropped, shift as zShift, down as zDown, rotate as zRotate, hold as zHold, hardDrop as zHardDrop,
+} from "../shared/zerog.js";
 import { SPRINT_ACTIONS, getSprintKeys, subscribeSprintKeys, setSprintKey, resetSprintKeys, sprintActionFor, mouseName, mouseLabel } from "./sprintKeys.js";
 import {
   SIZE as S_SIZE, GOAL as S_GOAL, NAMES as S_NAMES, newSprint, newSprintSeed, shapeOf as sShapeOf, spawn as sSpawn, cellsOf as sCellsOf,
@@ -1996,7 +2001,7 @@ function SettingsModal({ name, rename, status, theme, setTheme, onClose }) {
         // A computer: everything at once, in columns.
         <DenseCtx.Provider value={true}>
         <div className="tb-cols grid gap-7 pt-3" style={{ gridTemplateColumns: HAS_KEYBOARD ? "1fr 1.45fr 1fr" : "1fr 1fr" }}>
-          <div className="min-w-0">{handle}{sound}<div className="mt-4"><SprintControlsSection /></div></div>
+          <div className="min-w-0">{handle}{sound}<div className="mt-4"><SprintControlsSection /></div><div className="mt-4"><ZgControlsSection /></div></div>
           {HAS_KEYBOARD && <div className="min-w-0"><ControlsSection /></div>}
           <div className="min-w-0">{access}{connection}</div>
         </div>
@@ -2008,6 +2013,7 @@ function SettingsModal({ name, rename, status, theme, setTheme, onClose }) {
           <div className="mb-7" />
           {HAS_KEYBOARD && <ControlsSection />}
           {HAS_KEYBOARD && <div className="mb-7"><SprintControlsSection /></div>}
+          {HAS_KEYBOARD && <div className="mb-7"><ZgControlsSection /></div>}
           {access}
           {connection}
         </div>
@@ -3586,7 +3592,7 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
    PLAY — every way to play, in a little underwater night sky
    ============================================================ */
 // Ranked: dark green. The AIs: grey. Sprint yellow, Ultra red, Marathon blue, private purple.
-const MODE_INK = { blitz: "#F29A4A", ranked: "#2FA36B", ai: "#A9A7B4", sprint: "#F2D45C", ultra: "#F0606A", marathon: "#5C9DF2", turns: "#EC93B8", private: "#A68BF0" };
+const MODE_INK = { blitz: "#F29A4A", ranked: "#2FA36B", ai: "#A9A7B4", sprint: "#F2D45C", ultra: "#F0606A", marathon: "#5C9DF2", turns: "#EC93B8", private: "#A68BF0", zerog: "#7FE3F0" };
 
 /** A mode: a pane of clear, lightly tinted glass, like a board square. Light sweeps it on hover. */
 function ModeCard({ big = false, ink, icon: Icon, title, sub, note, noteInk, onClick, disabled, delay = 0, h, style }) {
@@ -3679,6 +3685,7 @@ function PlayModal({ status, authed, verified, profile, onPick, onClose }) {
                       <ModeCard ink={MODE_INK.sprint} icon={Clock} title="SPRINT" sub={sprintBest.get() ? `best ${fmtClock(sprintBest.get())}` : "40 lines"} h={56} delay={400} disabled={lock()} onClick={() => onPick("SPRINT")} />,
                       <ModeCard ink={MODE_INK.ultra} icon={Flag} title="ULTRA" sub={ultraBest.get() ? `best ${ultraBest.get().toLocaleString("en-US")}` : "2 min"} h={56} delay={600} disabled={lock()} onClick={() => onPick("ULTRA")} />,
                     )}
+                    <ModeCard ink={MODE_INK.zerog} icon={Stack} title="ZERO-G" sub={zgBest.get() ? `best ${fmtClock(zgBest.get())}` : "falling blocks, no gravity · 40 lines"} h={56} delay={700} disabled={lock()} onClick={() => onPick("ZEROG")} />
                   </>
                 )}
               </div>
@@ -4763,6 +4770,380 @@ function SprintGame({ onExit, ultra = false }) {
         </div>
         <div style={{ flex: 2, minHeight: 4 * P }} />
       </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   ZERO-G — a falling-block Sprint with no gravity (10×40, hold,
+   five next, SRS turns with 180, T-spins). See shared/zerog.js.
+   ============================================================ */
+const zgBest = { get: () => Number(store.get("tb:zgBest")) || 0, set: (ms) => store.set("tb:zgBest", String(ms)) };
+const ZG_SHOW = Z_VISIBLE + 3; // the field and the three buffer rows above it (pieces spawn in them)
+
+/** A piece drawn on its own (hold and next), in its spawn state. */
+function ZPiece({ id, cell, gap, dim = false }) {
+  const cells = zShapeCells(id, 0);
+  const xs = cells.map((c) => c[0]), ys = cells.map((c) => c[1]);
+  const x0 = Math.min(...xs), y0 = Math.min(...ys);
+  const w = Math.max(...xs) - x0 + 1, h = Math.max(...ys) - y0 + 1;
+  return (
+    <div className="relative" style={{ width: w * cell + (w - 1) * gap, height: h * cell + (h - 1) * gap, opacity: dim ? 0.35 : 1 }}>
+      {cells.map(([x, y]) => (
+        <div key={`${x},${y}`} className="absolute" style={{ left: (x - x0) * (cell + gap), top: (y - y0) * (cell + gap) }}><Ink size={cell} color={S_INK[id]} /></div>
+      ))}
+    </div>
+  );
+}
+
+/** ZERO-G keys and handling (DAS, ARR, soft drop speed, DCD), in Settings and in the game. */
+function ZgControlsSection() {
+  const P = usePx();
+  const keys = useSyncExternalStore(zgSubscribe, getZgKeys);
+  const hd = useSyncExternalStore(zgSubscribe, getZgHandling);
+  const [listening, setListening] = useState(null);
+  useEffect(() => {
+    if (!listening) return undefined;
+    const onKey = (e) => { e.preventDefault(); e.stopPropagation(); if (e.key !== "Tab") { setZgKey(listening, e.key); setListening(null); } };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [listening]);
+  const show = (k) => (k === " " ? "SPACE" : bindLabel(k));
+  return (
+    <div className="flex flex-col" style={{ gap: P }}>
+      <div className="flex items-center justify-between">
+        <span className="tb-t">ZERO-G</span>
+        <button onClick={() => { resetZg(); setListening(null); }} className="tb-t py-1" style={{ color: UI.dim }}>RESET</button>
+      </div>
+      <div className="grid grid-cols-2 gap-x-4">
+        {ZG_ACTIONS.map((a) => {
+          const on = listening === a.id;
+          return (
+            <div key={a.id} className="flex items-center justify-between gap-2 py-1" style={RULE_BELOW}>
+              <span className="tb-t" style={{ color: UI.dim }}>{a.label}</span>
+              <button onClick={() => setListening(on ? null : a.id)} className={`tb-t ${on ? "tb-pulse" : ""}`} aria-label={`${a.label}: ${keys[a.id] ? show(keys[a.id]) : "unbound"}`}
+                style={{ minWidth: 52, height: 28, padding: "0 6px", ...(on ? skFill(UI.text) : sk(UI.line)), color: keys[a.id] ? UI.text : UI.bad }}>
+                {on ? "…" : show(keys[a.id])}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex flex-col" style={{ gap: 2 * P, marginTop: 2 * P }}>
+        {HANDLING.map((h) => (
+          <div key={h.id} className="flex flex-col" style={{ gap: P }}>
+            <div className="flex items-center justify-between tb-t">
+              <span>{h.label} <span style={{ color: UI.dim }}>· {h.hint}</span></span>
+              <span className="tabular-nums" style={{ color: UI.dim }}>{h.id === "sdf" && hd.sdf >= SDF_MAX ? "INSTANT" : `${hd[h.id]} ${h.unit}`}</span>
+            </div>
+            <PixelSlider min={h.min} max={h.max} step={h.step} value={hd[h.id]} onChange={(v) => setZgHandling(h.id, v)} label={h.label} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** The run clock, written straight into the page every frame (no re-render). */
+function ZgClock({ run, style }) {
+  const el = useRef(null);
+  useEffect(() => {
+    let raf;
+    const loop = () => {
+      raf = requestAnimationFrame(loop);
+      const r = run.current;
+      if (el.current) el.current.textContent = fmtClock(r.startAt ? (r.endAt || performance.now()) - r.startAt : 0);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [run]);
+  return <span ref={el} className="tb-t tb-b tabular-nums" style={style}>0:00.00</span>;
+}
+
+const freshZg = () => ({ st: zNewGame(), startAt: 0, endAt: 0, result: null, newBest: false, flash: null, pop: null });
+
+/** ZERO-G SPRINT: 40 lines on a 10×40 board, falling-block rules, no gravity. */
+function ZeroGGame({ onExit }) {
+  useGameMusic();
+  useEffect(() => { sky.slow = true; return () => { sky.slow = false; }; }, []);
+  const P = usePx();
+  const [stageRef, stage] = useSize();
+  const keys = useSyncExternalStore(zgSubscribe, getZgKeys);
+  const wipe = useContext(WipeCtx);
+  // The live run (key handlers change it at once) and what's drawn: a copy, taken whenever something changes.
+  const [first] = useState(freshZg);
+  const run = useRef(first);
+  const [r, setSnap] = useState(() => ({ ...first, now: 0 }));
+  const bump = useCallback(() => setSnap({ ...run.current, now: performance.now() }), []);
+  const [best, setBest] = useState(zgBest.get);
+  const [showEnd, setShowEnd] = useState(false);
+  const [opts, setOpts] = useState(false);
+  // Held keys: which way the piece slides, since when, and the soft drop.
+  const hold = useRef({ left: false, right: false, dir: 0, dasAt: 0, step: 0, soft: false, softStep: 0, dcd: 0 });
+
+  const finish = useCallback((result) => {
+    const r = run.current;
+    if (r.result) return;
+    r.endAt = performance.now(); r.result = result;
+    if (result === "done") {
+      const ms = Math.round(r.endAt - r.startAt);
+      if (!zgBest.get() || ms < zgBest.get()) { zgBest.set(ms); setBest(ms); r.newBest = true; }
+      sfx.levelUp();
+    } else if (result === "forfeit") sfx.forfeit();
+    else sfx.lose();
+    bump();
+    setTimeout(() => wipe(() => { if (run.current.result) setShowEnd(true); }), result === "forfeit" ? 0 : 700);
+  }, [bump, wipe]);
+  const retry = useCallback(() => { run.current = freshZg(); setShowEnd(false); sfx.pick(); bump(); }, [bump]);
+  const start = () => { const r = run.current; if (!r.startAt) r.startAt = performance.now(); };
+
+  const doHard = useCallback(() => {
+    const r = run.current, st = r.st;
+    if (!st.cur) return;
+    start();
+    const L = zHardDrop(st);
+    sfx.zgDrop();
+    if (L.lines) {
+      const at = st.pieces;
+      r.flash = { rows: L.rows, key: at };
+      sfx.zgClear({ lines: L.lines, spin: L.spin, b2b: L.b2b, allClear: L.allClear });
+      if (L.combo >= 1) sfx.zgCombo(L.combo);
+      r.pop = { name: L.name, combo: L.combo, b2b: L.b2b, allClear: L.allClear, key: at };
+      setTimeout(() => { const c = run.current; if (c.flash && c.flash.key === at) { c.flash = null; bump(); } }, 200);
+      setTimeout(() => { const c = run.current; if (c.pop && c.pop.key === at) { c.pop = null; bump(); } }, 1400);
+    } else if (L.spin) {
+      r.pop = { name: L.name, combo: -1, b2b: -1, key: st.pieces };
+    }
+    hold.current.dcd = performance.now() + getZgHandling().dcd;
+    if (st.over) finish(st.won ? "done" : "stuck");
+    bump();
+  }, [bump, finish]);
+
+  const press = useCallback((a) => {
+    if (a === "retry") { retry(); return; }
+    const r = run.current, st = r.st, h = hold.current, now = performance.now();
+    if (r.result) return;
+    if (a === "forfeit") { finish("forfeit"); return; }
+    if (!st.cur) return;
+    if (a === "left" || a === "right") {
+      h[a] = true; h.dir = a === "left" ? -1 : 1; h.dasAt = now; h.step = 0;
+      start();
+      if (zShift(st, h.dir)) { sfx.zgMove(); bump(); }
+      return;
+    }
+    if (a === "soft") {
+      h.soft = true; h.softStep = now;
+      start();
+      let moved = false;
+      if (getZgHandling().sdf >= SDF_MAX) { while (zDown(st)) moved = true; } else moved = zDown(st);
+      if (moved) { if (getZgHandling().sdf >= SDF_MAX) sfx.zgLand(); bump(); }
+      return;
+    }
+    if (a === "hard") { doHard(); return; }
+    if (a === "cw" || a === "ccw" || a === "r180") {
+      start();
+      const dir = a === "cw" ? 1 : a === "ccw" ? -1 : 2;
+      if (zRotate(st, dir)) { sfx.zgRotate(dir); h.dcd = now + getZgHandling().dcd; bump(); }
+      return;
+    }
+    if (a === "hold") {
+      start();
+      if (zHold(st)) { sfx.zgHold(); h.dcd = now + getZgHandling().dcd; if (st.over) finish("stuck"); bump(); }
+    }
+  }, [retry, finish, doHard, bump]);
+
+  const release = useCallback((a) => {
+    const h = hold.current;
+    if (a === "left" || a === "right") {
+      h[a] = false;
+      const other = a === "left" ? "right" : "left";
+      if (h[other]) { h.dir = other === "left" ? -1 : 1; h.dasAt = performance.now(); h.step = 0; } else h.dir = 0;
+    }
+    if (a === "soft") h.soft = false;
+  }, []);
+
+  // Held keys, every frame: DAS then ARR sideways, and the soft drop.
+  useEffect(() => {
+    let raf;
+    const loop = () => {
+      raf = requestAnimationFrame(loop);
+      const r = run.current, st = r.st, h = hold.current;
+      if (!st.cur || r.result) return;
+      const hd = getZgHandling(), now = performance.now();
+      let moved = false;
+      if (h.dir && now - h.dasAt >= hd.das && now >= h.dcd) {
+        if (hd.arr <= 0) { while (zShift(st, h.dir)) moved = true; }
+        else {
+          if (!h.step) h.step = h.dasAt + hd.das - hd.arr;
+          for (let i = 0; i < 10 && now - h.step >= hd.arr; i++) { h.step += hd.arr; if (zShift(st, h.dir)) moved = true; else { h.step = now; break; } }
+        }
+        if (moved) sfx.zgMove();
+      }
+      if (h.soft) {
+        if (hd.sdf >= SDF_MAX) { while (zDown(st)) moved = true; }
+        else {
+          const every = 1000 / hd.sdf;
+          for (let i = 0; i < 10 && now - h.softStep >= every; i++) { h.softStep += every; if (zDown(st)) moved = true; else { h.softStep = now; break; } }
+        }
+      }
+      if (moved) bump();
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [bump]);
+
+  useEffect(() => {
+    if (opts) return undefined;
+    const typing = (e) => e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA");
+    const down = (e) => {
+      if (typing(e)) return;
+      const a = zgActionFor(e.key);
+      if (!a) return;
+      e.preventDefault();
+      if (!e.repeat) press(a);
+    };
+    const up = (e) => { const a = zgActionFor(e.key); if (a) release(a); };
+    const blur = () => { const h = hold.current; h.left = h.right = h.soft = false; h.dir = 0; };
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    window.addEventListener("blur", blur);
+    return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); window.removeEventListener("blur", blur); };
+  }, [press, release, opts]);
+  // For the playtest bot (and anyone curious): the run, read-only.
+  useEffect(() => { window.__zg = run; return () => { if (window.__zg === run) delete window.__zg; }; }, []);
+
+  const st = r.st;
+  const ms = r.startAt ? (r.endAt || r.now) - r.startAt : 0;
+  const pps = ms > 0 ? st.pieces / (ms / 1000) : 0;
+  const keyOf = (id) => (keys[id] === " " ? "SPACE" : bindLabel(keys[id]));
+  const railD = useBubble(false);
+
+  if (showEnd && r.result) {
+    const good = r.result === "done";
+    return (
+      <EndScreen verdict={r.newBest ? "NEW BEST" : good ? "FINISHED" : r.result === "stuck" ? "TOPPED OUT" : "FORFEIT"}
+        ink={good ? GOLD : UI.bad} sound={good ? "win" : "lose"} compare={false}
+        note={`${st.lines} lines · ${st.pieces} pieces · ${pps.toFixed(2)} PPS · ${st.stats.quad} quads · ${st.stats.tspin} T-spins · max combo ${Math.max(0, st.stats.maxCombo)}`}
+        left={{ name: good ? "TIME" : "LINES", score: good ? fmtClock(r.endAt - r.startAt) : `${st.lines}/${Z_GOAL}`, ink: "var(--tb-you)", won: r.newBest }}
+        right={{ name: "BEST", score: best ? fmtClock(best) : "—", ink: GOLD }}
+        actions={[{ label: "MENU", onClick: onExit }, { label: `RETRY (${keyOf("retry")})`, onClick: retry, main: true }]} />
+    );
+  }
+
+  // The field: 10 wide, the 20 visible rows plus the 2 spawn rows above them.
+  const g = P;
+  const side = 2 * P; // the small gap between the board and the panels beside it
+  const availH = stage.h - (TITLE_H + 12) * P - 16 * P;
+  const fitW = (stage.w - 24 * P - 9 * g) / 18.5; // the board plus both side columns must fit across
+  const cell = Math.max(4 * P, Math.min(16 * P, Math.floor(Math.min((availH - (ZG_SHOW - 1) * g) / ZG_SHOW, fitW) / P) * P));
+  const boardW = Z_W * cell + (Z_W - 1) * g;
+  const boardH = ZG_SHOW * cell + (ZG_SHOW - 1) * g;
+  // Hold and next show pieces at board size, in boxes just wide enough for an I with some padding.
+  const pad = 4 * P;
+  const boxW = 4 * cell + 3 * g + 2 * pad;
+  const colW = Math.max(boxW, 46 * P);
+  const sideTop = 3 * (cell + g); // the side columns start level with the field's top row
+  const sideH = boardH - sideTop;
+  const top0 = Z_TOP - 3;
+  const curCells = st.cur ? zCellsOf(st.cur) : [];
+  const ghost = st.cur ? zCellsOf(zDropped(st.board, st.cur)) : [];
+  const at = new Map();
+  for (const [x, y] of ghost) at.set(y * Z_W + x, "ghost");
+  for (const [x, y] of curCells) at.set(y * Z_W + x, "cur");
+  const flashRows = new Set(r.flash ? r.flash.rows : []);
+  const stat = (label, value, ink = UI.text) => (
+    <div className="flex flex-col items-end" style={{ gap: P }}><span style={{ color: UI.dim }}>{label}</span><span className="tb-b tabular-nums" style={{ color: ink }}>{value}</span></div>
+  );
+  const pop = r.pop;
+
+  return (
+    <div className="tb-screen tb-safe w-full flex flex-col font-mono select-none" style={{ color: UI.text }}>
+      <div ref={stageRef} className="relative flex-1 min-h-0 flex flex-col items-center w-full mx-auto px-3" style={{ maxWidth: 1600 }}>
+        <div style={{ flex: 1, minHeight: 2 * P }} />
+        <GameTitle mode="ZERO-G" />
+        <div style={{ flex: 1, minHeight: 2 * P }} />
+        <div className="flex items-start">
+          {/* Left: hold, flush against the board, then the stats and the last clear. */}
+          <div className="flex flex-col items-end text-right tb-t" style={{ width: colW, gap: 4 * P, marginTop: sideTop, height: sideH, marginRight: side }}>
+            <div className="flex flex-col items-center" style={{ width: boxW, gap: 2 * P, padding: pad, ...glass(UI.line) }}>
+              <span style={{ color: UI.dim }}>HOLD ({keyOf("hold")})</span>
+              <div className="flex items-center justify-center" style={{ height: 2 * cell + g }}>
+                {st.hold !== null && <ZPiece id={st.hold} cell={cell} gap={g} dim={st.held} />}
+              </div>
+            </div>
+            <div className="flex flex-col items-end" style={{ gap: 3 * P, marginTop: 2 * P }}>
+              {stat("PIECES", st.pieces)}
+              {stat("PPS", pps.toFixed(2))}
+              {stat("BEST", best ? fmtClock(best) : "—", GOLD)}
+            </div>
+            {/* The last clear: its name, the combo, back-to-back. */}
+            <div className="flex flex-col items-end" style={{ gap: P, minHeight: 14 * P, marginTop: 2 * P }}>
+              {pop && (
+                <div key={pop.key} className="flex flex-col items-end tb-rise" style={{ gap: P }}>
+                  {pop.b2b > 0 && <span className="tb-b" style={{ color: GOLD }}>B2B ×{pop.b2b}</span>}
+                  {pop.name && <span className="tb-b" style={{ color: pop.name.startsWith("T-SPIN") ? S_INK[2] : pop.name === "QUAD" ? S_INK[0] : UI.text, fontSize: "1.2em" }}>{pop.name}</span>}
+                  {pop.combo >= 1 && <span className="tb-b" style={{ color: "var(--tb-you)" }}>{pop.combo} COMBO</span>}
+                  {pop.allClear && <span className="tb-b" style={{ color: GOLD, fontSize: "1.2em" }}>ALL CLEAR</span>}
+                </div>
+              )}
+            </div>
+            {/* The clock and the lines, level with the board's floor. */}
+            <div className="flex flex-col items-end" style={{ marginTop: "auto", gap: P }}>
+              <span className="tb-b tabular-nums">{Math.min(st.lines, Z_GOAL)} / {Z_GOAL}</span>
+              <ZgClock run={run} style={{ fontSize: "1.1em", color: "var(--tb-you)" }} />
+            </div>
+          </div>
+          {/* The board, with the line of light under it. */}
+          <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
+            <div className="relative" style={{ width: boardW, height: boardH, padding: 0 }}>
+              <div style={{ display: "grid", gridTemplateColumns: `repeat(${Z_W}, ${cell}px)`, gap: g }}>
+                {Array.from({ length: ZG_SHOW }, (_, i) => top0 + i).map((y) => st.board[y].map((v, x) => {
+                  const k = y * Z_W + x, mark = at.get(k), buffer = y < Z_TOP;
+                  return (
+                    <div key={k} style={{ position: "relative", width: cell, height: cell, ...(v === null && !buffer ? GLASS : null) }}>
+                      {v !== null && <Ink size={cell} color={S_INK[v]} />}
+                      {v === null && mark === "cur" && <Ink size={cell} color={S_INK[st.cur.id]} />}
+                      {v === null && mark === "ghost" && <div className="absolute inset-0" style={{ opacity: 0.28 }}><Ink size={cell} color={S_INK[st.cur.id]} /></div>}
+                    </div>
+                  );
+                }))}
+              </div>
+              {/* A clear: the rows flash and fade in under a fifth of a second. */}
+              {r.flash && [...flashRows].filter((y) => y >= top0).map((y) => (
+                <div key={`${r.flash.key}-${y}`} className="absolute pointer-events-none tb-zgflash" style={{ left: 0, width: boardW, top: (y - top0) * (cell + g), height: cell }} />
+              ))}
+              {!r.startAt && !r.result && (
+                <div className="absolute inset-x-0 flex justify-center pointer-events-none" style={{ top: 5 * (cell + g) }}>
+                  <span className="tb-t" style={{ color: UI.text, padding: `${P}px ${3 * P}px`, background: "color-mix(in srgb, var(--tb-panel-solid) 80%, transparent)" }}>
+                    NO GRAVITY · THE CLOCK STARTS ON YOUR FIRST MOVE
+                  </span>
+                </div>
+              )}
+            </div>
+            <BoardLine width={boardW} />
+          </div>
+          {/* Right: the next five, flush against the board; the buttons in a column at its bottom. */}
+          <div className="flex flex-col items-start tb-t" style={{ width: colW, marginTop: sideTop, height: sideH, marginLeft: side }}>
+            <div aria-label="Next pieces" className="flex flex-col items-center" style={{ width: boxW, flex: 1, minHeight: 0, justifyContent: "space-between", gap: 2 * P, padding: pad, ...glass(UI.line) }}>
+              <span style={{ color: UI.dim }}>NEXT</span>
+              {st.queue.slice(0, Z_NEXT).map((id, i) => (
+                <div key={i} role="img" aria-label={`Next ${i + 1}: ${Z_NAMES[id]}`} className="flex items-center justify-center" style={{ height: 2 * cell + g, opacity: i ? 0.8 : 1 }}>
+                  <ZPiece id={id} cell={cell} gap={g} />
+                </div>
+              ))}
+            </div>
+            <div className="flex flex-col items-start" style={{ marginTop: 3 * P, gap: 3 * P, flexShrink: 0 }}>
+              <Bubble w={railD} h={railD} label="Controls and handling" onClick={() => setOpts(true)}><Settings2 /></Bubble>
+              <Bubble w={railD} h={railD} label={`Retry (${keyOf("retry")})`} onClick={retry}><RefreshCw /></Bubble>
+              {r.result
+                ? <Bubble w={railD} h={railD} label="Menu" onClick={onExit}><LogOut /></Bubble>
+                : <ForfeitButton onConfirm={() => finish("forfeit")} />}
+            </div>
+          </div>
+        </div>
+        <div style={{ flex: 2, minHeight: 4 * P }} />
+      </div>
+      {opts && <Popup title="HANDLING" onClose={() => setOpts(false)} maxW={520}><ZgControlsSection /></Popup>}
     </div>
   );
 }
@@ -7050,6 +7431,8 @@ export default function TurfBlocks() {
       /* The end screen's panels rise into place, four pixels in four steps. */
       @keyframes tbRise { from { opacity: 0; transform: translateY(calc(var(--p) * 4)) } to { opacity: 1; transform: none } }
       .tb-rise { animation: tbRise 480ms steps(4) both; }
+      .tb-zgflash { background: linear-gradient(90deg, rgba(200,250,255,.0), rgba(220,252,255,.95) 20%, rgba(255,255,255,1) 50%, rgba(220,252,255,.95) 80%, rgba(200,250,255,0)); animation: tbZgFlash 190ms ease-out both; }
+      @keyframes tbZgFlash { 0% { opacity: 1; transform: scaleY(1); } 100% { opacity: 0; transform: scaleY(.15); } }
       /* A collision: the square glitches side to side. */
       @keyframes tbContest {
         0%,100% { transform: none } 25% { transform: translateX(calc(var(--p) * -1)) } 50% { transform: translateX(var(--p)) }
@@ -7191,7 +7574,7 @@ export default function TurfBlocks() {
           else if (t === "PRIVATE") setScreen("PRIVATE");
           else if (t === "REPLAYS") setScreen("REPLAYS");
           // Every game mode: in on the tide (the game then counts down from 3).
-          else if (["MARATHON", "SPRINT", "ULTRA", "BLITZBOT", "TURNBASED", "HOTSEAT"].includes(t)) wipe(() => { setSeed((s) => s + 1); setScreen(t); });
+          else if (["MARATHON", "SPRINT", "ULTRA", "ZEROG", "BLITZBOT", "TURNBASED", "HOTSEAT"].includes(t)) wipe(() => { setSeed((s) => s + 1); setScreen(t); });
         }}
         loadout={loadout} setLoadout={setLoadout}
         colors={colors} profile={profile} status={status}
@@ -7240,6 +7623,8 @@ export default function TurfBlocks() {
       onRequeue={() => { startQueue("blitz", loadout); setMenuModal("LOBBY:blitz"); setScreen("MENU"); }} />;
   else if (screen === "SPRINT" || screen === "ULTRA")
     view = <SprintGame key={`${screen}${seed}`} ultra={screen === "ULTRA"} onExit={() => setScreen("MENU")} />;
+  else if (screen === "ZEROG")
+    view = <ZeroGGame key={`${screen}${seed}`} onExit={() => setScreen("MENU")} />;
   else if (screen === "MARATHON")
     view = <MarathonGame key={seed} theme={theme} onExit={(again) => (again ? setSeed((s) => s + 1) : setScreen("MENU"))} />;
   else

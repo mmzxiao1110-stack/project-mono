@@ -466,6 +466,79 @@ export const sfx = {
     });
   },
 
+  /* ---------- ZERO-G (the falling-block Sprint) ---------- */
+
+  /** A step sideways: the faintest glassy tick. */
+  zgMove() {
+    play("zgMove", 18, (c, t) => tone(c, t, { wave: "sine", f: rand(2300, 2500), vol: 0.018, a: 0.001, d: 0.025, wet: 0.08 }));
+  },
+  /** A turn: two crisp glass notes, up for clockwise, down for counter. */
+  zgRotate(dir = 1) {
+    play("zgRotate", 25, (c, t) => {
+      const a = dir < 0 ? 79 : 76, b = dir < 0 ? 76 : dir === 2 ? 83 : 79; // G5/E5/B5 in D major
+      tone(c, t, { wave: "sine", f: mtof(a), vol: 0.04, a: 0.001, d: 0.06, wet: 0.2 });
+      tone(c, t + 0.025, { wave: "sine", f: mtof(b), vol: 0.04, a: 0.001, d: 0.09, wet: 0.3 });
+    });
+  },
+  /** Hold: a soft bubble sinking into a pocket. */
+  zgHold() {
+    play("zgHold", 60, (c, t) => {
+      tone(c, t, { wave: "sine", f: 900, to: 420, glide: 0.09, vol: 0.06, d: 0.12, wet: 0.35 });
+      tone(c, t + 0.01, { wave: "triangle", f: mtof(69), vol: 0.025, d: 0.35, wet: 0.6 });
+    });
+  },
+  /** A soft drop reaching the floor: a muffled tap. */
+  zgLand() {
+    play("zgLand", 50, (c, t) => tone(c, t, { wave: "sine", f: 220, to: 120, glide: 0.05, vol: 0.06, d: 0.07, wet: 0.05 }));
+  },
+  /** Hard drop: a clean low thump with a glint of water. */
+  zgDrop() {
+    play("zgDrop", 20, (c, t) => {
+      thump(c, t, { f: 190, to: 60, vol: 0.32, d: 0.13 });
+      tone(c, t, { wave: "triangle", f: mtof(62), vol: 0.03, d: 0.18, wet: 0.25, lp: [3000, 600, 2] });
+      bubble(c, t + 0.02, rand(900, 1200), 0.035, rand(-0.3, 0.3), 0.3);
+    });
+  },
+  /**
+   * A clear. More lines: a fuller chord, higher. T-spins add a shimmer, an
+   * all clear a long rising sparkle.
+   */
+  zgClear({ lines = 1, spin = null, b2b = 0, allClear = false } = {}) {
+    play("zgClear", 30, (c, t) => {
+      const chords = [[62, 66, 69], [62, 66, 69, 74], [66, 69, 74, 78], [69, 74, 78, 81, 86]];
+      const ch = chords[Math.min(lines, 4) - 1] || chords[0];
+      ch.forEach((m, i) => {
+        tone(c, t + i * 0.012, { wave: "sine", f: mtof(m), vol: 0.05, a: 0.002, d: 0.7, wet: 0.55 });
+        tone(c, t + i * 0.012, { wave: "sine", f: mtof(m) * 2, vol: 0.012, a: 0.002, d: 0.35, wet: 0.6 });
+      });
+      hiss(c, t, { type: "highpass", f: 5000, vol: 0.03, d: 0.18, wet: 0.4 });
+      fizz(c, t + 0.02, 3 + lines, 0.16, { lo: 700, hi: 1900, vol: 0.04 });
+      if (spin) [86, 90, 93, 98].forEach((m, i) => tone(c, t + 0.03 + i * 0.035, { wave: "triangle", f: mtof(m), vol: 0.02, d: 0.5, wet: 0.8 }));
+      if (b2b > 0) tone(c, t + 0.05, { wave: "sine", f: mtof(98), vol: 0.02, d: 1.0, wet: 0.9, vib: 0.004, hold: 0.1 });
+      if (allClear) [74, 78, 81, 86, 90, 93, 98, 102].forEach((m, i) => tone(c, t + 0.08 + i * 0.05, { wave: "sine", f: mtof(m), vol: 0.035, d: 0.9, wet: 0.85 }));
+    });
+  },
+  /**
+   * The combo: one note per clear in a row, walking up the D major scale,
+   * with its third and fifth (in the scale) underneath, a bell partial on top
+   * and a long, wet tail. Combo 1 is D5; it climbs past two octaves.
+   */
+  zgCombo(n) {
+    if (n < 1) return;
+    play("zgCombo", 30, (c, t) => {
+      const MAJOR = [0, 2, 4, 5, 7, 9, 11];
+      const deg = (d) => 74 + 12 * Math.floor(d / 7) + MAJOR[((d % 7) + 7) % 7];
+      const d = Math.min(n - 1, 16);
+      const root = deg(d), third = deg(d - 5), fifth = deg(d - 3); // the third and fifth below, so it stays sweet
+      tone(c, t, { wave: "sine", f: mtof(root), vol: 0.07, a: 0.001, d: 1.1, wet: 0.65 });
+      tone(c, t, { wave: "sine", f: mtof(root) * 3, vol: 0.012, a: 0.001, d: 0.25, wet: 0.5 }); // the crisp attack
+      tone(c, t + 0.004, { wave: "triangle", f: mtof(third), vol: 0.03, d: 0.9, wet: 0.7 });
+      tone(c, t + 0.008, { wave: "triangle", f: mtof(fifth), vol: 0.03, d: 0.9, wet: 0.7 });
+      tone(c, t + 0.06, { wave: "sine", f: mtof(root + 12), vol: 0.018, d: 1.4, wet: 0.95, vib: 0.003, hold: 0.05 }); // the far shimmer
+      bubble(c, t + 0.02, mtof(root) / 2, 0.04, rand(-0.4, 0.4), 0.4);
+    });
+  },
+
   /** Your opponent has locked in: a soft double blip, far off. */
   oppReady() {
     play("oppReady", 200, (c, t) => {
