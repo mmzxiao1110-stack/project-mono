@@ -4308,22 +4308,22 @@ function SprintGame({ onExit, ultra = false }) {
   const railD = useBubble(false);
   const keyOf = (id) => bindLabel(keys[id]);
 
-  // The board in the middle, as big as fits. Left: your first piece, then
-  // the stats. Right: your second piece, then the next three. Side pieces
-  // are exactly half size (half the board's square, gap included).
+  // The board in the middle, as big as fits, the timer above it and the
+  // score and lines under it. Left: your first piece, then the other stats.
+  // Right: your second piece, then the next three as plain colour squares.
   const g = P;
-  const availH = stage.h - (TITLE_H + 12) * P - 70;
-  const cell = Math.max(6 * P, Math.min(30 * P, Math.floor(Math.min((stage.w - 12 * P) / 13.8, availH / 8) / P) * P));
+  const availH = stage.h - (TITLE_H + 12) * P - 60;
+  const cell = Math.max(4 * P, Math.min(24 * P, Math.floor(Math.min((stage.w - 12 * P) / 15.8, availH / 12.2) / P) * P));
   const boardW = cell * S_SIZE + g * (S_SIZE - 1);
   const half = Math.max(P, Math.floor((cell + g) / 2 / P) * P - P);
-  const colW = Math.round(cell * 3.2);
-  const boxH = 4 * (half + P) + 4 * P;
+  const colW = Math.round(cell * 2.8);
+  const boxH = Math.round(cell * 1.7);
   const actCells = r.act ? sCellsOf(r.act) : [];
   const actKeys = new Set(actCells.map(([a, b]) => a * S_SIZE + b));
   const legal = r.act ? sCanPlace(st, r.act) : false;
   const fullW = boardW + 2 * colW + 12 * P;
   const stat = (label, value, ink = UI.text) => (
-    <div className="flex items-baseline justify-between" style={{ gap: 2 * P }}><span style={{ color: UI.dim }}>{label}</span><span className="tabular-nums" style={{ color: ink }}>{value}</span></div>
+    <div className="flex flex-col" style={{ gap: P }}><span style={{ color: UI.dim }}>{label}</span><span className="tb-b tabular-nums" style={{ color: ink }}>{value}</span></div>
   );
   const handBox = (i) => {
     const id = st.hand[i], picked = r.act && r.act.slot === i;
@@ -4334,71 +4334,79 @@ function SprintGame({ onExit, ultra = false }) {
       </div>
     );
   };
+  const sq = Math.round(cell * 0.6);
 
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono select-none" style={{ color: UI.text, cursor: "crosshair" }}>
-      <div ref={stageRef} className="relative flex-1 min-h-0 flex flex-col items-center w-full mx-auto px-3" style={{ maxWidth: 1400 }}>
-        <div style={{ flex: 1, minHeight: 4 * P }} />
+      <div ref={stageRef} className="relative flex-1 min-h-0 flex flex-col items-center w-full mx-auto px-3" style={{ maxWidth: 1600 }}>
+        <div style={{ flex: 1, minHeight: 2 * P }} />
         <GameTitle mode={ultra ? "ULTRA" : "SPRINT"} />
-        <div style={{ flex: 1, minHeight: 4 * P }} />
+        <div style={{ flex: 1, minHeight: 2 * P }} />
         <div className="flex items-start" style={{ gap: 6 * P }}>
-          <div className="flex flex-col tb-t" style={{ width: colW, gap: 3 * P }}>
+          <div className="flex flex-col tb-t" style={{ width: colW, gap: 5 * P, marginTop: cell }}>
             {handBox(0)}
-            <div className="flex flex-col" style={{ gap: 2 * P, padding: `${3 * P}px ${3 * P}px`, ...glass(UI.line) }}>
-              {ultra ? stat("LEFT", fmtClock(left), left < 10000 ? UI.bad : "var(--tb-you)") : stat("TIME", fmtClock(ms), "var(--tb-you)")}
-              {ultra && stat("SCORE", st.score.toLocaleString("en-US"))}
+            <div className="flex flex-col" style={{ gap: 4 * P }}>
               {ultra && stat("COMBO", st.combo > 1 ? `×${comboMultOf(st.combo)}` : "—", st.combo > 1 ? GOLD : UI.dim)}
-              {stat("LINES", ultra ? st.lines : `${Math.min(st.lines, S_GOAL)} / ${S_GOAL}`)}
               {stat("PIECES", st.pieces)}
               {stat("PPS", pps.toFixed(2))}
               {stat("BEST", best ? (ultra ? best.toLocaleString("en-US") : fmtClock(best)) : "—", GOLD)}
             </div>
           </div>
-          <div ref={boardEl} className="relative" style={{ width: boardW, height: boardW }}>
-            <div style={{ display: "grid", gridTemplateColumns: `repeat(${S_SIZE}, ${cell}px)`, gap: g }}>
-              {st.board.map((row, ri) => row.map((v, ci) => {
-                const k = ri * S_SIZE + ci, on = actKeys.has(k);
-                return (
-                  <div key={k} data-v={v ?? ""} style={{ position: "relative", width: cell, height: cell, clipPath: Math.round(cell / P) >= 9 ? CLIP : CLIP1, ...(v === null ? GLASS : null) }}>
-                    {v !== null && <Ink size={cell} color={S_INK[v]} />}
-                    {on && v === null && <div className="absolute inset-0" style={{ opacity: legal ? 0.9 : 0.6 }}><Ink size={cell} color={legal ? S_INK[r.act.id] : UI.bad} {...(legal ? null : { stroke: "ghost" })} /></div>}
-                    {on && v !== null && (
-                      <>
-                        <div className="absolute inset-0" style={{ background: "rgba(8,6,16,.62)" }} />
-                        <div className="absolute inset-0" style={{ opacity: 0.9 }}><Ink size={cell} color={UI.bad} stroke="ghost" /></div>
-                      </>
-                    )}
-                  </div>
-                );
-              }))}
+          <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
+            {/* The clock, over the board. */}
+            <span className="tb-t tb-b tabular-nums" style={{ height: cell - 2 * P, display: "flex", alignItems: "center", fontSize: "1.4em",
+              color: ultra && left < 10000 ? UI.bad : "var(--tb-you)" }}>{fmtClock(ultra ? left : ms)}</span>
+            <div ref={boardEl} className="relative" style={{ width: boardW, height: boardW }}>
+              <div style={{ display: "grid", gridTemplateColumns: `repeat(${S_SIZE}, ${cell}px)`, gap: g }}>
+                {st.board.map((row, ri) => row.map((v, ci) => {
+                  const k = ri * S_SIZE + ci, on = actKeys.has(k);
+                  return (
+                    <div key={k} data-v={v ?? ""} style={{ position: "relative", width: cell, height: cell, clipPath: Math.round(cell / P) >= 9 ? CLIP : CLIP1, ...(v === null ? GLASS : null) }}>
+                      {v !== null && <Ink size={cell} color={S_INK[v]} />}
+                      {on && v === null && <div className="absolute inset-0" style={{ opacity: legal ? 0.9 : 0.6 }}><Ink size={cell} color={legal ? S_INK[r.act.id] : UI.bad} {...(legal ? null : { stroke: "ghost" })} /></div>}
+                      {on && v !== null && (
+                        <>
+                          <div className="absolute inset-0" style={{ background: "rgba(8,6,16,.62)" }} />
+                          <div className="absolute inset-0" style={{ opacity: 0.9 }}><Ink size={cell} color={UI.bad} stroke="ghost" /></div>
+                        </>
+                      )}
+                    </div>
+                  );
+                }))}
+              </div>
+              {vanish && <VanishLayer key={vanish.key} cleared={vanish.cleared} cell={cell} gap={g} ink={S_INK} />}
+              {r.pop && (
+                <div key={r.pop.key} className="absolute flex justify-center pointer-events-none tb-rise" style={{ left: 0, right: 0, bottom: 4 * P, zIndex: 4 }}>
+                  <span className="tb-t tb-b" style={{ color: GOLD, padding: `${P}px ${3 * P}px`, background: "color-mix(in srgb, var(--tb-panel-solid) 82%, transparent)", clipPath: CLIP1, textShadow: `${P}px ${P}px 0 rgba(0,0,0,.6)` }}>{r.pop.text}</span>
+                </div>
+              )}
+              {!r.startAt && !r.result && (
+                <div className="absolute inset-x-0 flex justify-center pointer-events-none" style={{ top: 2 * P }}>
+                  <span className="tb-t" style={{ color: UI.text, padding: `${P}px ${3 * P}px`, background: "color-mix(in srgb, var(--tb-panel-solid) 80%, transparent)" }}>
+                    {ultra ? "2 MINUTES · THE CLOCK STARTS ON YOUR FIRST MOVE" : "THE CLOCK STARTS ON YOUR FIRST MOVE"}
+                  </span>
+                </div>
+              )}
             </div>
-            {vanish && <VanishLayer key={vanish.key} cleared={vanish.cleared} cell={cell} gap={g} ink={S_INK} />}
-            {r.pop && (
-              <div key={r.pop.key} className="absolute flex justify-center pointer-events-none tb-rise" style={{ left: 0, right: 0, bottom: 4 * P, zIndex: 4 }}>
-                <span className="tb-t tb-b" style={{ color: GOLD, padding: `${P}px ${3 * P}px`, background: "color-mix(in srgb, var(--tb-panel-solid) 82%, transparent)", clipPath: CLIP1, textShadow: `${P}px ${P}px 0 rgba(0,0,0,.6)` }}>{r.pop.text}</span>
-              </div>
-            )}
-            {!r.startAt && !r.result && (
-              <div className="absolute inset-x-0 flex justify-center pointer-events-none" style={{ top: 2 * P }}>
-                <span className="tb-t" style={{ color: UI.text, padding: `${P}px ${3 * P}px`, background: "color-mix(in srgb, var(--tb-panel-solid) 80%, transparent)" }}>
-                  {ultra ? "2 MINUTES · THE CLOCK STARTS ON YOUR FIRST MOVE" : "THE CLOCK STARTS ON YOUR FIRST MOVE"}
-                </span>
-              </div>
-            )}
+            {/* Score and lines, under the board. */}
+            <div className="flex justify-center tb-t" style={{ gap: 10 * P, marginTop: 2 * P }}>
+              {ultra && <div className="flex flex-col items-center" style={{ gap: P }}><span style={{ color: UI.dim }}>SCORE</span><span className="tb-b tabular-nums">{st.score.toLocaleString("en-US")}</span></div>}
+              <div className="flex flex-col items-center" style={{ gap: P }}><span style={{ color: UI.dim }}>LINES</span><span className="tb-b tabular-nums">{ultra ? st.lines : `${Math.min(st.lines, S_GOAL)} / ${S_GOAL}`}</span></div>
+            </div>
           </div>
-          <div className="flex flex-col" style={{ width: colW, gap: 3 * P }}>
-            {handBox(1)}
-            <div className="flex flex-col items-center tb-t" style={{ gap: 3 * P, padding: `${3 * P}px 0`, ...glass(UI.line) }}>
-              <span style={{ color: UI.dim }}>NEXT</span>
+          <div className="flex flex-col items-center" style={{ width: colW, gap: 5 * P, marginTop: cell }}>
+            <div className="w-full">{handBox(1)}</div>
+            {/* The next three: just their colours, in one narrow strip. */}
+            <div aria-label="Next pieces" className="flex flex-col items-center" style={{ gap: 2 * P, padding: `${3 * P}px ${3 * P}px`, ...glass(UI.line) }}>
               {st.queue.map((id, i) => (
-                <div key={i} role="img" aria-label={`Next ${i + 1}: ${S_NAMES[id]}`} style={{ opacity: i ? 0.65 : 1, display: "flex" }}>
-                  <SPiece id={id} cell={half} gap={P} />
+                <div key={i} role="img" aria-label={`Next ${i + 1}: ${S_NAMES[id]}`} style={{ opacity: i ? 0.7 : 1 }}>
+                  <Ink size={sq} color={S_INK[id]} />
                 </div>
               ))}
             </div>
           </div>
         </div>
-        <div className="flex items-center justify-end" style={{ width: fullW, gap: 3 * P, marginTop: 3 * P }}>
+        <div className="flex items-center justify-end" style={{ width: fullW, gap: 3 * P, marginTop: P }}>
           <Bubble w={railD} h={railD} label={`Retry (${keyOf("retry")})`} onClick={retry}><RefreshCw /></Bubble>
           {r.result
             ? <Bubble w={railD} h={railD} label="Menu" onClick={onExit}><LogOut /></Bubble>

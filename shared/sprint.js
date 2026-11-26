@@ -1,7 +1,7 @@
 /**
  * SPRINT — clear 40 lines as fast as you can. Keyboard only.
  *
- *   The 7×7 board, the seven tetrominoes from a shuffled 7-bag (each one
+ *   The 10×10 board, the seven tetrominoes from a shuffled 7-bag (each one
  *   once per bag). You hold two and see the next three: the piece you place
  *   is replaced by the first of those, and a new one joins the end from the
  *   bag. One of your two is always in play, in the middle of the board; swap
@@ -10,12 +10,10 @@
  *   40 lines stops the clock. If neither piece fits anywhere, turned any
  *   way, the run is over.
  *
- * Every piece spawns in one fixed way, symmetric about the middle column
- * where it can be: I upright, T as a T, J and L with the long stem in the
- * middle, S and Z flat, O in the top-right of the centre 3×3.
+ * Every piece spawns lying flat in the middle of the board.
  */
 
-export const SIZE = 7;
+export const SIZE = 10;
 export const HAND = 2;
 export const FORECAST = 3;
 export const GOAL = 40;
@@ -30,16 +28,19 @@ export const NAMES = ["I", "O", "T", "S", "Z", "J", "L"];
 export const ULTRA_MS = 120000;
 export const linePoints = (n) => (n <= 0 ? 0 : n === 1 ? 100 : n === 2 ? 300 : n === 3 ? 500 : 800 + 400 * (n - 4));
 export const comboMult = (combo) => 1 + 0.5 * Math.max(0, combo - 1);
+/** An ALL CLEAR (the board left empty): a big bonus, times the combo it ends. */
+export const ALL_CLEAR = 3000;
 
-// Spawn cells on the board, [row, col]. The centre square is (3, 3).
+// Spawn cells on the board, [row, col]: every piece lying flat, in the
+// middle of the 10×10 board (rows 4–5, around columns 4–5).
 const SPAWN = {
-  I: [[1, 3], [2, 3], [3, 3], [4, 3]],
-  O: [[2, 3], [2, 4], [3, 3], [3, 4]],
-  T: [[2, 2], [2, 3], [2, 4], [3, 3]],
-  S: [[2, 3], [2, 4], [3, 2], [3, 3]],
-  Z: [[2, 2], [2, 3], [3, 3], [3, 4]],
-  J: [[2, 3], [3, 3], [4, 3], [4, 2]],
-  L: [[2, 3], [3, 3], [4, 3], [4, 4]],
+  I: [[4, 3], [4, 4], [4, 5], [4, 6]],
+  O: [[4, 4], [4, 5], [5, 4], [5, 5]],
+  T: [[4, 3], [4, 4], [4, 5], [5, 4]],
+  S: [[4, 4], [4, 5], [5, 3], [5, 4]],
+  Z: [[4, 3], [4, 4], [5, 4], [5, 5]],
+  J: [[4, 3], [5, 3], [5, 4], [5, 5]],
+  L: [[4, 5], [5, 3], [5, 4], [5, 5]],
 };
 
 /** Each piece as a shape in its own box (top-left 0,0), turned 0–3 quarter turns clockwise. */
@@ -187,11 +188,12 @@ export function place(st, a) {
   st.lines += n;
   st.pieces += 1;
   st.combo = n ? st.combo + 1 : 0;
-  const points = n ? Math.round(linePoints(n) * comboMult(st.combo)) : 0;
+  const allClear = n > 0 && st.board.every((row) => row.every((v) => v === null));
+  const points = n ? Math.round((linePoints(n) + (allClear ? ALL_CLEAR : 0)) * comboMult(st.combo)) : 0;
   st.score += points;
   st.hand[a.slot] = st.queue.shift();
   st.queue.push(draw(st));
-  st.last = { cells, cleared, lines: n, id: a.id, points, combo: n ? st.combo : 0 };
+  st.last = { cells, cleared, lines: n, id: a.id, points, combo: n ? st.combo : 0, allClear };
   if (st.lines >= st.goal) { st.over = true; st.won = true; }
   else if (!anyFits(st)) st.over = true;
   return st;
