@@ -21,6 +21,16 @@ export const FORECAST = 3;
 export const GOAL = 40;
 export const NAMES = ["I", "O", "T", "S", "Z", "J", "L"];
 
+/**
+ * ULTRA (2 minutes, highest score) scores every clear: more lines at once
+ * pay far more (1 < 2 < 3 < 4 …), and a combo (clears on consecutive
+ * placements) multiplies it: ×1, ×1.5, ×2, ×2.5 … A placement that clears
+ * nothing ends the combo.
+ */
+export const ULTRA_MS = 120000;
+export const linePoints = (n) => (n <= 0 ? 0 : n === 1 ? 100 : n === 2 ? 300 : n === 3 ? 500 : 800 + 400 * (n - 4));
+export const comboMult = (combo) => 1 + 0.5 * Math.max(0, combo - 1);
+
 // Spawn cells on the board, [row, col]. The centre square is (3, 3).
 const SPAWN = {
   I: [[1, 3], [2, 3], [3, 3], [4, 3]],
@@ -69,9 +79,9 @@ function draw(st) {
   return st.bag.pop();
 }
 
-export function newSprint(seed) {
+export function newSprint(seed, goal = GOAL) {
   const st = {
-    seed, rand: rng(seed), bag: [],
+    seed, goal, rand: rng(seed), bag: [], score: 0, combo: 0,
     board: Array.from({ length: SIZE }, () => Array(SIZE).fill(null)),
     hand: [], queue: [], lines: 0, pieces: 0, over: false, won: false,
   };
@@ -173,12 +183,16 @@ export function place(st, a) {
   for (const r of rows) for (let c = 0; c < SIZE; c++) wipe(r, c);
   for (const c of cols) for (let r = 0; r < SIZE; r++) wipe(r, c);
   for (const [r, c] of cleared) st.board[r][c] = null;
-  st.lines += rows.length + cols.length;
+  const n = rows.length + cols.length;
+  st.lines += n;
   st.pieces += 1;
+  st.combo = n ? st.combo + 1 : 0;
+  const points = n ? Math.round(linePoints(n) * comboMult(st.combo)) : 0;
+  st.score += points;
   st.hand[a.slot] = st.queue.shift();
   st.queue.push(draw(st));
-  st.last = { cells, cleared, lines: rows.length + cols.length, id: a.id };
-  if (st.lines >= GOAL) { st.over = true; st.won = true; }
+  st.last = { cells, cleared, lines: n, id: a.id, points, combo: n ? st.combo : 0 };
+  if (st.lines >= st.goal) { st.over = true; st.won = true; }
   else if (!anyFits(st)) st.over = true;
   return st;
 }

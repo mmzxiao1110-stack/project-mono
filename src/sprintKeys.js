@@ -8,9 +8,9 @@ const KEY = "tb:sprintKeys2";
 
 export const SPRINT_ACTIONS = [
   { id: "swap", label: "Swap", def: "Mouse2" },
-  { id: "ccw", label: "Rotate L", def: "s" },
-  { id: "cw", label: "Rotate R", def: "d" },
-  { id: "r180", label: "Rotate 180", def: "a" },
+  { id: "ccw", label: "Turn L", def: "s" },
+  { id: "cw", label: "Turn R", def: "d" },
+  { id: "r180", label: "Turn 180", def: "a" },
   { id: "place", label: "Place", def: "c" },
   { id: "retry", label: "Retry", def: "r" },
   { id: "forfeit", label: "Forfeit", def: "Escape" },
