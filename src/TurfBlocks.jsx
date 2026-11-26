@@ -35,7 +35,7 @@ import { FX } from "./tuning.js";
 import { SkyCanvas, sky, rgbOf, mixRgb, BAYER } from "./sky.jsx";
 import { VERSION_LABEL } from "./version.js";
 import { sfx, setVolume, installUiSounds } from "./sfx.js";
-import { music, TRACKS, GAME_TRACKS, nextGameTrack } from "./music.js";
+import { music } from "./music.js";
 import { RULES } from "../shared/rules.js";
 import {
   PRESETS, INKS, STROKES, GRID_GAPS,
@@ -1851,20 +1851,6 @@ function SettingsModal({ name, rename, status, theme, setTheme, onClose }) {
         <PixelSlider min={0} max={10} value={theme.music ?? 5} onChange={(v) => set({ music: v })} ink={UI.text} label="Music" style={{ width: wide ? 130 : 150 }} />
         <span className="tb-t tabular-nums text-right" style={{ width: 30, color: theme.music ? UI.text : UI.dim }}>{theme.music ? theme.music : "OFF"}</span>
       </Row>
-      <div className="py-2.5" style={{ ...RULE_BELOW }}>
-        <div className="tb-t mb-2" style={{ color: UI.dim }}>IN-GAME MUSIC</div>
-        <div className="flex flex-wrap gap-1.5">
-          {["mix", ...GAME_TRACKS].map((k) => {
-            const on = (theme.track || "mix") === k;
-            return (
-              <button key={k} onClick={() => set({ track: k })} aria-pressed={on} className="tb-t px-2"
-                style={{ height: 28, ...(on ? skFill(UI.text) : glass(UI.line)), color: on ? UI.text : UI.dim }}>
-                {k === "mix" ? "TAKE TURNS" : TRACKS[k].title}
-              </button>
-            );
-          })}
-        </div>
-      </div>
     </>
   );
   const access = (
@@ -3669,7 +3655,7 @@ function MarathonGame({ theme, onExit }) {
     return () => { off(); clearTimeout(t); };
   }, []);
   useEffect(() => net.on("marathonResult", (m) => { setResult(m); if (m.best) setBest((b) => Math.max(b, m.best)); }), []);
-  useGameMusic({ choice: theme.track, over: !!ended, ot: false });
+  useGameMusic();
 
   const st = game?.st;
   const over = !!ended;
@@ -3918,8 +3904,11 @@ function MarathonGame({ theme, onExit }) {
                   </div>
                   {vanish && <VanishLayer key={vanish.key} cleared={vanish.cleared} cell={cell} gap={g} ink={M_INK} />}
                   {flash && (
-                    <div key={flash.key} className="absolute flex pointer-events-none tb-rise" style={{ left: 0, bottom: -11 * P, zIndex: 4 }}>
-                      <span className="tb-t tb-b" style={{ color: GOLD, textShadow: `${P}px ${P}px 0 rgba(0,0,0,.6)` }}>{flash.text}</span>
+                    // Phones have the tray right under the board, so the points pop up on the board instead.
+                    <div key={flash.key} className="absolute flex pointer-events-none tb-rise"
+                      style={compact ? { left: 0, right: 0, bottom: 4 * P, justifyContent: "center", zIndex: 4 } : { left: 0, bottom: -11 * P, zIndex: 4 }}>
+                      <span className="tb-t tb-b" style={{ color: GOLD, textShadow: `${P}px ${P}px 0 rgba(0,0,0,.6)`,
+                        ...(compact ? { padding: `${P}px ${3 * P}px`, background: "color-mix(in srgb, var(--tb-panel-solid) 82%, transparent)", clipPath: CLIP1 } : null) }}>{flash.text}</span>
                     </div>
                   )}
                   {levelUp && (
@@ -3933,7 +3922,8 @@ function MarathonGame({ theme, onExit }) {
                       </div>
                     </div>
                   )}
-                  {st.combo > 1 && !over && (
+                  {/* The streak steps aside while a clear's points show: on a phone they'd overlap. */}
+                  {st.combo > 1 && !over && !flash && (
                     <div className="absolute tb-t" style={{ right: 0, bottom: -11 * P, color: GOLD, opacity: 0.8 }}>STREAK ×{st.combo}</div>
                   )}
                 </div>
@@ -4022,12 +4012,9 @@ function revealSound(moves, { contested = [], lines, shrink = null }) {
     shrink,
   });
 }
-/** A match's music: a piece of its own, louder in overtime, gone when it ends. */
-function useGameMusic({ choice, over, ot }) {
-  const first = useRef(choice);
-  useEffect(() => { music.play(nextGameTrack(first.current)); }, []);
-  useEffect(() => { if (over) music.stop(); }, [over]);
-  useEffect(() => { music.setIntensity(ot ? 1 : 0); }, [ot]);
+/** Matches and Marathon are played in silence: the menu's music fades away. */
+function useGameMusic() {
+  useEffect(() => { music.stop(); }, []);
 }
 const lockKind = (raw) => (!raw || raw.type === "pass" ? "pass" : raw.type === "delete" ? "delete" : "place");
 
@@ -4076,7 +4063,7 @@ function LocalGame({ mode, aiLevel, loadout, colors, theme, onExit, onRestart })
   const pinKey = `${turn}${player}`;
   const pinOn = pinFor === pinKey;
   const setPinOn = (on) => setPinFor(on ? pinKey : null);
-  useGameMusic({ choice: theme.track, over: phase === "DONE", ot });
+  useGameMusic();
   useEffect(() => {
     if (reveal) revealSound([reveal.a, reveal.b], { contested: reveal.contested, lines: reveal.lines, shrink: otFlash });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -4406,7 +4393,7 @@ function NetGame({ colors, theme, onResult, onAbort }) {
   const [pinFor, setPinFor] = useState(null);
   const pinOn = pinFor !== null && pinFor === m?.turn;
   const setPinOn = (on) => setPinFor(on ? m?.turn : null);
-  useGameMusic({ choice: theme.track, over: !!m?.over, ot: !!m?.ot });
+  useGameMusic();
   useEffect(() => {
     const rv = m?.reveal;
     if (rv) revealSound([rv.moves?.A, rv.moves?.B], { contested: rv.contested, lines: rv.lines, shrink: m.shrunk ? (m.otStarted ? "OVERTIME" : "SHRINK") : null });
@@ -5323,8 +5310,7 @@ export default function TurfBlocks() {
   const rename = (n) => { const v = n.trim().slice(0, 16); if (v && v !== net.profile?.name) net.setName(v); };
   const logout = () => { store.set("tb:token", ""); net.logout(); setScreen("MENU"); };
 
-  // The menu has its own music; each match brings its own (see useGameMusic);
-  // the result screen is left to its fanfare.
+  // Music on the menu screens only; matches, Marathon and results are silent.
   useEffect(() => {
     if (["MENU", "DIFFICULTY", "REPLAYS", "REPLAY", "UNRANKED", "PRIVATE", "MATCHMAKING"].includes(screen)) music.play("menu");
     else if (screen === "RESULT") music.stop();
