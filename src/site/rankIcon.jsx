@@ -35,8 +35,9 @@ function build(name, color) {
     // X is two straight strokes crossing on a leaning axis, drawn as lines, so
     // the notches at the top and bottom come to a sharp V.
     for (let y = 0; y < ROWS; y++) {
-      const off = (ROWS - 1 - y) / 3, d = (y - (ROWS - 1) / 2) * 1.1;
-      for (const e of [5 + d + off, 5 - d + off]) for (let dx = 0; dx < 3; dx++) cells.set(`${Math.round(e - 1) + dx + 1},${y + 2}`, y);
+      // (2-pixel strokes: on a diagonal they read as heavy as the other letters' 3-pixel ones.)
+      const off = (ROWS - 1 - y) / 3, d = (y - (ROWS - 1) / 2) * 0.8;
+      for (const e of [4 + d + off, 4 - d + off]) for (let dx = 0; dx < 2; dx++) cells.set(`${Math.round(e - 0.5) + dx + 1},${y + 2}`, y);
     }
   } else letter.forEach((row, y) => [...row].forEach((b, x) => { if (b === "1") cells.set(`${x + slant(y) + 1},${y + 2}`, y); }));
   // The mark as a superscript, top right, banded on its own.
