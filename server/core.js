@@ -51,6 +51,7 @@ import {
 } from "./limits.js";
 import { Queue } from "./queue.js";
 import { Match } from "./match.js";
+import { BlitzMatch } from "./blitz.js";
 import { newRating } from "../shared/glicko.js";
 import { unref } from "./timers.js";
 
@@ -80,6 +81,7 @@ const publicProfile = (p, acct) => ({
   rating: p.rating,
   stats: p.stats,
   marathon: p.marathon || null,
+  blitz: p.blitz ? { rating: p.blitz.rating, games: p.blitz.games, wins: p.blitz.wins } : null,
   sprint: p.sprint ? { best: p.sprint.best, pieces: p.sprint.pieces, games: p.sprint.games, at: p.sprint.at } : null,
   ultra: p.ultra ? { best: p.ultra.best, lines: p.ultra.lines, games: p.ultra.games, at: p.ultra.at } : null,
   marathonOpen: p.marathonOpen ? { score: p.marathonOpen.score, lines: p.marathonOpen.lines, at: p.marathonOpen.at } : null,
@@ -125,9 +127,24 @@ const pairUp = (rated) => (a, b, gap) => {
 
   setTimeout(() => match.start(), 1400);
 };
+/** Pairs two Blitz players (ranked, verified accounts). */
+const pairBlitz = (a, b) => {
+  const sa = sockets.get(a.playerId), sb = sockets.get(b.playerId);
+  if (!sa || !sb) { const alive = sa ? a : sb ? b : null; if (alive) blitzQueue.add(alive); return; }
+  const match = new BlitzMatch([{ profile: a.profile, socket: sa }, { profile: b.profile, socket: sb }], (m) => {
+    inMatch.delete(m.seats.A.profile.playerId);
+    inMatch.delete(m.seats.B.profile.playerId);
+    console.log(`[blitz] ${m.id} finished`);
+  });
+  inMatch.set(a.profile.playerId, { match, side: "A" });
+  inMatch.set(b.profile.playerId, { match, side: "B" });
+  console.log(`[blitz] ${match.id}: ${a.profile.name} vs ${b.profile.name}`);
+  setTimeout(() => match.start(), 600);
+};
 const queue = new Queue(pairUp(true));         // ranked
 const casualQueue = new Queue(pairUp(false));  // unranked: anyone, guests included; ratings don't move
-const leaveQueues = (id) => { queue.remove(id); casualQueue.remove(id); };
+const blitzQueue = new Queue(pairBlitz);      // Blitz, ranked
+const leaveQueues = (id) => { queue.remove(id); casualQueue.remove(id); blitzQueue.remove(id); };
 
 /* ---------- guests ----------
  * A guest is a name and a random id the browser keeps, nothing more. Guests
@@ -600,6 +617,30 @@ async function handle(ws, msg) {
         onProgress: (p) => sendTo(uid, { t: "searching", ...p }),
       });
       console.log(`[queue] + ${profile.name} (${Math.round(profile.rating.r)}) — ${queue.size} waiting`);
+      break;
+    }
+
+    /* ---------- Blitz 1v1 ---------- */
+
+    case "blitzQueue": {
+      if (isGuest(ws.userId)) return fail(ws, "Make an account to play Blitz.");
+      const acct = getAccount(ws.userId);
+      if (!acct || !acct.emailVerified) return send(ws, { t: "needVerify" });
+      if (inMatch.has(ws.userId)) return fail(ws, "Already in a match.");
+      if (blitzQueue.has(ws.userId)) return;
+      leaveQueues(ws.userId);
+      const profile = getProfile(ws.userId);
+      const uid = ws.userId;
+      blitzQueue.add({ playerId: uid, blocked: ws.blocked, profile, rating: profile.blitz?.rating || newRating(), onProgress: (p) => sendTo(uid, { t: "searching", ...p }) });
+      console.log(`[blitz] + ${profile.name} — ${blitzQueue.size} waiting`);
+      break;
+    }
+
+    case "blitzPlace": {
+      const active = inMatch.get(ws.userId);
+      if (!active || !(active.match instanceof BlitzMatch)) return fail(ws, "Not in a Blitz match.");
+      const err = active.match.submit(active.side, msg);
+      if (err) fail(ws, err);
       break;
     }
 

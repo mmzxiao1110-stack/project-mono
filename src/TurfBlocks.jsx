@@ -46,8 +46,10 @@ import { SPRINT_ACTIONS, getSprintKeys, subscribeSprintKeys, setSprintKey, reset
 import {
   SIZE as S_SIZE, GOAL as S_GOAL, NAMES as S_NAMES, newSprint, newSprintSeed, shapeOf as sShapeOf, spawn as sSpawn, cellsOf as sCellsOf,
   turn as sTurn, canPlace as sCanPlace, place as sPlace, at as sAt,
-  recordMove as sRecordMove, isJunk as sIsJunk, junkLevel as sJunkLevel, noteClear as sNoteClear, spikeDue as sSpikeDue, receiveJunk as sReceiveJunk, SPIKE_MS as S_SPIKE_MS, ULTRA_MS as S_ULTRA_MS, comboMult as sComboMult,
+  recordMove as sRecordMove,
+  isJunk as sIsJunk, junkLevel as sJunkLevel, FORECAST as S_FORECAST, JUNK as S_JUNK, noteClear as sNoteClear, spikeDue as sSpikeDue, receiveJunk as sReceiveJunk, SPIKE_MS as S_SPIKE_MS, ULTRA_MS as S_ULTRA_MS, comboMult as sComboMult,
 } from "../shared/sprint.js";
+import { botMove, botPps, botDelay } from "../shared/blitzbot.js";
 
 /* ============================================================
    PRESENTATION CONSTANTS
@@ -3432,7 +3434,7 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
         <PlayModal status={status} authed={authed} verified={verified} placed={placed} rank={rank} tr={tr}
           onClose={() => setModal(null)}
           onPick={(t) => {
-            if (t === "MATCHMAKING") {
+            if (t === "MATCHMAKING" || t === "BLITZ") {
               if (status !== "online") return;
               if (!authed) return setModal("login");
               if (!verified) return setModal("VERIFY");
@@ -3513,7 +3515,10 @@ function PlayModal({ status, authed, verified, placed, rank, tr, onPick, onClose
                 ) : (
                   <>
                     <ModeCard big ink={MODE_INK.blitz} icon={Clock} title="BLITZ" h={100} delay={0}
-                      sub="1v1 vs bot · ranked online soon" onClick={() => onPick("BLITZ")} />
+                      sub={!online ? "needs the server" : !authed ? "account required" : !verified ? "verify your email" : "ranked 1v1"}
+                      note={net.profile?.blitz?.rating ? `${Math.round(net.profile.blitz.rating.r)}` : null}
+                      disabled={!online} onClick={() => onPick("BLITZ")} />
+                    <ModeCard ink={MODE_INK.blitz} icon={Robot} title="VS BOT" sub="blitz · skill 1–10" h={56} delay={200} onClick={() => onPick("BLITZBOT")} />
                     <div className="flex" style={{ gap: 8, width: "100%" }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <ModeCard ink={MODE_INK.sprint} icon={Clock} title="SPRINT" sub={sprintBest.get() ? `best ${fmtClock(sprintBest.get())}` : "40 lines"} h={58} delay={400} onClick={() => onPick("SPRINT")} />
@@ -4487,47 +4492,36 @@ function SprintGame({ onExit, ultra = false }) {
    ============================================================ */
 const JUNK_INK = "#8E8A99";
 const blitzName = (id) => (sIsJunk(id) ? `junk ${sJunkLevel(id)}` : S_NAMES[id]);
-const BLITZ_BOT_PPS = 1.6;
 const BLITZ_COUNTDOWN = 3;
+const blitzSkill = { get: () => Math.max(1, Math.min(10, Number(store.get("tb:botSkill")) || 6)), set: (n) => store.set("tb:botSkill", String(n)) };
+const cloneSt = (st) => ({ ...st, board: st.board.map((row) => row.slice()), hand: st.hand.slice(), queue: st.queue.slice(), bag: st.bag ? st.bag.slice() : [] });
 
-/** The bot's move: the placement that clears most, else the tidiest. */
-function blitzBotMove(st) {
-  const N = S_SIZE;
-  let best = null;
-  for (let slot = 0; slot < 2; slot++) for (let rot = 0; rot < 4; rot++) {
-    const sh = sShapeOf(st.hand[slot], rot);
-    for (let r = 0; r + sh.h <= N; r++) for (let c = 0; c + sh.w <= N; c++) {
-      if (!sh.cells.every(([dr, dc]) => st.board[r + dr][c + dc] === null)) continue;
-      const b = st.board.map((row) => row.map((v) => v !== null));
-      for (const [dr, dc] of sh.cells) b[r + dr][c + dc] = true;
-      let lines = 0, holes = 0;
-      for (let i = 0; i < N; i++) { if (b[i].every(Boolean)) lines++; if (b.every((row) => row[i])) lines++; }
-      for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) if (!b[i][j]) {
-        let k = 0; for (const [x, y] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const ii = i + x, jj = j + y; if (ii < 0 || jj < 0 || ii >= N || jj >= N || b[ii][jj]) k++; }
-        if (k >= 3) holes++;
-      }
-      const v = lines * 50 - holes * 3 + Math.random();
-      if (!best || v > best.v) best = { v, a: { slot, id: st.hand[slot], rot, cr: r + sh.h / 2, cc: c + sh.w / 2 } };
-    }
-  }
-  return best && best.a;
-}
-
-function BlitzGame({ onExit }) {
+/**
+ * BLITZ: your board and your opponent's, side by side.
+ *   online  ranked 1v1, run by the server: it checks every placement and
+ *           times every spike; your board updates at once and is corrected
+ *           by the server's copy if they ever disagree.
+ *   vs bot  the same game against the Blitz bot, skill 1-10 (speed and smarts).
+ */
+function BlitzGame({ onExit, online = false, colors }) {
   useGameMusic();
   useEffect(() => { sky.slow = true; return () => { sky.slow = false; }; }, []);
   const P = usePx();
   const railD = useBubble(false);
   const [stageRef, stage] = useSize();
   const keys = useSyncExternalStore(subscribeSprintKeys, getSprintKeys);
-  const fresh = () => {
-    const me = newSprint(newSprintSeed(), Infinity), bot = newSprint(newSprintSeed(), Infinity);
-    return { me, bot, act: sSpawn(me, 0), startAt: performance.now() + BLITZ_COUNTDOWN * 1000, result: null, sent: { me: 0, bot: 0 }, flash: null, vanish: { me: null, bot: null }, tick: 0 };
+  const [skill, setSkill] = useState(blitzSkill.get);
+  // A game: both sides start from the same seed, so they get the same pieces.
+  const fresh = (seed, startIn) => {
+    const me = newSprint(seed, Infinity), bot = newSprint(seed, Infinity);
+    return { me, bot, act: sSpawn(me, 0), startAt: performance.now() + startIn, result: null, sent: { me: 0, bot: 0 }, flash: null, vanish: { me: null, bot: null }, ratings: null };
   };
-  const [g, setG] = useState(fresh);
+  // vs bot: waits on the skill picker. online: waits for a match.
+  const [g, setG] = useState(null);
   const live = useRef(g);
   const commit = useCallback((next) => { live.current = next; setG(next); }, []);
   const [now, setNow] = useState(() => performance.now());
+  const [chatM, setChatM] = useState(null);
   const boardEl = useRef(null);
   const mouse = useRef(null);
   const toMouse = useCallback((a) => {
@@ -4536,81 +4530,125 @@ function BlitzGame({ onExit }) {
     const rect = el.getBoundingClientRect(), step = rect.width / S_SIZE;
     return sAt(a, (m.y - rect.top) / step, (m.x - rect.left) / step);
   }, []);
-  const playing = (c) => !c.result && performance.now() >= c.startAt;
+  const playing = (c) => c && !c.result && performance.now() >= c.startAt;
+  const startBot = useCallback(() => { blitzSkill.set(skill); commit(fresh(newSprintSeed(), BLITZ_COUNTDOWN * 1000)); }, [skill, commit]);
+  const findMatch = useCallback(() => { commit(null); net.blitzQueue(); }, [commit]);
+
+  // Online: the server's messages.
+  useEffect(() => {
+    if (!online) return undefined;
+    net.blitzQueue(); // (the screen starts on "finding a match")
+    const offs = [
+      net.on("blitzStart", (b) => { commit(fresh(b.seed, b.countdown)); setChatM(b); }),
+      net.on("blitz", (b) => setChatM(b)),
+      net.on("blitzState", (m) => {
+        const c = live.current; if (!c || !net.blitz) return;
+        if (m.side === net.blitz.you) {
+          // The server's copy of your board: taken when it has seen as many placements as you've made.
+          if (m.pieces === c.me.pieces) commit({ ...c, me: { ...c.me, board: m.board, hand: m.hand, queue: m.queue, lines: m.lines }, sent: { ...c.sent, me: m.sent } });
+          else commit({ ...c, sent: { ...c.sent, me: m.sent } });
+        } else {
+          commit({ ...c, bot: { ...c.bot, board: m.board, hand: m.hand, queue: m.queue, pieces: m.pieces, lines: m.lines, spike: m.spike, lastClearAt: performance.now() }, sent: { ...c.sent, bot: m.sent } });
+        }
+      }),
+      net.on("blitzJunk", (m) => {
+        const c = live.current; if (!c) return;
+        const me = cloneSt(c.me);
+        me.queue.splice(Math.max(0, Math.min(me.queue.length, S_FORECAST - (me.pieces - m.at))), 0, S_JUNK + m.level);
+        commit({ ...c, me, flash: { who: "me", level: m.level, key: performance.now() } });
+        sfx.reveal({ lines: Math.min(4, m.level) });
+      }),
+      net.on("blitzEnd", (m) => {
+        const c = live.current; if (!c) return;
+        commit({ ...c, result: m.winner === m.you ? "win" : "lose", ratings: m.ratings ? m.ratings[m.you] : null, act: null });
+        if (m.winner === m.you) sfx.levelUp(); else sfx.forfeit();
+      }),
+    ];
+    return () => { offs.forEach((f) => f()); net.blitzCancel(); };
+  }, [online, commit]);
 
   // A placement on either side: clears feed that side's spike; a dead board loses.
   const placeOn = useCallback((c, who, a) => {
-    const st = { ...c[who], board: c[who].board.map((row) => row.slice()), hand: c[who].hand.slice(), queue: c[who].queue.slice(), bag: c[who].bag.slice() };
+    const st = cloneSt(c[who]);
     if (!sPlace(st, a)) return null;
-    const t = performance.now();
-    sNoteClear(st, st.last.lines, t, st.last.allClear);
-    const vanish = st.last.lines ? { ...c.vanish, [who]: { cleared: st.last.cleared, key: `${who}${st.pieces}` } } : c.vanish;
+    const L = st.last;
+    sNoteClear(st, L.lines, performance.now(), L.allClear, L.id);
+    const vanish = L.lines ? { ...c.vanish, [who]: { cleared: L.cleared, key: `${who}${st.pieces}` } } : c.vanish;
     let next = { ...c, [who]: st, vanish };
-    if (st.over) next = { ...next, result: who === "me" ? "lose" : "win" };
+    // Online, the server decides the result.
+    if (st.over && !online) next = { ...next, result: who === "me" ? "lose" : "win" };
     return next;
-  }, []);
+  }, [online]);
 
-  // The clock: countdown, spikes landing, the bot playing.
+  // The clock: countdown, spikes landing (vs bot), the bot playing.
   useEffect(() => {
-    let raf, lastBot = 0;
+    let raf, nextBot = 0;
     const loop = () => {
       raf = requestAnimationFrame(loop);
       const t = performance.now();
       setNow(t);
       let c = live.current;
-      if (c.result || t < c.startAt) return;
+      if (!c || c.result || t < c.startAt) return;
       let changed = false;
-      for (const [from, to] of [["me", "bot"], ["bot", "me"]]) {
-        const st = { ...c[from] };
-        const level = sSpikeDue(st, t);
-        if (level) {
-          const target = { ...c[to], queue: c[to].queue.slice() };
-          sReceiveJunk(target, level);
-          c = { ...c, [from]: st, [to]: target, sent: { ...c.sent, [from]: c.sent[from] + 1 }, flash: { who: to, level, key: t } };
-          changed = true;
-          sfx.reveal({ lines: Math.min(4, level) });
+      if (online) {
+        // Your spike ends here as on the server (the server sends the junk).
+        if (c.me.spike && t - c.me.lastClearAt > S_SPIKE_MS) { const me = { ...c.me }; sSpikeDue(me, t); c = { ...c, me }; changed = true; }
+      } else {
+        for (const [from, to] of [["me", "bot"], ["bot", "me"]]) {
+          const st = { ...c[from] };
+          const level = sSpikeDue(st, t);
+          if (level) {
+            const target = { ...c[to], queue: c[to].queue.slice() };
+            sReceiveJunk(target, level);
+            c = { ...c, [from]: st, [to]: target, sent: { ...c.sent, [from]: c.sent[from] + 1 }, flash: { who: to, level, key: t } };
+            changed = true;
+            sfx.reveal({ lines: Math.min(4, level) });
+          }
         }
-      }
-      if (t - lastBot >= 1000 / BLITZ_BOT_PPS) {
-        lastBot = t;
-        const a = blitzBotMove(c.bot);
-        if (a) { const n = placeOn(c, "bot", a); if (n) { c = n; changed = true; } }
-        else { c = { ...c, result: "win" }; changed = true; }
+        if (t >= nextBot) {
+          const bot = { ...c.bot };
+          const a = botMove(bot, blitzSkill.get());
+          if (a) { const n = placeOn({ ...c, bot }, "bot", a); if (n) { c = n; changed = true; } }
+          nextBot = t + botDelay(bot, blitzSkill.get());
+          else { c = { ...c, result: "win" }; changed = true; }
+        }
       }
       if (changed) commit(c);
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [commit, placeOn]);
+  }, [commit, placeOn, online]);
 
   const act = useCallback((a) => {
     const c = live.current;
-    if (a === "retry") { commit(fresh()); return; }
-    if (a === "forfeit") { if (!c.result) commit({ ...c, result: "lose", forfeit: true }); return; }
+    if (a === "retry") { if (online) { if (!c || c.result) findMatch(); } else if (c) commit(fresh(newSprintSeed(), BLITZ_COUNTDOWN * 1000)); return; }
+    if (a === "forfeit") { if (c && !c.result) { if (online) net.forfeit(); else commit({ ...c, result: "lose" }); } return; }
     if (!playing(c) || !c.act) return;
     if (a === "swap") { commit({ ...c, act: toMouse(sSpawn(c.me, 1 - c.act.slot)) }); sfx.pick(); return; }
     if (a === "cw" || a === "ccw" || a === "r180") { const d = a === "cw" ? 1 : a === "ccw" ? -1 : 2; commit({ ...c, act: toMouse(sTurn(c.act, d)) }); sfx.rotate(d === -1 ? -1 : 1); return; }
     if (a === "place") {
       if (!sCanPlace(c.me, c.act)) { sfx.illegal(); return; }
+      const mv = sRecordMove(c.act, 0);
       const n = placeOn(c, "me", c.act);
       if (!n) return;
+      if (online) net.blitzPlace(mv[1], mv[2], mv[3], mv[4]);
       sfx.lockIn("place");
       if (n.me.last.lines) sfx.reveal({ lines: n.me.last.lines });
-      commit({ ...n, act: n.result ? null : toMouse(sSpawn(n.me, c.act.slot)) });
+      commit({ ...n, act: n.result || n.me.over ? null : toMouse(sSpawn(n.me, c.act.slot)) });
     }
-  }, [commit, placeOn, toMouse]);
+  }, [commit, placeOn, toMouse, online, findMatch]);
 
   useEffect(() => {
-    const onKey = (e) => { const a = sprintActionFor(e.key); if (!a) return; e.preventDefault(); if (!e.repeat) act(a); };
+    const onKey = (e) => { const t = e.target; if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return; const a = sprintActionFor(e.key); if (!a) return; e.preventDefault(); if (!e.repeat) act(a); };
     const onMove = (e) => {
       mouse.current = { x: e.clientX, y: e.clientY };
       const c = live.current;
-      if (!c.act || c.result) return;
+      if (!c || !c.act || c.result) return;
       const a = toMouse(c.act);
       if (a.cr !== c.act.cr || a.cc !== c.act.cc) commit({ ...c, act: a });
     };
     const onDown = (e) => {
-      if (e.target instanceof Element && e.target.closest("button, a, input, [role=dialog]")) return;
+      if (e.target instanceof Element && e.target.closest("button, a, input, [role=dialog], form")) return;
       const a = sprintActionFor(mouseName(e.button)) || (e.button === 0 ? "place" : null);
       if (!a) return;
       e.preventDefault(); act(a);
@@ -4626,9 +4664,9 @@ function BlitzGame({ onExit }) {
   const cell = Math.max(4 * P, Math.min(16 * P, Math.floor(Math.min((stage.w - 40 * P) / (2 * S_SIZE + 6.5), (stage.h - (TITLE_H + 30) * P - 80) / (S_SIZE + 2.6)) / P) * P));
   const boardW = cell * S_SIZE + gap * (S_SIZE - 1);
   const half = Math.max(P, Math.floor((cell + gap) / 2 / P) * P - P);
-  const count = Math.ceil((g.startAt - now) / 1000);
   const inkOf = (id) => (sIsJunk(id) ? JUNK_INK : S_INK[id]);
   const keyOf = (id) => bindLabel(keys[id]);
+  const oppName = online ? (chatM?.opponent?.name || "OPPONENT") : `BOT · SKILL ${blitzSkill.get()}`;
 
   const panel = (who) => {
     const st = g[who], mine = who === "me";
@@ -4636,14 +4674,14 @@ function BlitzGame({ onExit }) {
     const cells = a ? sCellsOf(a) : [];
     const on = new Set(cells.map(([r, c]) => r * S_SIZE + c));
     const legal = a ? sCanPlace(st, a) : false;
-    const spiking = st.spike && now - st.lastClearAt <= S_SPIKE_MS;
+    const spiking = st.spike && now - st.lastClearAt <= S_SPIKE_MS + (mine ? 0 : 300);
     return (
       <div className="flex flex-col items-center" style={{ gap: 3 * P }}>
         <div className="flex items-end justify-between tb-t" style={{ width: boardW + 2 * cell + 4 * P }}>
-          <span style={{ color: mine ? "var(--tb-you)" : "var(--tb-rival)" }}>{mine ? (net.profile?.name || "YOU") : "BOT"}</span>
+          <span style={{ color: mine ? "var(--tb-you)" : "var(--tb-rival)" }}>{mine ? (net.profile?.name || "YOU") : oppName}</span>
           <span style={{ color: spiking ? GOLD : UI.dim }}>{spiking ? `SPIKE ${st.spike}` : `SENT ${g.sent[who]}`}</span>
         </div>
-        {/* Your two pieces over the board, the one in play lit up. */}
+        {/* The two pieces over the board, the one in play lit up. */}
         <div className="flex justify-center" style={{ gap: 3 * P, width: boardW + 2 * cell + 4 * P }}>
           {st.hand.map((id, i) => (
             <div key={i} role="img" aria-label={`${who} piece ${i + 1}: ${blitzName(id)}`} className="flex items-center justify-center"
@@ -4687,40 +4725,64 @@ function BlitzGame({ onExit }) {
     );
   };
 
+  const count = g ? Math.ceil((g.startAt - now) / 1000) : 0;
   return (
-    <div className="tb-screen tb-safe w-full flex flex-col font-mono select-none" style={{ color: UI.text, cursor: "crosshair" }}>
+    <div className="tb-screen tb-safe w-full flex flex-col font-mono select-none" style={{ color: UI.text, cursor: g && !g.result ? "crosshair" : undefined }}>
       <div ref={stageRef} className="relative flex-1 min-h-0 flex flex-col items-center w-full mx-auto px-3" style={{ maxWidth: 1600 }}>
         <div style={{ flex: 1, minHeight: 2 * P }} />
-        <GameTitle mode="BLITZ" />
+        <GameTitle mode={online ? "BLITZ" : "VS BOT"} />
         <div style={{ flex: 1, minHeight: 2 * P }} />
-        <div className="flex items-start" style={{ gap: 14 * P }}>
-          {panel("me")}
-          {panel("bot")}
-        </div>
+        {g ? (
+          <div className="flex items-start" style={{ gap: 14 * P }}>
+            {panel("me")}
+            {panel("bot")}
+          </div>
+        ) : online ? (
+          // Looking for an opponent.
+          <div className="flex flex-col items-center tb-t" style={{ gap: 4 * P }}>
+            <span className="tb-pulse" style={{ color: "#F29A4A" }}>FINDING A BLITZ MATCH…</span>
+            <span style={{ color: UI.dim }}>{net.profile?.blitz?.rating ? `${Math.round(net.profile.blitz.rating.r)} BLITZ RATING` : "your first Blitz match"}</span>
+            <button onClick={onExit} className="tb-t px-4" style={{ height: 38, ...sk(UI.line), color: UI.dim }}>CANCEL</button>
+          </div>
+        ) : (
+          // The bot's skill: 1 (a piece every 2 s, careless) to 10 (2 a second, hunts big spikes).
+          <div className="flex flex-col items-center tb-t" style={{ gap: 4 * P, width: 300 }}>
+            <div className="flex items-baseline justify-between w-full"><span style={{ color: UI.dim }}>BOT SKILL</span><span className="tb-b" style={{ color: "#F29A4A" }}>{skill}</span></div>
+            <PixelSlider min={1} max={10} value={skill} onChange={setSkill} ink="#F29A4A" label="Bot skill" className="w-full" />
+            <span style={{ color: UI.dim }}>{botPps(skill).toFixed(2)} pieces a second · {skill >= 8 ? "hunts combos and big spikes" : skill >= 5 ? "looks ahead" : "plays loosely"}</span>
+            <button onClick={startBot} className="tb-t px-6" style={{ height: 40, ...skFill("#F29A4A"), color: UI.text }}>START</button>
+          </div>
+        )}
         <div className="flex items-center justify-end" style={{ width: "100%", maxWidth: 2 * (boardW + 2 * cell) + 40 * P, gap: 3 * P, marginTop: 3 * P }}>
-          <Bubble w={railD} h={railD} label={`Retry (${keyOf("retry")})`} onClick={() => act("retry")}><RefreshCw /></Bubble>
-          {g.result ? <Bubble w={railD} h={railD} label="Menu" onClick={onExit}><LogOut /></Bubble>
-            : <ForfeitButton onConfirm={() => act("forfeit")} />}
+          {g && <Bubble w={railD} h={railD} label={`${online ? "New match" : "Retry"} (${keyOf("retry")})`} onClick={() => act("retry")}><RefreshCw /></Bubble>}
+          {!g || g.result ? <Bubble w={railD} h={railD} label="Menu" onClick={onExit}><LogOut /></Bubble>
+            : <ForfeitButton ranked={online} onConfirm={() => act("forfeit")} />}
         </div>
         <div style={{ flex: 2, minHeight: 2 * P }} />
-        {count > 0 && !g.result && (
+        {g && count > 0 && !g.result && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ zIndex: 10 }}>
             <div key={count} className="tb-dive"><PixelWord text={String(count)} from="var(--tb-text)" to="#F29A4A" scale={6} /></div>
           </div>
         )}
-        {g.result && (
+        {g?.result && (
           <div className="absolute inset-0 flex items-center justify-center tb-fade" style={{ zIndex: 20, background: "repeating-conic-gradient(rgba(0,0,0,.5) 0 25%, rgba(0,0,0,.25) 0 50%) 0 0 / calc(var(--p) * 2) calc(var(--p) * 2)" }}>
             <div className="tb-dive flex flex-col items-center" style={{ gap: 3 * P, padding: `${6 * P}px ${10 * P}px`, ...GLASS_PANE }}>
               <PixelWord text={g.result === "win" ? "YOU WIN" : "YOU LOSE"} from="var(--tb-text)" to={g.result === "win" ? GOLD : UI.bad} />
               <span className="tb-t" style={{ color: UI.dim }}>junk sent {g.sent.me} · received {g.sent.bot} · {g.me.pieces} pieces</span>
+              {g.ratings && (
+                <span className="tb-t" style={{ color: g.ratings.after >= g.ratings.before ? UI.good : UI.bad }}>
+                  BLITZ {g.ratings.before} → {g.ratings.after} ({g.ratings.after - g.ratings.before >= 0 ? "+" : ""}{g.ratings.after - g.ratings.before})
+                </span>
+              )}
               <div className="flex" style={{ gap: 2 * P }}>
                 <button onClick={onExit} className="tb-t px-4" style={{ height: 38, ...sk(UI.line), color: UI.dim }}>MENU</button>
-                <button onClick={() => act("retry")} className="tb-t px-4" style={{ height: 38, ...skFill(UI.text), color: UI.text }}>REMATCH ({keyOf("retry")})</button>
+                <button onClick={() => act("retry")} className="tb-t px-4" style={{ height: 38, ...skFill(UI.text), color: UI.text }}>{online ? "NEW MATCH" : "REMATCH"} ({keyOf("retry")})</button>
               </div>
             </div>
           </div>
         )}
       </div>
+      {online && g && chatM && <ChatDock m={{ chat: chatM.chat || [], you: chatM.you, opponent: chatM.opponent, chatError: chatM.chatError }} colors={colors} />}
     </div>
   );
 }
@@ -6374,6 +6436,7 @@ export default function TurfBlocks() {
           else if (t === "SPRINT") { setSeed((s) => s + 1); setScreen("SPRINT"); }
           else if (t === "ULTRA") { setSeed((s) => s + 1); setScreen("ULTRA"); }
           else if (t === "BLITZ") { setSeed((s) => s + 1); setScreen("BLITZ"); }
+          else if (t === "BLITZBOT") { setSeed((s) => s + 1); setScreen("BLITZBOT"); }
           else if (t === "TURNBASED") { setSeed((s) => s + 1); setScreen("TURNBASED"); }
           else { setSeed((s) => s + 1); setScreen("HOTSEAT"); }
         }}
@@ -6428,8 +6491,8 @@ export default function TurfBlocks() {
           else setScreen("MATCHMAKING");
         }} />
     );
-  else if (screen === "BLITZ")
-    view = <BlitzGame key={`B${seed}`} onExit={() => setScreen("MENU")} />;
+  else if (screen === "BLITZ" || screen === "BLITZBOT")
+    view = <BlitzGame key={`${screen}${seed}`} online={screen === "BLITZ"} colors={colors} onExit={() => setScreen("MENU")} />;
   else if (screen === "SPRINT" || screen === "ULTRA")
     view = <SprintGame key={`${screen}${seed}`} ultra={screen === "ULTRA"} onExit={() => setScreen("MENU")} />;
   else if (screen === "MARATHON")
