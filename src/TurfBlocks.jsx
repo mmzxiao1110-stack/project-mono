@@ -3903,7 +3903,15 @@ function MarathonGame({ theme, onExit }) {
                       return (
                         <div key={k} className={v !== null ? "tb-drop" : undefined} style={{ position: "relative", width: cell, height: cell, clipPath: Math.round(cell / P) >= 9 ? CLIP : CLIP1, ...(v === null ? GLASS : null) }}>
                           {v !== null && <Ink size={cell} color={M_INK[v]} />}
-                          {gh && v === null && <div className="absolute inset-0" style={{ opacity: ghost.ok ? 0.55 : 0.35 }}><Ink size={cell} color={ghost.ok ? M_INK[st.hand[sel]] : UI.bad} stroke="ghost" /></div>}
+                          {gh && v === null && <div className="absolute inset-0" style={{ opacity: ghost.ok ? 0.55 : 0.6 }}><Ink size={cell} color={ghost.ok ? M_INK[st.hand[sel]] : UI.bad} stroke="ghost" /></div>}
+                          {/* Over a placed block: dim the block and draw the ghost on it in red, so the
+                              whole shape shows and it's clear it can't go there. */}
+                          {gh && v !== null && (
+                            <>
+                              <div className="absolute inset-0" style={{ background: "rgba(8,6,16,.62)" }} />
+                              <div className="absolute inset-0" style={{ opacity: 0.9 }}><Ink size={cell} color={UI.bad} stroke="ghost" /></div>
+                            </>
+                          )}
                         </div>
                       );
                     }))}
