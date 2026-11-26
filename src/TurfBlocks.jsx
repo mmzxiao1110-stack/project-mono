@@ -4,7 +4,7 @@ import {
   Wifi, WifiOff, UserRound, LogOut,
   Palette, Lock, MailCheck, ShieldAlert, BookOpen, ChevronRight, Eraser, Pin, Film, Play, Pause, First,
   Chat, Terminal as TerminalIcon,
-  Trophy, Stack, People, Robot, Clock,
+  Trophy, Stack, People, Robot, Clock, RefreshCw, Flag,
 } from "./pixelIcons.jsx";
 import { PlayerRecord } from "./site/terminal.jsx";
 import { apiGet } from "./site/api.js";
@@ -45,7 +45,7 @@ import { ACTIONS, getKeys, subscribeKeys, setKey, resetKeys, actionFor, keyLabel
 import { SPRINT_ACTIONS, getSprintKeys, subscribeSprintKeys, setSprintKey, resetSprintKeys, sprintActionFor, mouseName, mouseLabel } from "./sprintKeys.js";
 import {
   SIZE as S_SIZE, GOAL as S_GOAL, NAMES as S_NAMES, newSprint, newSprintSeed, shapeOf as sShapeOf, spawn as sSpawn, cellsOf as sCellsOf,
-  turn as sTurn, canPlace as sCanPlace, place as sPlace, at as sAt,
+  turn as sTurn, canPlace as sCanPlace, place as sPlace, at as sAt, ULTRA_MS as S_ULTRA_MS, comboMult as sComboMult,
 } from "../shared/sprint.js";
 
 /* ============================================================
@@ -1988,7 +1988,7 @@ function SettingsModal({ name, rename, status, theme, setTheme, onClose }) {
         // A computer: everything at once, in columns.
         <DenseCtx.Provider value={true}>
         <div className="tb-cols grid gap-7 pt-3" style={{ gridTemplateColumns: HAS_KEYBOARD ? "1fr 1.45fr 1fr" : "1fr 1fr" }}>
-          <div className="min-w-0">{handle}{sound}</div>
+          <div className="min-w-0">{handle}{sound}<div className="mt-4"><SprintControlsSection /></div></div>
           {HAS_KEYBOARD && <div className="min-w-0"><ControlsSection /></div>}
           <div className="min-w-0">{access}{connection}</div>
         </div>
@@ -1999,6 +1999,7 @@ function SettingsModal({ name, rename, status, theme, setTheme, onClose }) {
           {sound}
           <div className="mb-7" />
           {HAS_KEYBOARD && <ControlsSection />}
+          {HAS_KEYBOARD && <div className="mb-7"><SprintControlsSection /></div>}
           {access}
           {connection}
         </div>
@@ -3446,7 +3447,7 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
 /* ============================================================
    PLAY — every way to play, in a little underwater night sky
    ============================================================ */
-const MODE_INK = { sprint: "#6FD3E0", ranked: "#E8C95A", unranked: "#A9A7B4", ai: "#B9B6AC", marathon: "#8FD694", turns: "#EC93B8", private: "#A68BF0" };
+const MODE_INK = { sprint: "#6FD3E0", ultra: "#F2B880", ranked: "#E8C95A", unranked: "#A9A7B4", ai: "#B9B6AC", marathon: "#8FD694", turns: "#EC93B8", private: "#A68BF0" };
 
 /** A mode: a pane of clear, lightly tinted glass, like a board square. Light sweeps it on hover. */
 function ModeCard({ big = false, ink, icon: Icon, title, sub, note, onClick, disabled, delay = 0, h, style }) {
@@ -3511,8 +3512,13 @@ function PlayModal({ status, authed, verified, placed, rank, tr, onPick, onClose
                 </div>
                 {/* Sprint is keyboard-only: on a computer. */}
                 {!phone && (
-                  <div style={{ width: "64%" }}>
-                    <ModeCard ink={MODE_INK.sprint} icon={Clock} title="SPRINT" sub={sprintBest.get() ? `best ${fmtClock(sprintBest.get())}` : "40 lines, keyboard"} h={58} delay={400} onClick={() => onPick("SPRINT")} />
+                  <div className="flex" style={{ gap: 8, width: "100%" }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <ModeCard ink={MODE_INK.sprint} icon={Clock} title="SPRINT" sub={sprintBest.get() ? `best ${fmtClock(sprintBest.get())}` : "40 lines, fastest"} h={58} delay={400} onClick={() => onPick("SPRINT")} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <ModeCard ink={MODE_INK.ultra} icon={Flag} title="ULTRA" sub={ultraBest.get() ? `best ${ultraBest.get().toLocaleString("en-US")}` : "2 min, top score"} h={58} delay={600} onClick={() => onPick("ULTRA")} />
+                    </div>
                   </div>
                 )}
                 {/* Pass-and-play only makes sense on one phone in two hands. */}
@@ -3777,13 +3783,18 @@ function MarathonGame({ theme, onExit }) {
 
   // Layout: the board as big as fits, the tray to its right (desktop) or under it (phone).
   const g = Math.max(P, (theme.gap ?? 1) * P);
-  const trayCellArt = compact ? 4 : 5;
-  const slotArt = 5 * trayCellArt + 6;
-  const availW = stage.w - (compact ? 0 : (slotArt + 8) * P);
-  const availH = stage.h - (TITLE_H + 26) * P - (railD + 6) * P - (compact ? (slotArt + 10) * P : 0);
-  const cellArt = Math.max(6, Math.min(18, Math.floor(Math.min((availW - 6 * g) / M_SIZE, (availH - 6 * g) / M_SIZE) / P)));
+  // The tray's three boxes together are as long as the board (beside it on
+  // a computer, under it on a phone), so the board gets 3/4 of that side.
+  const availW = stage.w - 8 * P;
+  const availH = stage.h - (TITLE_H + 26) * P - (railD + 6) * P;
+  const fitW = compact ? availW : (availW - 4 * P) * 3 / 4;
+  const fitH = compact ? (availH - 4 * P) * 3 / 4 : availH;
+  const cellArt = Math.max(6, Math.min(18, Math.floor(Math.min((fitW - 6 * g) / M_SIZE, (fitH - 6 * g) / M_SIZE) / P)));
   const cell = cellArt * P;
   const boardW = cell * M_SIZE + g * (M_SIZE - 1);
+  const slotPx = Math.floor((boardW - 6 * P) / 3);
+  // Tray pieces: half a board square, or less if a five-long piece wouldn't fit its box.
+  const trayCell = Math.max(P, Math.min(Math.round(cell / 2 / P) * P, Math.floor((slotPx - 4 * P) / 5 / P) * P));
 
   // Where the held piece would land: centred under the pointer (lifted above a finger).
   const ghost = useMemo(() => {
@@ -3930,10 +3941,6 @@ function MarathonGame({ theme, onExit }) {
 
   // Only squares actually on the board: one off the edge mustn't reappear on the far side.
   const ghostKeys = new Set((ghost?.cells || []).filter(([r, c]) => r >= 0 && c >= 0 && r < M_SIZE && c < M_SIZE).map(([r, c]) => r * M_SIZE + c));
-  const hint = st && !over ? (sel === null
-    ? (compact ? "drag a piece onto the board · TURN turns it, even mid-drag" : "pick a piece: click or drag, or press 1–3")
-    : (compact ? "TURN turns it, even while you drag" : "Q / E or click it again to turn it · Space drops it")) : "";
-  const slotPx = slotArt * P;
   const tray = st && (
     <div className={`flex ${compact ? "flex-row" : "flex-col"} items-center`} style={{ gap: 3 * P, ...(compact ? { width: boardW, justifyContent: "center" } : null) }}>
       <div className={`flex ${compact ? "flex-row" : "flex-col"}`} style={{ gap: 3 * P }}>
@@ -3943,7 +3950,7 @@ function MarathonGame({ theme, onExit }) {
           return (
             <button key={i} aria-label={`Piece ${i + 1}${can ? "" : " (doesn't fit)"}`} onPointerDown={(e) => pickUp(i, e)}
               className="relative flex items-center justify-center" style={{ width: slotPx, height: slotPx, touchAction: "none", ...glass(held ? UI.text : UI.line), opacity: over ? 0.5 : 1 }}>
-              <span style={{ opacity: held && ptr?.drag ? 0.45 : 1, display: "flex" }}><MPiece id={id} rot={rots[i]} cell={trayCellArt * P} gap={P} ink={M_INK[id]} faint={!can} /></span>
+              <span style={{ opacity: held && ptr?.drag ? 0.45 : 1, display: "flex" }}><MPiece id={id} rot={rots[i]} cell={trayCell} gap={P} ink={M_INK[id]} faint={!can} /></span>
               {!compact && <span className="absolute tb-t" style={{ left: 2 * P, top: P, color: UI.dim, opacity: 0.6 }}>{i + 1}</span>}
             </button>
           );
@@ -3987,7 +3994,7 @@ function MarathonGame({ theme, onExit }) {
           {st && (
             <div className="flex flex-col items-center" style={{ gap: 3 * P }}>
               {/* The high score on top, like the scores in a match. */}
-              <div className="flex items-end justify-between tb-t" style={{ width: compact ? boardW : boardW + (slotArt + 4) * P, gap: 3 * P }}>
+              <div className="flex items-end justify-between tb-t" style={{ width: compact ? boardW : boardW + slotPx + 3 * P, gap: 3 * P }}>
                 <div className="flex flex-col"><span style={{ color: UI.dim }}>SCORE</span><span className="tb-b tabular-nums" style={{ color: "var(--tb-you)" }}>{st.score.toLocaleString("en-US")}</span></div>
                 <div className="flex flex-col items-center">
                   <span style={{ color: UI.text }}>LEVEL {mLevelOf(st.lines)}{mLevelOf(st.lines) > 1 && <span style={{ color: GOLD }}> ×{(1 + M_TUNING.levelBonus * (mLevelOf(st.lines) - 1)).toFixed(1)}</span>}</span>
@@ -4044,15 +4051,14 @@ function MarathonGame({ theme, onExit }) {
                 </div>
                 {tray}
               </div>
-              <BoardLine width={compact ? boardW : boardW + (slotArt + 4) * P} />
               {compact ? (
-                <div className="flex flex-col" style={{ width: boardW, gap: 3 * P }}>
-                  <div className="tb-t min-w-0" style={{ color: UI.dim, opacity: 0.6 }}>{over ? "NO ROOM LEFT" : hint}</div>
+                <div className="flex flex-col" style={{ width: boardW, gap: 3 * P, marginTop: 2 * P }}>
+                  {over && <div className="tb-t" style={{ color: UI.dim }}>NO ROOM LEFT</div>}
                   <div className="flex items-center" style={{ gap: 3 * P }}>{turnPad}{controls}</div>
                 </div>
               ) : (
-                <div className="flex items-start justify-between" style={{ width: boardW + (slotArt + 4) * P, gap: 4 * P }}>
-                  <div className="tb-t min-w-0" style={{ color: UI.dim, opacity: 0.6 }}>{over ? "NO ROOM LEFT" : hint}</div>
+                <div className="flex items-center justify-between" style={{ width: boardW + slotPx + 3 * P, gap: 4 * P, marginTop: 2 * P }}>
+                  <div className="tb-t min-w-0" style={{ color: UI.dim }}>{over ? "NO ROOM LEFT" : ""}</div>
                   {controls}
                 </div>
               )}
@@ -4092,6 +4098,8 @@ function MarathonGame({ theme, onExit }) {
    ============================================================ */
 const S_INK = ["#6FD3E0", "#EAD6A4", "#B4A3EE", "#A3D98C", "#E88FB4", "#6FA8FF", "#F2B880"]; // I O T S Z J L
 const sprintBest = { get: () => Number(store.get("tb:sprintBest")) || 0, set: (ms) => store.set("tb:sprintBest", String(ms)) };
+const comboMultOf = (c) => { const m = sComboMult(c); return Number.isInteger(m) ? m : m.toFixed(1); };
+const ultraBest = { get: () => Number(store.get("tb:ultraBest")) || 0, set: (n) => store.set("tb:ultraBest", String(n)) };
 const fmtClock = (ms) => {
   const m = Math.floor(ms / 60000), s = Math.floor((ms % 60000) / 1000), cs = Math.floor((ms % 1000) / 10);
   return `${m}:${String(s).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
@@ -4112,8 +4120,8 @@ function SPiece({ id, cell, gap }) {
 /** Sprint's controls, edited in the game: click an action, press its new key. */
 const bindLabel = (k) => (!k ? "—" : mouseLabel(k) || keyLabel(k));
 
-/** Sprint's controls, edited in the game: click an action, then press a key or a mouse button. */
-function SprintKeysModal({ onClose }) {
+/** Sprint and Ultra controls, in Settings: click an action, then press a key or a mouse button. */
+function SprintControlsSection() {
   const P = usePx();
   const keys = useSyncExternalStore(subscribeSprintKeys, getSprintKeys);
   const [listening, setListening] = useState(null);
@@ -4130,46 +4138,50 @@ function SprintKeysModal({ onClose }) {
     return () => { window.removeEventListener("keydown", onKey, true); window.removeEventListener("mousedown", onMouse, true); window.removeEventListener("contextmenu", noMenu, true); };
   }, [listening]);
   return (
-    <Popup title="SPRINT CONTROLS" onClose={() => { if (!listening) onClose(); }} maxW={420}>
-      <div className="pt-3 flex flex-col" style={{ gap: 2 * P }}>
-        <div className="tb-t" style={{ color: UI.dim }}>Click an action, then press a key or a mouse button. The piece follows your mouse; left click places unless you bind it to something else.</div>
-        <div className="grid grid-cols-2 gap-x-4">
-          {SPRINT_ACTIONS.map((a) => {
-            const on = listening === a.id;
-            return (
-              <div key={a.id} className="flex items-center justify-between gap-2 py-1.5" style={RULE_BELOW}>
-                <span className="tb-t" style={{ color: UI.dim }}>{a.label}</span>
-                <button onClick={() => setListening(on ? null : a.id)} className={`tb-t ${on ? "tb-pulse" : ""}`} aria-label={`${a.label}: ${keys[a.id] ? bindLabel(keys[a.id]) : "unbound"}`}
-                  style={{ minWidth: 56, height: 30, padding: "0 8px", ...(on ? skFill(UI.text) : sk(UI.line)), color: keys[a.id] ? UI.text : UI.bad }}>
-                  {on ? "…" : bindLabel(keys[a.id])}
-                </button>
-              </div>
-            );
-          })}
-        </div>
-        <button onClick={() => { resetSprintKeys(); setListening(null); }} className="tb-t self-start py-2" style={{ color: UI.dim }}>RESET TO DEFAULTS</button>
+    <div className="flex flex-col" style={{ gap: P }}>
+      <div className="flex items-center justify-between">
+        <span className="tb-t">SPRINT / ULTRA</span>
+        <button onClick={() => { resetSprintKeys(); setListening(null); }} className="tb-t py-1" style={{ color: UI.dim }}>RESET</button>
       </div>
-    </Popup>
+      <div className="grid grid-cols-2 gap-x-4">
+        {SPRINT_ACTIONS.map((a) => {
+          const on = listening === a.id;
+          return (
+            <div key={a.id} className="flex items-center justify-between gap-2 py-1" style={RULE_BELOW}>
+              <span className="tb-t" style={{ color: UI.dim }}>{a.label}</span>
+              <button onClick={() => setListening(on ? null : a.id)} className={`tb-t ${on ? "tb-pulse" : ""}`} aria-label={`${a.label}: ${keys[a.id] ? bindLabel(keys[a.id]) : "unbound"}`}
+                style={{ minWidth: 52, height: 28, padding: "0 6px", ...(on ? skFill(UI.text) : sk(UI.line)), color: keys[a.id] ? UI.text : UI.bad }}>
+                {on ? "…" : bindLabel(keys[a.id])}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
 /** A copy of a Sprint game to change (the bag's random source is shared: it only moves forward). */
 const cloneSprint = (st) => ({ ...st, board: st.board.map((row) => row.slice()), hand: st.hand.slice(), bag: st.bag.slice() });
 // A piece is always in play: the first of your two, in the middle, from the start.
-const freshSprint = () => { const st = newSprint(newSprintSeed()); return { st, act: sSpawn(st, 0), startAt: 0, endAt: 0, result: null, newBest: false, vanish: null }; };
+const freshSprint = (ultra = false) => {
+  const st = newSprint(newSprintSeed(), ultra ? Infinity : S_GOAL);
+  return { st, act: sSpawn(st, 0), startAt: 0, endAt: 0, result: null, newBest: false, vanish: null, pop: null };
+};
 
-function SprintGame({ onExit }) {
+/** SPRINT (40 lines, fastest time) and ULTRA (2 minutes, highest score): same board, same controls. */
+function SprintGame({ onExit, ultra = false }) {
   useGameMusic();
   useEffect(() => { sky.slow = true; return () => { sky.slow = false; }; }, []);
   const P = usePx();
   const [stageRef, stage] = useSize();
   const keys = useSyncExternalStore(subscribeSprintKeys, getSprintKeys);
-  const [r, setRun] = useState(freshSprint);
+  const [r, setRun] = useState(() => freshSprint(ultra));
   // Key handlers read and write this copy at once, so two presses in one frame both count.
   const live = useRef(r);
   const commit = useCallback((next) => { live.current = next; setRun(next); }, []);
-  const [editing, setEditing] = useState(false);
-  const [best, setBest] = useState(() => sprintBest.get());
+  const record = ultra ? ultraBest : sprintBest;
+  const [best, setBest] = useState(() => record.get());
   const [clock, setClock] = useState(0);
 
   // The clock: ticks every frame while a run is going.
@@ -4180,18 +4192,26 @@ function SprintGame({ onExit }) {
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  const retry = useCallback(() => { commit(freshSprint()); sfx.pick(); }, [commit]);
+  const retry = useCallback(() => { commit(freshSprint(ultra)); sfx.pick(); }, [commit, ultra]);
   const finish = useCallback((cur, result) => {
-    const endAt = performance.now();
+    const endAt = ultra && result === "time" ? cur.startAt + S_ULTRA_MS : performance.now();
     let newBest = false;
-    if (result === "done") {
+    if (!ultra && result === "done") {
       const ms = Math.round(endAt - cur.startAt);
       const pb = sprintBest.get();
       if (!pb || ms < pb) { sprintBest.set(ms); setBest(ms); newBest = true; }
-      sfx.levelUp();
-    } else sfx.forfeit();
+    }
+    // Ultra: the score counts when time runs out or the board fills, not on a forfeit.
+    if (ultra && result !== "forfeit" && cur.st.score > ultraBest.get()) { ultraBest.set(cur.st.score); setBest(cur.st.score); newBest = true; }
+    if (result === "forfeit") sfx.forfeit(); else sfx.levelUp();
     commit({ ...cur, endAt, result, newBest, act: null });
-  }, [commit]);
+  }, [commit, ultra]);
+  // Ultra: two minutes, then it's over.
+  useEffect(() => {
+    if (!ultra || !r.startAt || r.endAt) return undefined;
+    const t = setTimeout(() => { const c = live.current; if (c.startAt && !c.endAt) finish(c, "time"); }, Math.max(0, r.startAt + S_ULTRA_MS - performance.now()));
+    return () => clearTimeout(t);
+  }, [ultra, r.startAt, r.endAt, finish]);
 
   // The piece follows the cursor, always wholly on the board, as near the
   // cursor as it can be (past an edge it sits against that edge).
@@ -4215,16 +4235,17 @@ function SprintGame({ onExit }) {
     sPlace(st, cur.act);
     const L = st.last;
     sfx.lockIn("place");
-    let vanish = cur.vanish;
+    let vanish = cur.vanish, pop = cur.pop;
     if (L.lines) {
       sfx.reveal({ lines: L.lines });
       vanish = { cleared: L.cleared, key: st.pieces };
-      setTimeout(() => { const c = live.current; if (c.vanish && c.vanish.key === st.pieces) commit({ ...c, vanish: null }); }, 650);
+      if (ultra) pop = { text: `+${L.points.toLocaleString("en-US")}${L.combo > 1 ? ` · COMBO ×${comboMultOf(L.combo)}` : ""}`, key: st.pieces };
+      setTimeout(() => { const c = live.current; if (c.vanish && c.vanish.key === st.pieces) commit({ ...c, vanish: null, pop: c.pop && c.pop.key === st.pieces ? null : c.pop }); }, ultra ? 1100 : 650);
     }
     const act = st.over ? null : toMouse(sSpawn(st, slot));
-    const next = { ...cur, st, act, vanish };
+    const next = { ...cur, st, act, vanish, pop };
     if (st.over) finish(next, st.won ? "done" : "stuck"); else commit(next);
-  }, [commit, finish, toMouse]);
+  }, [commit, finish, toMouse, ultra]);
 
   // One place for every action, from a key or a mouse button.
   const act = useCallback((a) => {
@@ -4245,7 +4266,6 @@ function SprintGame({ onExit }) {
   }, [retry, finish, commit, toMouse, placeNow]);
 
   useEffect(() => {
-    if (editing) return undefined;
     const onKey = (e) => {
       const t = e.target;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
@@ -4277,38 +4297,55 @@ function SprintGame({ onExit }) {
       window.removeEventListener("keydown", onKey); window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerdown", onDown); window.removeEventListener("contextmenu", noMenu);
     };
-  }, [editing, act, toMouse, commit]);
+  }, [act, toMouse, commit]);
 
   const st = r.st;
   const ms = r.startAt ? Math.max(0, (r.endAt || clock) - r.startAt) : 0;
-  const vanish = r.vanish;
+  const left = Math.max(0, S_ULTRA_MS - ms);
   const pps = ms > 0 ? st.pieces / (ms / 1000) : 0;
+  const vanish = r.vanish;
+  const railD = useBubble(false);
+  const keyOf = (id) => bindLabel(keys[id]);
 
-  // Sizes: the board as big as fits beside the piece column.
+  // Sizes: the board, and beside it a column 5.5 squares wide: your two
+  // pieces side by side, then the next three in a row, at half a square.
   const g = P;
-  const sideW = 40 * P;
-  // Room left for the board: the stage minus the title, the stats row and the two rows under it.
-  const availH = stage.h - (TITLE_H + 12) * P - 110;
-  const cell = Math.max(6 * P, Math.min(22 * P, Math.floor(Math.min((stage.w - sideW - 8 * P) / S_SIZE, availH / S_SIZE) / P) * P));
+  const availH = stage.h - (TITLE_H + 12) * P - 80;
+  const cell = Math.max(6 * P, Math.min(22 * P, Math.floor(Math.min((stage.w - 10 * P) / (S_SIZE + 5.5), availH / S_SIZE) / P) * P));
   const boardW = cell * S_SIZE + g * (S_SIZE - 1);
+  const half = Math.max(P, Math.round(cell / 2 / P) * P);
+  const sideW = Math.round(cell * 5.5);
+  const boxH = 4 * half + 3 * g + 6 * P;
   const actCells = r.act ? sCellsOf(r.act) : [];
   const actKeys = new Set(actCells.map(([a, b]) => a * S_SIZE + b));
   const legal = r.act ? sCanPlace(st, r.act) : false;
-  const slotCell = 3 * P;
-  const keyOf = (id) => bindLabel(keys[id]);
+  const fullW = boardW + 6 * P + sideW;
+  const stat = (label, value, ink = UI.text, align = "items-center") => (
+    <div className={`flex flex-col ${align}`}><span style={{ color: UI.dim }}>{label}</span><span className="tb-b tabular-nums" style={{ color: ink }}>{value}</span></div>
+  );
 
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono select-none" style={{ color: UI.text, cursor: "crosshair" }}>
-      <div ref={stageRef} className="tb-col relative flex-1 min-h-0 flex flex-col items-center w-full mx-auto px-3" style={{ maxWidth: 760 }}>
+      <div ref={stageRef} className="tb-col relative flex-1 min-h-0 flex flex-col items-center w-full mx-auto px-3" style={{ maxWidth: 960 }}>
         <div style={{ flex: 1, minHeight: 4 * P }} />
-        <GameTitle mode="SPRINT" />
+        <GameTitle mode={ultra ? "ULTRA" : "SPRINT"} />
         <div style={{ flex: 1, minHeight: 4 * P }} />
-        {/* The race: time, lines to go, pieces per second, your best. */}
-        <div className="flex items-end justify-between tb-t" style={{ width: boardW + sideW, gap: 3 * P, marginBottom: 3 * P }}>
-          <div className="flex flex-col"><span style={{ color: UI.dim }}>TIME</span><span className="tb-b tabular-nums" style={{ color: "var(--tb-you)" }}>{fmtClock(ms)}</span></div>
-          <div className="flex flex-col items-center"><span style={{ color: UI.dim }}>LINES</span><span className="tabular-nums">{Math.min(st.lines, S_GOAL)} / {S_GOAL}</span></div>
-          <div className="flex flex-col items-center"><span style={{ color: UI.dim }}>PPS</span><span className="tabular-nums">{pps.toFixed(2)}</span></div>
-          <div className="flex flex-col items-end"><span style={{ color: UI.dim }}>BEST</span><span className="tabular-nums" style={{ color: GOLD }}>{best ? fmtClock(best) : "—"}</span></div>
+        <div className="flex items-end justify-between tb-t" style={{ width: fullW, gap: 3 * P, marginBottom: 3 * P }}>
+          {ultra ? (
+            <>
+              {stat("TIME LEFT", fmtClock(left), left < 10000 ? UI.bad : "var(--tb-you)", "items-start")}
+              {stat("SCORE", st.score.toLocaleString("en-US"))}
+              {stat("COMBO", st.combo > 1 ? `×${comboMultOf(st.combo)}` : "—", st.combo > 1 ? GOLD : UI.dim)}
+              {stat("BEST", best ? best.toLocaleString("en-US") : "—", GOLD, "items-end")}
+            </>
+          ) : (
+            <>
+              {stat("TIME", fmtClock(ms), "var(--tb-you)", "items-start")}
+              {stat("LINES", `${Math.min(st.lines, S_GOAL)} / ${S_GOAL}`)}
+              {stat("PPS", pps.toFixed(2))}
+              {stat("BEST", best ? fmtClock(best) : "—", GOLD, "items-end")}
+            </>
+          )}
         </div>
         <div className="flex items-start" style={{ gap: 6 * P }}>
           <div ref={boardEl} className="relative" style={{ width: boardW, height: boardW }}>
@@ -4330,59 +4367,63 @@ function SprintGame({ onExit }) {
               }))}
             </div>
             {vanish && <VanishLayer key={vanish.key} cleared={vanish.cleared} cell={cell} gap={g} ink={S_INK} />}
+            {r.pop && (
+              <div key={r.pop.key} className="absolute flex justify-center pointer-events-none tb-rise" style={{ left: 0, right: 0, bottom: 4 * P, zIndex: 4 }}>
+                <span className="tb-t tb-b" style={{ color: GOLD, padding: `${P}px ${3 * P}px`, background: "color-mix(in srgb, var(--tb-panel-solid) 82%, transparent)", clipPath: CLIP1, textShadow: `${P}px ${P}px 0 rgba(0,0,0,.6)` }}>{r.pop.text}</span>
+              </div>
+            )}
             {!r.startAt && !r.result && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none" style={{ gap: 2 * P }}>
+              <div className="absolute inset-x-0 flex justify-center pointer-events-none" style={{ top: 2 * P }}>
                 <span className="tb-t" style={{ color: UI.text, padding: `${P}px ${3 * P}px`, background: "color-mix(in srgb, var(--tb-panel-solid) 80%, transparent)" }}>
-                  THE CLOCK STARTS ON YOUR FIRST MOVE
+                  {ultra ? "2 MINUTES · THE CLOCK STARTS ON YOUR FIRST MOVE" : "THE CLOCK STARTS ON YOUR FIRST MOVE"}
                 </span>
               </div>
             )}
           </div>
-          {/* Your two pieces (the one in play lit up), then the next three. */}
-          <div className="flex flex-col" style={{ width: sideW - 6 * P, gap: 2 * P }}>
-            <span className="tb-t" style={{ color: UI.dim }}>SWAP <span style={{ color: UI.text }}>{keyOf("swap")}</span></span>
-            {st.hand.map((id, i) => {
-              const picked = r.act && r.act.slot === i;
-              return (
-                <div key={i} role="img" aria-label={`Piece ${i + 1}: ${S_NAMES[id]}${picked ? " (in play)" : ""}`} className="relative flex items-center justify-center"
-                  style={{ height: 17 * P, ...glass(picked ? UI.text : UI.line), opacity: picked ? 1 : 0.75 }}>
-                  <SPiece id={id} cell={slotCell} gap={g} />
+          {/* Three boxes: your two pieces (the one in play lit up), then the next three in a row. */}
+          <div className="flex flex-col" style={{ width: sideW, gap: 3 * P }}>
+            <div className="flex" style={{ gap: 3 * P }}>
+              {st.hand.map((id, i) => {
+                const picked = r.act && r.act.slot === i;
+                return (
+                  <div key={i} role="img" aria-label={`Piece ${i + 1}: ${S_NAMES[id]}${picked ? " (in play)" : ""}`} className="flex-1 flex items-center justify-center"
+                    style={{ height: boxH, ...glass(picked ? UI.text : UI.line), opacity: picked ? 1 : 0.7 }}>
+                    <SPiece id={id} cell={half} gap={g} />
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex items-center justify-around" style={{ height: boxH, ...glass(UI.line), padding: `0 ${2 * P}px` }}>
+              {st.queue.map((id, i) => (
+                <div key={i} role="img" aria-label={`Next ${i + 1}: ${S_NAMES[id]}`} style={{ opacity: i ? 0.65 : 1, display: "flex" }}>
+                  <SPiece id={id} cell={half} gap={g} />
                 </div>
-              );
-            })}
-            <span className="tb-t" style={{ color: UI.dim, marginTop: 2 * P }}>NEXT</span>
-            {st.queue.map((id, i) => (
-              <div key={i} role="img" aria-label={`Next ${i + 1}: ${S_NAMES[id]}`} className="flex items-center justify-center"
-                style={{ height: (i ? 11 : 13) * P, ...glass(UI.line), opacity: i ? 0.6 : 0.85 }}>
-                <SPiece id={id} cell={Math.round(slotCell * (i ? 0.65 : 0.8))} gap={g} />
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         </div>
-        <BoardLine width={boardW + sideW} />
-        <div className="tb-t text-center" style={{ width: boardW + sideW, color: UI.dim, opacity: 0.7, marginTop: 2 * P }}>
-          {keyOf("place")} PLACES · {keyOf("swap")} SWAPS · {keyOf("ccw")} {keyOf("cw")} {keyOf("r180")} TURN
-        </div>
-        <div className="flex items-center justify-center" style={{ width: boardW + sideW, gap: 3 * P, marginTop: 2 * P }}>
-          <div className="flex shrink-0" style={{ gap: 2 * P }}>
-            <button onClick={() => setEditing(true)} className="tb-t px-3" style={{ height: 32, ...glass(UI.line), color: UI.text }}>KEYS</button>
-            <button onClick={retry} className="tb-t px-3" style={{ height: 32, ...glass(UI.line), color: UI.text }}>RETRY ({keyOf("retry")})</button>
-            <button onClick={() => (r.result ? onExit() : finish(r, "forfeit"))} className="tb-t px-3" style={{ height: 32, ...glass(UI.bad), color: UI.bad }}>
-              {r.result ? "MENU" : `FORFEIT (${keyOf("forfeit")})`}
-            </button>
-          </div>
+        <div className="flex items-center justify-end" style={{ width: fullW, gap: 3 * P, marginTop: 3 * P }}>
+          <Bubble w={railD} h={railD} label={`Retry (${keyOf("retry")})`} onClick={retry}><RefreshCw /></Bubble>
+          {r.result
+            ? <Bubble w={railD} h={railD} label="Menu" onClick={onExit}><LogOut /></Bubble>
+            : <ForfeitButton disabled={!!r.result} onConfirm={() => finish(live.current, "forfeit")} />}
         </div>
         <div style={{ flex: 2, minHeight: 4 * P }} />
         {r.result && (
           <div className="absolute inset-0 flex items-center justify-center tb-fade" style={{ zIndex: 20, background: "repeating-conic-gradient(rgba(0,0,0,.5) 0 25%, rgba(0,0,0,.25) 0 50%) 0 0 / calc(var(--p) * 2) calc(var(--p) * 2)" }}>
             <div className="tb-dive flex flex-col items-center" style={{ gap: 3 * P, padding: `${6 * P}px ${10 * P}px`, ...GLASS_PANE }}>
-              <PixelWord text={r.result === "done" ? (r.newBest ? "NEW BEST" : "FINISHED") : r.result === "stuck" ? "NO ROOM" : "FORFEIT"} from="var(--tb-text)" to={r.result === "done" ? GOLD : UI.bad} />
-              {r.result === "done" ? (
+              <PixelWord text={r.newBest ? "NEW BEST" : r.result === "done" ? "FINISHED" : r.result === "time" ? "TIME UP" : r.result === "stuck" ? "NO ROOM" : "FORFEIT"}
+                from="var(--tb-text)" to={r.newBest || r.result === "done" || r.result === "time" ? GOLD : UI.bad} />
+              {ultra ? (
+                <span className="tb-t tb-b tabular-nums" style={{ color: "var(--tb-you)", fontSize: "1.6em" }}>{st.score.toLocaleString("en-US")}</span>
+              ) : r.result === "done" ? (
                 <span className="tb-t tb-b tabular-nums" style={{ color: "var(--tb-you)", fontSize: "1.6em" }}>{fmtClock(r.endAt - r.startAt)}</span>
               ) : (
                 <span className="tb-t" style={{ color: UI.dim }}>{st.lines} / {S_GOAL} lines</span>
               )}
-              <span className="tb-t" style={{ color: UI.dim }}>{st.pieces} pieces · {pps.toFixed(2)} PPS · best {best ? fmtClock(best) : "—"}</span>
+              <span className="tb-t" style={{ color: UI.dim }}>
+                {st.lines} lines · {st.pieces} pieces · {pps.toFixed(2)} PPS · best {best ? (ultra ? best.toLocaleString("en-US") : fmtClock(best)) : "—"}
+              </span>
               <div className="flex" style={{ gap: 2 * P }}>
                 <button onClick={onExit} className="tb-t px-4" style={{ height: 38, ...sk(UI.line), color: UI.dim }}>MENU</button>
                 <button onClick={retry} className="tb-t px-4" style={{ height: 38, ...skFill(UI.text), color: UI.text }}>RETRY ({keyOf("retry")})</button>
@@ -4391,7 +4432,6 @@ function SprintGame({ onExit }) {
           </div>
         )}
       </div>
-      {editing && <SprintKeysModal onClose={() => setEditing(false)} />}
     </div>
   );
 }
@@ -5922,6 +5962,7 @@ export default function TurfBlocks() {
           else if (t === "REPLAYS") setScreen("REPLAYS");
           else if (t === "MARATHON") { setSeed((s) => s + 1); setScreen("MARATHON"); }
           else if (t === "SPRINT") { setSeed((s) => s + 1); setScreen("SPRINT"); }
+          else if (t === "ULTRA") { setSeed((s) => s + 1); setScreen("ULTRA"); }
           else if (t === "TURNBASED") { setSeed((s) => s + 1); setScreen("TURNBASED"); }
           else { setSeed((s) => s + 1); setScreen("HOTSEAT"); }
         }}
@@ -5974,8 +6015,8 @@ export default function TurfBlocks() {
           else setScreen("MATCHMAKING");
         }} />
     );
-  else if (screen === "SPRINT")
-    view = <SprintGame key={seed} onExit={() => setScreen("MENU")} />;
+  else if (screen === "SPRINT" || screen === "ULTRA")
+    view = <SprintGame key={`${screen}${seed}`} ultra={screen === "ULTRA"} onExit={() => setScreen("MENU")} />;
   else if (screen === "MARATHON")
     view = <MarathonGame key={seed} theme={theme} onExit={(again) => (again ? setSeed((s) => s + 1) : setScreen("MENU"))} />;
   else
