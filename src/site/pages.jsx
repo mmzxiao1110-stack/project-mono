@@ -73,6 +73,12 @@ export function About() {
    NEWS — sea green
    ============================================================ */
 const NEWS = [
+  { v: "v0.39.0", date: "NOV 2026", title: "ZERO-G", items: [
+    "New solo mode, ZERO-G: falling-block Sprint with no gravity. 40 lines on a 10-wide, 40-tall board (20 rows visible), hold, the next five, and turns left, right and 180 with wall kicks.",
+    "Nothing falls on its own: soft drop moves the piece down, hard drop locks it. Rows clear at once, with a short flash.",
+    "T-spins (and minis), back-to-back and combos are shown as you play. Every clear in a row plays the next note up a D major scale.",
+    "Handling settings: DAS, ARR, soft drop speed (up to instant) and DCD, and every key can be rebound. In Settings or the slider button in the game.",
+  ] },
   { v: "v0.38.0", date: "NOV 2026", title: "RED SQUARES, NO JUNK FOR SINGLES", items: [
     "Blitz: every line your opponent clears lights one of your empty squares dark red, zigzagging down from the top left. Placing a piece clears your red; if it covers your whole board it flashes for a second and you lose. No more idling.",
     "Blitz: a single line no longer sends junk (it still lights red).",
