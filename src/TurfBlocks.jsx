@@ -4815,7 +4815,7 @@ function ZPiece({ id, cell, gap, dim = false }) {
   return (
     <div className="relative" style={{ width: w * cell + (w - 1) * gap, height: h * cell + (h - 1) * gap, opacity: dim ? 0.35 : 1 }}>
       {cells.map(([x, y]) => (
-        <div key={`${x},${y}`} className="absolute" style={{ left: (x - x0) * (cell + gap), top: (y - y0) * (cell + gap) }}><Ink size={cell} color={S_INK[id]} /></div>
+        <div key={`${x},${y}`} className="absolute" style={{ left: (x - x0) * (cell + gap), top: (y - y0) * (cell + gap) }}><Ink size={cell} color={S_INK[id]} style={{ borderRadius: Math.max(2, Math.round(cell * 0.12)) }} /></div>
       ))}
     </div>
   );
@@ -4912,7 +4912,8 @@ function ZgField({ L, st, stats, pop, bottom, incoming = 0, flash = null, overla
   const landed = !!land && land.y === st.cur.y;
   const at = new Set(land ? zCellsOf(land).map(([x, y]) => y * Z_W + x) : []);
   const flashRows = flash ? flash.rows : [];
-  const danger = zgDanger(st.board);
+  // Squares are rounded a touch, whatever the block style.
+  const round = { borderRadius: Math.max(2, Math.round(cell * 0.12)) };
   return (
     <div className="flex items-start">
       {/* Left: hold, then the stats, the last clear, and the clock at the bottom. */}
@@ -4947,15 +4948,15 @@ function ZgField({ L, st, stats, pop, bottom, incoming = 0, flash = null, overla
                 <div key={k} style={{ position: "relative", width: cell, height: cell }}>
                   {/* An empty square's glass fades as the board gets darker (BOARD SHADE), down to a faint grid. */}
                   {v === null && !buffer && <div className="absolute inset-0" style={{ ...GLASS, opacity: 1 - 0.9 * (shade / 100) }} />}
-                  {v !== null && <Ink size={cell} color={zInk(v)} />}
-                  {v === null && mark && <div className="absolute inset-0" style={{ opacity: landed ? 1 : 0.4 }}><Ink size={cell} color={S_INK[st.cur.id]} /></div>}
+                  {v !== null && <Ink size={cell} color={zInk(v)} style={round} />}
+                  {v === null && mark && <div className="absolute inset-0" style={{ opacity: landed ? 1 : 0.4 }}><Ink size={cell} color={S_INK[st.cur.id]} style={round} /></div>}
                 </div>
               );
             }))}
           </div>
           {/* The piece itself, wherever it floats (above the board too, without taking room from it). */}
           {st.cur && !landed && zCellsOf(st.cur).map(([x, y]) => (
-            <div key={`p${x},${y}`} className="absolute pointer-events-none" style={{ left: x * (cell + g), top: (y - top0) * (cell + g) }}><Ink size={cell} color={S_INK[st.cur.id]} /></div>
+            <div key={`p${x},${y}`} className="absolute pointer-events-none" style={{ left: x * (cell + g), top: (y - top0) * (cell + g) }}><Ink size={cell} color={S_INK[st.cur.id]} style={round} /></div>
           ))}
           {flashRows.filter((y) => y >= top0).map((y) => (
             <div key={`${flash.key}-${y}`} className="absolute pointer-events-none tb-zgflash" style={{ left: 0, width: boardW, top: (y - top0) * (cell + g), height: cell }} />
@@ -4964,11 +4965,6 @@ function ZgField({ L, st, stats, pop, bottom, incoming = 0, flash = null, overla
           {incoming > 0 && (
             <div className="absolute pointer-events-none" style={{ left: -side - P, width: side + P, bottom: 0, height: Math.min(Z_VISIBLE, incoming) * (cell + g) - g, background: "#E0506A", boxShadow: "0 0 8px rgba(224,80,106,.6)" }} />
           )}
-          {/* Within 5 rows of the top: the board's top corners pulse dark red. */}
-          {danger && ["left", "right"].map((k) => (
-            <div key={k} className="absolute pointer-events-none tb-zgdanger" style={{ top: 2 * (cell + g), [k]: 0, width: boardW * 0.45, height: boardH * 0.3,
-              background: `radial-gradient(ellipse at top ${k}, rgba(175,22,42,.95), rgba(130,14,32,.5) 42%, transparent 75%)` }} />
-          ))}
           {overlay}
         </div>
         <BoardLine width={boardW} />
@@ -5350,14 +5346,14 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
   // The field: 10 wide, the 20 visible rows plus 2 buffer rows above them, as big as the screen allows.
   const g = P;
   const side = 2 * P; // the small gap between the board and the panels beside it
-  const availH = stage.h - 24 * P - (versus ? 30 * P : 0); // a versus game has its small title on top // the whole height (one row more is kept free above the board for the floating piece)
-  const fitW = (stage.w - 24 * P - 9 * g) / (versus ? 38 : 19); // the board, both side columns (and in a versus game the opponent's board) must fit across
+  const availH = stage.h - 14 * P - (versus ? 28 * P : 0); // a versus game has its small title on top // the whole height (one row more is kept free above the board for the floating piece)
+  const fitW = (stage.w - 16 * P - 9 * g) / (versus ? 36 : 19); // the board, both side columns (and in a versus game the opponent's board) must fit across
   // In a versus game the two boards sit side by side, so each is a little smaller.
-  const cell = Math.max(4 * P, Math.min(40 * P, Math.floor(Math.min((availH - ZG_SHOW * g) / (ZG_SHOW + 1) * (versus ? 0.9 : 1), fitW) / P) * P));
+  const cell = Math.max(4 * P, Math.min(40 * P, Math.floor(Math.min((availH - ZG_SHOW * g) / (ZG_SHOW + 1) * (versus ? 0.97 : 1), fitW) / P) * P));
   // Text and buttons grow with the board.
-  const zoom = Math.max(1, cell / (8 * P));
-  const font = Math.round(8 * P * Math.min(zoom, 1.6));
-  const btn = Math.max(railD, Math.round(railD * Math.min(zoom, 1.5)) | 1);
+  const zoom = Math.max(1, cell / (7 * P));
+  const font = Math.round(8 * P * Math.min(zoom, 1.8));
+  const btn = Math.max(railD, Math.round(railD * Math.min(zoom, 1.6)) | 1);
   const boardW = Z_W * cell + (Z_W - 1) * g;
   const boardH = ZG_SHOW * cell + (ZG_SHOW - 1) * g;
   // Hold and next show pieces at board size, in boxes just wide enough for an I with some padding.
@@ -5423,8 +5419,23 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
   // The opponent, drawn the same way: a bot's whole game, or the online opponent's latest view.
   const opp = versus ? (oppView || { board: zNewGame(st.seed, Infinity).board, queue: [], hold: null, cur: null, sent: 0, lines: 0, pieces: 0, incoming: 0 }) : null;
 
+  // Near the top: the screen's corners on your side (left) pulse dark red; your opponent's (right) when they are.
+  // Each pulse starts when that side gets into danger, so the two run on their own.
+  const dangerMe = !r.result && zgDanger(st.board);
+  const dangerThem = versus && !r.result && !!opp && zgDanger(opp.board);
+  const edge = (side) => (
+    <div key={side} aria-hidden="true" className="fixed pointer-events-none" style={{ top: 0, bottom: 0, [side]: 0, width: "34vw", zIndex: 5 }}>
+      {["top", "bottom"].map((v) => (
+        <div key={v} className="absolute tb-zgdanger" style={{ [v]: 0, [side]: 0, width: "100%", height: "55vh",
+          background: `radial-gradient(ellipse at ${v} ${side}, rgba(160,18,38,.7), rgba(120,12,30,.32) 38%, transparent 70%)` }} />
+      ))}
+    </div>
+  );
+
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono select-none" style={{ color: UI.text }}>
+      {dangerMe && edge("left")}
+      {dangerThem && edge("right")}
       <div ref={stageRef} className="relative flex-1 min-h-0 flex flex-col items-center w-full mx-auto px-3" style={{ maxWidth: 1900 }}>
         {/* TOWER: a small TESELLA on top, "competitive" (or "vs bot") in grey under it. Sprint and Ultra: no title. */}
         {versus && (
