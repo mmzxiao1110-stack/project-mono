@@ -249,14 +249,17 @@ export function ProfileCard({ p, compact = false, href = null, onEdit = null }) 
               <span className="tb-b" style={{ color: "#fff" }}>{p.tr != null ? p.tr : p.placementLeft != null ? `${PLACEMENT_GAMES - p.placementLeft}/${PLACEMENT_GAMES} placement` : "—"}</span>
             </span>
           </div>
-          <div className="flex flex-col items-end text-right shrink-0" style={{ gap: px(3), width: "30%", minWidth: 0 }}>
+          {/* Marathon: right of the name, left of joined / played, set lower than the name. */}
+          <div className="self-end" style={{ width: "26%", minWidth: 0, flexShrink: 0, marginTop: px(compact ? 10 : 14) }}>
+            <Mini boxRef={m3} card={card} world={geo?.world} at={geo?.minis[3]} label="MARATHON"
+              big={p.marathon ? p.marathon.best.toLocaleString("en-US") : "—"} tag={p.marathon?.position} sub={p.marathon?.at ? timeAgo(p.marathon.at).toUpperCase() : "no game yet"} />
+          </div>
+          <div className="flex flex-col items-end text-right shrink-0" style={{ gap: px(3), minWidth: 0 }}>
             <div className="flex flex-col items-end" style={{ gap: px(1), marginRight: onEdit ? px(12) : 0 }}>
               {p.joined && <span className="tb-t" style={{ color: "rgba(255,255,255,.75)" }}>JOINED {timeAgo(p.joined).toUpperCase()}</span>}
               <span className="tb-t" style={{ color: "rgba(255,255,255,.75)" }}>{hours(p.played ?? p.seconds)} PLAYED</span>
             </div>
-            {/* Marathon, up in the free space on the right, above Blitz. */}
-            <Mini boxRef={m3} card={card} world={geo?.world} at={geo?.minis[3]} label="MARATHON" style={{ width: "100%" }}
-              big={p.marathon ? p.marathon.best.toLocaleString("en-US") : "—"} tag={p.marathon?.position} sub={p.marathon?.at ? timeAgo(p.marathon.at).toUpperCase() : "no game yet"} />
+
           </div>
         </div>
         {/* Sprint, Blitz (biggest) and Ultra across the bottom, offset like pieces on a board. */}
