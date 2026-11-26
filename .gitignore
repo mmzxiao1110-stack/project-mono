@@ -37,3 +37,4 @@ server/backups/
 .DS_Store
 .wrangler
 .lab/out-*.txt
+.lab/*.txt
