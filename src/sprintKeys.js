@@ -1,40 +1,34 @@
 /**
- * Sprint controls: their own set, separate from a match's, saved on this
- * device and edited in the game. Keys are KeyboardEvent.key, single
- * characters lowercased, like keys.js.
- *
- * DAS (delayed auto shift): press a direction and the piece steps once;
- * keep holding for `das` milliseconds and it jumps to that edge.
+ * Sprint controls (mouse mode: the piece follows the cursor). Saved on this
+ * device and edited in the game. A binding is a KeyboardEvent.key (single
+ * characters lowercased) or a mouse button: "Mouse1" left, "Mouse2" right,
+ * "Mouse3" middle, "Mouse4" back, "Mouse5" forward.
  */
-const KEY = "tb:sprintKeys";
+const KEY = "tb:sprintKeys2";
 
 export const SPRINT_ACTIONS = [
-  { id: "swap", label: "Swap", def: "c" },
-  { id: "left", label: "Left", def: "ArrowLeft" },
-  { id: "right", label: "Right", def: "ArrowRight" },
-  { id: "up", label: "Up", def: "ArrowUp" },
-  { id: "down", label: "Down", def: "ArrowDown" },
-  { id: "ccw", label: "Rotate L", def: "z" },
-  { id: "cw", label: "Rotate R", def: "x" },
+  { id: "swap", label: "Swap", def: "Mouse2" },
+  { id: "ccw", label: "Rotate L", def: "s" },
+  { id: "cw", label: "Rotate R", def: "d" },
   { id: "r180", label: "Rotate 180", def: "a" },
-  { id: "place", label: "Place", def: " " },
+  { id: "place", label: "Place", def: "c" },
   { id: "retry", label: "Retry", def: "r" },
   { id: "forfeit", label: "Forfeit", def: "Escape" },
 ];
-export const DAS_DEFAULT = 120;
 
 export const normalize = (k) => (typeof k === "string" && k.length === 1 ? k.toLowerCase() : k);
-// mode: "keyboard" (arrows move the piece) or "mouse" (the piece follows the cursor, click places).
-const defaults = () => ({ ...Object.fromEntries(SPRINT_ACTIONS.map((a) => [a.id, a.def])), das: DAS_DEFAULT, mode: "keyboard" });
+/** A mouse button as a binding name (MouseEvent.button: 0 left, 1 middle, 2 right, 3 back, 4 forward). */
+export const mouseName = (button) => ["Mouse1", "Mouse3", "Mouse2", "Mouse4", "Mouse5"][button] || `Mouse${button + 1}`;
+const MOUSE_LABELS = { Mouse1: "LEFT CLICK", Mouse2: "RIGHT CLICK", Mouse3: "MIDDLE CLICK", Mouse4: "MOUSE BACK", Mouse5: "MOUSE FWD" };
+export const mouseLabel = (k) => MOUSE_LABELS[k] || null;
+const defaults = () => Object.fromEntries(SPRINT_ACTIONS.map((a) => [a.id, a.def]));
 
 function load() {
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) || "null");
     if (!saved || typeof saved !== "object") return defaults();
     const out = defaults();
-    for (const a of SPRINT_ACTIONS) if (typeof saved[a.id] === "string" && saved[a.id]) out[a.id] = saved[a.id];
-    if (Number.isFinite(saved.das)) out.das = Math.max(0, Math.min(400, Math.round(saved.das)));
-    if (saved.mode === "mouse") out.mode = "mouse";
+    for (const a of SPRINT_ACTIONS) if (typeof saved[a.id] === "string") out[a.id] = saved[a.id];
     return out;
   } catch {
     return defaults();
@@ -54,11 +48,8 @@ export function setSprintKey(id, key) {
   next[id] = k;
   keys = next; save();
 }
-export function setDas(ms) { keys = { ...keys, das: Math.max(0, Math.min(400, Math.round(ms))) }; save(); }
-export function setSprintMode(mode) { keys = { ...keys, mode: mode === "mouse" ? "mouse" : "keyboard" }; save(); }
-/** Back to the default keys and delay (the control mode stays as chosen). */
-export function resetSprintKeys() { keys = { ...defaults(), mode: keys.mode }; save(); }
-/** The action a key press means, or null. */
+export function resetSprintKeys() { keys = defaults(); save(); }
+/** The action a key press or mouse button means, or null. */
 export function sprintActionFor(key) {
   const k = normalize(key);
   return SPRINT_ACTIONS.find((a) => keys[a.id] === k)?.id || null;
