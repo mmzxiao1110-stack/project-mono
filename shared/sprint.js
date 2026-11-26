@@ -15,7 +15,7 @@
 
 export const SIZE = 10;
 export const HAND = 2;
-export const FORECAST = 3;
+export const FORECAST = 5;
 export const GOAL = 40;
 export const NAMES = ["I", "O", "T", "S", "Z", "J", "L"];
 

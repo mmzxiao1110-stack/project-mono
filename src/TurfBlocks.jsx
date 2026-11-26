@@ -4345,7 +4345,7 @@ function SprintGame({ onExit, ultra = false }) {
         <div className="flex items-start" style={{ gap: 6 * P }}>
           <div className="flex flex-col tb-t" style={{ width: colW, gap: 5 * P, marginTop: cell }}>
             {handBox(0)}
-            <div className="flex flex-col" style={{ gap: 4 * P }}>
+            <div className="flex flex-col" style={{ gap: 4 * P, marginTop: 2 * cell }}>
               {ultra && stat("COMBO", st.combo > 1 ? `×${comboMultOf(st.combo)}` : "—", st.combo > 1 ? GOLD : UI.dim)}
               {stat("PIECES", st.pieces)}
               {stat("PPS", pps.toFixed(2))}
@@ -4394,12 +4394,12 @@ function SprintGame({ onExit, ultra = false }) {
               <div className="flex flex-col items-center" style={{ gap: P }}><span style={{ color: UI.dim }}>LINES</span><span className="tb-b tabular-nums">{ultra ? st.lines : `${Math.min(st.lines, S_GOAL)} / ${S_GOAL}`}</span></div>
             </div>
           </div>
-          <div className="flex flex-col items-center" style={{ width: colW, gap: 5 * P, marginTop: cell }}>
+          <div className="flex flex-col items-start" style={{ width: colW, gap: 5 * P, marginTop: cell }}>
             <div className="w-full">{handBox(1)}</div>
-            {/* The next three: just their colours, in one narrow strip. */}
+            {/* The next five: just their colours, in one narrow strip against the board. */}
             <div aria-label="Next pieces" className="flex flex-col items-center" style={{ gap: 2 * P, padding: `${3 * P}px ${3 * P}px`, ...glass(UI.line) }}>
               {st.queue.map((id, i) => (
-                <div key={i} role="img" aria-label={`Next ${i + 1}: ${S_NAMES[id]}`} style={{ opacity: i ? 0.7 : 1 }}>
+                <div key={i} role="img" aria-label={`Next ${i + 1}: ${S_NAMES[id]}`} style={{ opacity: i ? Math.max(0.45, 0.85 - i * 0.1) : 1 }}>
                   <Ink size={sq} color={S_INK[id]} />
                 </div>
               ))}
