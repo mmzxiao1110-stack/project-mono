@@ -51,7 +51,7 @@ import {
   SIZE as S_SIZE, GOAL as S_GOAL, NAMES as S_NAMES, newSprint, newSprintSeed, shapeOf as sShapeOf, spawn as sSpawn, cellsOf as sCellsOf,
   turn as sTurn, canPlace as sCanPlace, place as sPlace, at as sAt,
   recordMove as sRecordMove,
-  isJunk as sIsJunk, junkLevel as sJunkLevel, FORECAST as S_FORECAST, JUNK as S_JUNK, noteClear as sNoteClear, spikeDue as sSpikeDue, receiveJunk as sReceiveJunk, redCells as sRedCells, redFull as sRedFull, RED_FLASH_MS as S_RED_FLASH_MS, SPIKE_MS as S_SPIKE_MS, ULTRA_MS as S_ULTRA_MS, comboMult as sComboMult,
+  isJunk as sIsJunk, junkLevel as sJunkLevel, FORECAST as S_FORECAST, JUNK as S_JUNK, noteClear as sNoteClear, spikeOnMiss as sSpikeOnMiss, receiveJunk as sReceiveJunk, redCells as sRedCells, redFull as sRedFull, RED_FLASH_MS as S_RED_FLASH_MS, ULTRA_MS as S_ULTRA_MS, comboMult as sComboMult,
 } from "../shared/sprint.js";
 import { botMove, botPps, botDelay } from "../shared/blitzbot.js";
 
@@ -3167,12 +3167,12 @@ function HowToModal({ colors, loadout, onClose }) {
       title: "SPIKES",
       art: (
         <div className="tb-t grid gap-x-4 gap-y-1" style={{ gridTemplateColumns: "auto auto auto auto" }}>
-          {[["1 line", "0"], ["4 lines", "10"], ["2 lines", "2 · combo 3"], ["T, 4 lines", "12"], ["3 lines", "4"], ["5 lines", "14"], ["all clear", "12"]].map(([a, b]) => (
+          {[["1 line", "0 · combo 1"], ["4 lines", "10"], ["2 lines", "2 · combo 3"], ["T, 4 lines", "12"], ["3 lines", "4"], ["5 lines", "14"], ["all clear", "12"]].map(([a, b]) => (
             <React.Fragment key={a}><span style={{ color: UI.dim }}>{a}</span><span className="tb-b" style={{ color: GOLD }}>{b}</span></React.Fragment>
           ))}
         </div>
       ),
-      body: "Clears of two lines or more attack; a single sends nothing, and big clears send far more. Clears less than half a second apart chain into one spike and their levels add up. Stop clearing for half a second and the spike is sent.",
+      body: "Every clear adds to your spike; clears in a row (a combo) keep adding, and the first piece that clears nothing sends the whole spike as one junk piece. A single on its own sends nothing; big clears send far more.",
     },
     {
       title: "JUNK",
@@ -3209,7 +3209,7 @@ function HowToModal({ colors, loadout, onClose }) {
         <span className="tb-t tb-b" style={{ color: GOLD }}>→ ×</span>
       </div>
     ),
-    body: "Clear again within half a second and it's a combo: the levels stack into one bigger spike (a single adds nothing, but keeps it going). Big clears are the heavy hitters: four lines send 10, a T that clears four sends 12, five lines send 14. An all clear is 12.",
+    body: "Clear with piece after piece and it's a combo: every clear adds to one spike, and the first piece that clears nothing sends it. Inside a combo a single adds 1 and a double 3. Big clears are the heavy hitters, combo or not: four lines send 10, a T that clears four sends 12, five lines send 14.",
   }, {
     title: "DEFENCE",
     art: (
@@ -4890,16 +4890,33 @@ function BlitzGame({ onExit, online = false, colors, onRequeue }) {
     if (!sPlace(st, a)) return null;
     if (!online) { const mv = sRecordMove(a, t - c.startAt); c.log.push([mv[0], who === "me" ? "A" : "B", mv[1], mv[2], mv[3], mv[4]]); }
     const L = st.last;
-    sNoteClear(st, L.lines, t, L.allClear, L.id);
+    const other = who === "me" ? "bot" : "me";
+    // A clear adds to the combo's spike; a piece that clears nothing ends the combo and
+    // (vs bot; online the server does it) sends the spike as one junk piece.
+    let junkTo = null;
+    if (L.lines) sNoteClear(st, L.lines, t, L.allClear, L.id);
+    else {
+      const level = sSpikeOnMiss(st);
+      if (level && !online) {
+        junkTo = { ...c[other], queue: c[other].queue.slice() };
+        sReceiveJunk(junkTo, level);
+        c.log.push([Math.max(0, Math.round(t - c.startAt)), other === "me" ? "A" : "B", -1, level]);
+        sfx.reveal({ lines: Math.min(4, level) });
+        junkTo.__level = level;
+      }
+    }
     const vanish = L.lines ? { ...c.vanish, [who]: { cleared: L.cleared, key: `${who}${st.pieces}` } } : c.vanish;
     // Placing clears your red; your lines light the opponent's (one square a line).
-    const other = who === "me" ? "bot" : "me";
     const red = { ...c.red, [who]: 0 }, redFlash = { ...c.redFlash, [who]: 0 };
     if (L.lines) {
       red[other] = (red[other] || 0) + L.lines;
       if (!redFlash[other] && sRedFull(c[other].board, red[other])) redFlash[other] = t + S_RED_FLASH_MS;
     }
     let next = { ...c, [who]: st, vanish, red, redFlash };
+    if (junkTo) {
+      const level = junkTo.__level; delete junkTo.__level;
+      next = { ...next, [other]: junkTo, sent: { ...c.sent, [who]: c.sent[who] + 1 }, flash: { who: other, level, key: t } };
+    }
     // Online, the server decides the result.
     if (st.over && !online) next = { ...next, result: who === "me" ? "lose" : "win", reason: "stuck" };
     return next;
@@ -4915,10 +4932,7 @@ function BlitzGame({ onExit, online = false, colors, onRequeue }) {
       let c = live.current;
       if (!c || c.result || t < c.startAt) return;
       let changed = false;
-      if (online) {
-        // Your spike ends here as on the server (the server sends the junk).
-        if (c.me.spike && t - c.me.lastClearAt > S_SPIKE_MS) { const me = { ...c.me }; sSpikeDue(me, t); c = { ...c, me }; changed = true; }
-      } else {
+      if (!online) {
         for (const who of ["me", "bot"]) {
           const f = c.redFlash?.[who];
           if (!f || t < f) continue;
@@ -4928,18 +4942,6 @@ function BlitzGame({ onExit, online = false, colors, onRequeue }) {
           } else c = { ...c, redFlash: { ...c.redFlash, [who]: 0 } };
         }
         if (c.result) { commit(c); return; }
-        for (const [from, to] of [["me", "bot"], ["bot", "me"]]) {
-          const st = { ...c[from] };
-          const level = sSpikeDue(st, t);
-          if (level) {
-            const target = { ...c[to], queue: c[to].queue.slice() };
-            sReceiveJunk(target, level);
-            c.log.push([Math.max(0, Math.round(t - c.startAt)), to === "me" ? "A" : "B", -1, level]);
-            c = { ...c, [from]: st, [to]: target, sent: { ...c.sent, [from]: c.sent[from] + 1 }, flash: { who: to, level, key: t } };
-            changed = true;
-            sfx.reveal({ lines: Math.min(4, level) });
-          }
-        }
         if (t >= nextBot) {
           const bot = { ...c.bot };
           const a = botMove(bot, blitzSkill.get());
@@ -5037,7 +5039,7 @@ function BlitzGame({ onExit, online = false, colors, onRequeue }) {
     const cells = a ? sCellsOf(a) : [];
     const on = new Set(cells.map(([r, c]) => r * S_SIZE + c));
     const legal = a ? sCanPlace(st, a) : false;
-    const spiking = st.spike && now - st.lastClearAt <= S_SPIKE_MS + (mine ? 0 : 300);
+    const spiking = st.spike > 0; // a combo is open: its spike goes out when it ends
     const reds = sRedCells(st.board, g.red?.[who] || 0), redFlash = !!g.redFlash?.[who];
     const handBox = (i) => {
       const id = st.hand[i], picked = mine && a && a.slot === i;

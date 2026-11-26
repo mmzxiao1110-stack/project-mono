@@ -253,36 +253,41 @@ function junkShape(id, rot) {
 }
 
 /**
- * A spike: clears that come within SPIKE_MS of the one before (pieces that
- * clear nothing in between don't break it). Each clear adds its lines to the
- * level. When the spike ends, one junk piece of that level goes to the
- * opponent, into their forecast right after the five they can see.
- * What each clear adds to the spike (they add up linearly):
- *   1 line 1 (2 inside a combo) · 2 lines 2 (3 in a combo) · 3 lines 4
- *   4 lines 6, or 8 if a T piece made them (the T set-up)
- *   5+ lines 6 + 2 a line over 4 · an ALL CLEAR 12 (whatever the lines)
- * Single lines send single squares ("cheese"): legal, weak, and they can
- * even help the opponent.
+ * A spike is a combo: clears in a row, piece after piece (no clock). Each clear
+ * adds to the spike; the first piece that clears nothing ends it, and the whole
+ * spike goes to the opponent as one junk piece (see spikeOnMiss).
+ * What each clear adds:
+ *   1 line   0 to start a combo, 1 inside one
+ *   2 lines  2 to start, 3 inside one
+ *   3 lines  4
+ *   4 lines  10, or 12 if a T made them · 5 lines 14 · each line more +4
+ *   an ALL CLEAR 12 (whatever the lines)
+ * Big clears (4+) are worth the same inside a combo or not.
  */
-export const SPIKE_MS = 500;
+export const SPIKE_MS = 0; // (no longer timed: kept so older imports still load)
 export const ALL_CLEAR_LEVELS = 12;
 export const T_ID = 2;
 export function attackLevel(lines, { allClear = false, piece = -1, combo = false } = {}) {
   if (!lines) return 0;
   if (allClear) return ALL_CLEAR_LEVELS;
-  if (lines === 1) return 0; // a single sends nothing (it still lights the opponent's red squares)
+  if (lines === 1) return combo ? 1 : 0;
   if (lines === 2) return combo ? 3 : 2;
   if (lines === 3) return 4;
   // Big clears pay much more: they take a whole setup to build.
   if (lines === 4) return piece === T_ID ? 12 : 10;
   return 14 + 4 * (lines - 5);
 }
-export function noteClear(st, lines, now, allClear = false, piece = -1) {
+/** After a placement that cleared: add it to the spike. (place() has already counted st.combo.) */
+export function noteClear(st, lines, _now, allClear = false, piece = -1) {
   if (!lines) return;
-  const combo = !!st.spike && now - st.lastClearAt <= SPIKE_MS;
-  const add = attackLevel(lines, { allClear, piece, combo });
-  st.spike = combo ? st.spike + add : add;
-  st.lastClearAt = now;
+  const combo = (st.combo || 0) > 1; // the second clear in a row or later
+  st.spike = (combo ? st.spike || 0 : 0) + attackLevel(lines, { allClear, piece, combo });
+}
+/** After a placement that cleared nothing: the combo is over; the level to send (0 if none). */
+export function spikeOnMiss(st) {
+  const level = Math.min(JUNK_MAX, st.spike || 0);
+  st.spike = 0;
+  return level;
 }
 /* ---------- Blitz: red squares (no idling) ----------
  * Every line you clear lights one of your opponent's empty squares dark red
@@ -307,13 +312,8 @@ export function redFull(board, count) {
   return empty > 0 && count >= empty;
 }
 
-/** The junk level to send now (and resets the spike), or 0. */
-export function spikeDue(st, now) {
-  if (!st.spike || now - st.lastClearAt <= SPIKE_MS) return 0;
-  const level = Math.min(JUNK_MAX, st.spike);
-  st.spike = 0;
-  return level;
-}
+/** (Spikes are no longer timed: they're sent by spikeOnMiss when a combo ends.) */
+export function spikeDue() { return 0; }
 /** A junk piece arriving: into the forecast, just after the five on show. */
 export function receiveJunk(st, level) {
   st.queue.splice(Math.min(FORECAST, st.queue.length), 0, JUNK + level);

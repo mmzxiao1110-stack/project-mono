@@ -8,13 +8,13 @@ function match(skA, skB, seed) {
   const other = (x) => (x === "A" ? "B" : "A");
   for (let t = 0; t < 600000; t += 10) {
     for (const x of ["A", "B"]) {
-      const lvl = S.spikeDue(st[x], t); if (lvl) { S.receiveJunk(st[other(x)], lvl); sent[x].push(lvl); }
       if (t >= next[x]) {
         const a = B.botMove(st[x], sk[x]);
         next[x] = t + B.botDelay(st[x], sk[x]);
         if (!a) return { winner: other(x), t, by, sent };
         S.place(st[x], a);
         const L = st[x].last; if (L.lines) { by[x][L.lines] = (by[x][L.lines] || 0) + 1; S.noteClear(st[x], L.lines, t, L.allClear, L.id); }
+        else { const lvl = S.spikeOnMiss(st[x]); if (lvl) { S.receiveJunk(st[other(x)], lvl); sent[x].push(lvl); } }
         if (st[x].over) return { winner: other(x), t, by, sent };
       }
     }

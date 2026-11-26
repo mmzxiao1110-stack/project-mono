@@ -1,5 +1,5 @@
 // Blitz bot lab: configurable bots, beam search, tournaments at equal speed.
-import { SIZE, shapeOf, attackLevel, SPIKE_MS, newSprint, place, noteClear, spikeDue, receiveJunk, recordMove, isJunk } from "../shared/sprint.js";
+import { SIZE, shapeOf, attackLevel, SPIKE_MS, newSprint, place, noteClear, spikeOnMiss, receiveJunk, recordMove, isJunk } from "../shared/sprint.js";
 import { botMove as baseMove, botDelay } from "../shared/blitzbot.js";
 const N = SIZE, FULL = (1 << N) - 1;
 const popc = (x) => { let c = 0; while (x) { x &= x - 1; c++; } return c; };
@@ -100,14 +100,15 @@ export function match(moveA, moveB, seed, { skill = 10, maxMs = 240000 } = {}) {
   const st = { A: newSprint(seed, Infinity), B: newSprint(seed, Infinity) };
   const mv = { A: moveA, B: moveB }, next = { A: 300 + Math.random() * 200, B: 300 + Math.random() * 200 }, sent = { A: 0, B: 0 }, log = [], lv = { A: 0, B: 0 };
   for (let t = 0; t < maxMs; t += 10) {
-    for (const s of ["A", "B"]) { const o = s === "A" ? "B" : "A"; const l = spikeDue(st[s], t); if (l) { receiveJunk(st[o], l); sent[s]++; lv[s] += l; log.push([t, o, -1, l]); } }
     for (const s of ["A", "B"]) {
       if (t < next[s]) continue;
       const o = s === "A" ? "B" : "A";
       const a = mv[s](st[s]);
       if (!a) return { winner: o, t, log, sent, lv, st };
       const m = recordMove(a, t); place(st[s], a); log.push([t, s, m[1], m[2], m[3], m[4]]);
-      const L = st[s].last; if (L.lines) noteClear(st[s], L.lines, t, L.allClear, L.id);
+      const L = st[s].last;
+      if (L.lines) noteClear(st[s], L.lines, t, L.allClear, L.id);
+      else { const l = spikeOnMiss(st[s]); if (l) { receiveJunk(st[o], l); sent[s]++; lv[s] += l; log.push([t, o, -1, l]); } }
       if (st[s].over) return { winner: o, t, log, sent, lv, st };
       next[s] = t + botDelay(st[s], skill);
     }

@@ -18,7 +18,7 @@
  *   chat       (as in a Control match)
  */
 import { randomBytes } from "node:crypto";
-import { newSprint, newSprintSeed, place, shapeOf, noteClear, spikeDue, receiveJunk, redFull, RED_FLASH_MS, HAND } from "../shared/sprint.js";
+import { newSprint, newSprintSeed, place, shapeOf, noteClear, spikeOnMiss, receiveJunk, redFull, RED_FLASH_MS, HAND } from "../shared/sprint.js";
 import { glickoUpdate } from "../shared/glicko.js";
 import { saveProfile } from "./store.js";
 import { unref } from "./timers.js";
@@ -88,17 +88,6 @@ export class BlitzMatch {
         this.flash[side] = 0;
       }
     }
-    for (const side of ["A", "B"]) {
-      const level = spikeDue(this.st[side], now);
-      if (!level) continue;
-      const to = this.other(side);
-      receiveJunk(this.st[to], level);
-      this.note([to, -1, level]);
-      this.tally[side].sentLv += level;
-      this.sent[side]++;
-      this.send(to, { t: "blitzJunk", level, at: this.st[to].pieces });
-      this.broadcast(to);
-    }
   }
   /** A placement: { slot, rot, r, c } (top-left of where it went). */
   submit(side, msg) {
@@ -116,7 +105,20 @@ export class BlitzMatch {
     this.note([side, slot, rot, r, c]);
     if (placing >= 100) this.tally[side].junkLv += placing - 100;
     const L = st.last;
+    // A clear adds to the combo's spike; a piece that clears nothing ends the combo and sends it.
     if (L.lines) noteClear(st, L.lines, Date.now(), L.allClear, L.id);
+    else {
+      const level = spikeOnMiss(st);
+      if (level) {
+        const to = this.other(side);
+        receiveJunk(this.st[to], level);
+        this.note([to, -1, level]);
+        this.tally[side].sentLv += level;
+        this.sent[side]++;
+        this.send(to, { t: "blitzJunk", level, at: this.st[to].pieces });
+        this.broadcast(to);
+      }
+    }
     // Placing clears your red; your lines light the opponent's.
     this.red[side] = 0; this.flash[side] = 0;
     if (L.lines) {
