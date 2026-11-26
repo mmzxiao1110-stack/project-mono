@@ -73,6 +73,18 @@ export function About() {
    NEWS — sea green
    ============================================================ */
 const NEWS = [
+  { v: "v0.40.0", date: "NOV 2026", title: "TOWER", items: [
+    "New ranked mode, TOWER: ZERO-G head to head. Both players get the same pieces; clears send garbage rows (full but for one gap) to the other side, and your own clears cancel what's coming first. Top out and you lose. Rated with Glicko like Blitz and Control, with 10 placement matches.",
+    "Garbage: a double sends 1, a triple 2, a quad 4; spins send 2 a line (minis less); back-to-back +1, combos up to +5, an all clear +10. A red bar beside your board shows what's waiting; it lands when you lock a piece that clears nothing (8 rows at most at a time).",
+    "You see your opponent's whole side, exactly like yours: hold, next five, their piece moving, their ghost, their stats and clears. Your moves (every shift, turn, hold and drop, timed) are what's sent, so the server plays every piece itself and your opponent's screen replays it exactly as you played it.",
+    "Every TOWER match is saved as a replay (REPLAYS, TOWER tab), and there's a TOWER leaderboard on T-Terminal.",
+    "BOARD SHADE in ZERO-G's settings: how dark the board is behind the pieces, up to a very dark grey.",
+    "Near the top: when your stack is within 5 rows of the top, the board's top corners pulse dark red and a low stab sounds until you dig out.",
+    "Two new block styles in Theme → Blocks, for every mode: RETRO (chunky old-console bevels) and SAND (a grainy, chalky texture).",
+    "TOWER VS BOT: the same against the ZERO-G bot, skill 1–10.",
+    "ZERO-G ULTRA: 2 minutes, highest score. Spins and quads pay the most, back-to-back ×1.5, combos add up.",
+    "The PLAY menu has three columns now: Blitz on the left, ZERO-G in the middle (TOWER, VS BOT, Sprint, Ultra), Control on the right.",
+  ] },
   { v: "v0.39.0", date: "NOV 2026", title: "ZERO-G", items: [
     "New solo mode, ZERO-G: falling-block Sprint with no gravity. 40 lines on a 10-wide, 40-tall board (20 rows visible), hold as often as you like, the next five, and turns left, right and 180 with wall kicks.",
     "Nothing falls on its own, and only where your piece will land is drawn. Soft drop is instant and doesn't lock: hold it to keep the piece on the floor while you slide and turn (that's how S, Z and other spins go in). Hard drop locks it. Rows clear at once, with a short flash.",

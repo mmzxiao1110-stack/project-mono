@@ -372,10 +372,10 @@ function piano(c, t, m, { vol = 0.018, d = 3, pan = 0, wet = 1 } = {}) {
   });
   hiss(c, t, { type: "lowpass", f: 2200, q: 0.7, vol: vol * 0.5, d: 0.025, pan, wet: 0.4 });
 }
-/** The crisp stab: a bright chip A over its third, ringing out under water. */
-function stab(c, t, { vol = 0.036 } = {}) {
-  chip(c, t, za(7, A5), { vol, d: 0.7 });
-  chip(c, t, za(4, A5), { vol: vol * 0.6, d: 0.7 });
+/** The crisp stab: a bright chip A over its third, ringing out under water (`base` moves it by octaves). */
+function stab(c, t, { vol = 0.036, base = A5 } = {}) {
+  chip(c, t, za(7, base), { vol, d: 0.7 });
+  chip(c, t, za(4, base), { vol: vol * 0.6, d: 0.7 });
 }
 /** A rolled run on the harp through the scale from degree a to b. */
 function harpRun(c, t, a, b, { step = 0.04, base = A3, vol = 0.04, d = 1.4 } = {}) {
@@ -641,6 +641,13 @@ export const sfx = {
       [7, 5, 3, 2, 0].forEach((d, i) => chip(c, t + i * 0.16, A5 + 12 * Math.floor(d / 7) + ZG_MINOR[d % 7], { vol: 0.03, d: 0.4 }));
       harp(c, t + 0.8, 45, { vol: 0.07, d: 2.5 });
       muffle(c, t, { vol: 0.3, f: 110 });
+    });
+  },
+  /** Danger: the stab two octaves down, short and low, repeated while your stack is near the top. */
+  zgAlarm() {
+    play("zgAlarm", 300, (c, t) => {
+      stab(c, t, { vol: 0.04, base: A3 - 12 });
+      tone(c, t, { wave: "sine", f: mtof(33), vol: 0.07, a: 0.004, d: 0.25, wet: 0.2 });
     });
   },
   /** A sample of the key, when MINOR KEY is switched. */

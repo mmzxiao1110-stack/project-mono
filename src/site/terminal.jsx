@@ -89,6 +89,7 @@ function PlayerTable({ players, showPos = true }) {
 
 const clock = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, "0")}.${String(Math.floor((ms % 1000) / 10)).padStart(2, "0")}`;
 const BOARDS = {
+  tower: { title: "TOWER · RATING", head: ["RATING", "W / G"], value: (p) => p.best, extra: (p) => `${p.wins}/${p.games}` },
   blitz: { title: "BLITZ 1V1 · RATING", head: ["RATING", "W / G"], value: (p) => p.best, extra: (p) => `${p.wins}/${p.games}` },
   marathon: { title: "MARATHON HIGH SCORES", head: ["SCORE", "LINES"], value: (p) => p.best.toLocaleString("en-US"), extra: (p) => p.lines },
   sprint: { title: "SPRINT · 40 LINES", head: ["TIME", "PIECES"], value: (p) => clock(p.best), extra: (p) => p.pieces ?? "—" },
@@ -170,7 +171,7 @@ function Home() {
             </div>
             <PlayerTable players={o.top} />
           </Panel>
-          {["blitz", "sprint", "ultra", "marathon"].map((k) => (
+          {["tower", "blitz", "sprint", "ultra", "marathon"].map((k) => (
             <Panel key={k}>
               <div className="flex justify-between items-baseline" style={{ marginBottom: px(4) }}>
                 <span className="tb-t tb-b" style={{ color: "var(--tb-you)" }}>{BOARDS[k].title}</span>
@@ -287,6 +288,17 @@ export function PlayerRecord({ p, onOpen }) {
         {cell("BEST STREAK", p.bestStreak)}
         {cell("PEAK", p.peakTr != null ? `${p.peakTr}${p.peakRank ? ` ${p.peakRank}` : ""}` : "—")}
       </div>
+      {p.tower && (
+        <div className="grid grid-cols-4" style={{ gap: px(2) }}>
+          {cell("TOWER GLICKO", `${p.tower.rating}${p.tower.rd != null ? ` ±${p.tower.rd}` : ""}`, "var(--tb-special)")}
+          {cell("TOWER #", p.tower.position ? `#${p.tower.position}` : "—")}
+          {cell("TOWER W / G", `${p.tower.wins}/${p.tower.games}`)}
+          {cell("WIN RATE", `${p.tower.games ? Math.round((100 * p.tower.wins) / p.tower.games) : 0}%`)}
+          {cell("PPS", p.tower.pps != null ? p.tower.pps.toFixed(2) : "—")}
+          {cell("APM", p.tower.apm != null ? p.tower.apm.toFixed(1) : "—")}
+          {cell("BEST SENT", p.tower.best ? `${p.tower.best} rows` : "—")}
+        </div>
+      )}
       {p.blitz && (
         <div className="grid grid-cols-4" style={{ gap: px(2) }}>
           {cell("BLITZ GLICKO", `${p.blitz.rating}${p.blitz.rd != null ? ` ±${p.blitz.rd}` : ""}`, "var(--tb-special)")}
@@ -369,13 +381,13 @@ export default function Terminal() {
         <span className="tb-t" style={{ color: "var(--tb-dim)" }}>PLAYERS · RANKINGS · RECORDS</span>
       </a>
       <div className="flex justify-center" style={{ gap: px(2), marginBottom: px(5) }}>
-        {[["#/", "OVERVIEW", ""], ["#/blitz/1", "BLITZ", "blitz"], ["#/rankings/1", "CONTROL", "rankings"], ["#/sprint/1", "SPRINT", "sprint"], ["#/ultra/1", "ULTRA", "ultra"], ["#/marathon/1", "MARATHON", "marathon"]].map(([href, label, r]) => (
+        {[["#/", "OVERVIEW", ""], ["#/tower/1", "TOWER", "tower"], ["#/blitz/1", "BLITZ", "blitz"], ["#/rankings/1", "CONTROL", "rankings"], ["#/sprint/1", "SPRINT", "sprint"], ["#/ultra/1", "ULTRA", "ultra"], ["#/marathon/1", "MARATHON", "marathon"]].map(([href, label, r]) => (
           <a key={label} href={href} className="tb-t no-underline flex items-center" style={{ height: px(14), padding: `0 ${px(4)}`, color: "var(--tb-text)",
             ...((route || "") === r || (!route && r === "") ? glassFill("var(--tb-you)") : glass()) }}>{label}</a>
         ))}
       </div>
       {route === "rankings" ? <Rankings page={Math.max(1, Number(arg2) || 1)} />
-        : route === "marathon" || route === "sprint" || route === "ultra" || route === "blitz" ? <RecordBoard key={route} kind={route} page={Math.max(1, Number(arg2) || 1)} />
+        : route === "marathon" || route === "sprint" || route === "ultra" || route === "blitz" || route === "tower" ? <RecordBoard key={route} kind={route} page={Math.max(1, Number(arg2) || 1)} />
         : route === "search" ? <Search q={arg2} />
         : route === "player" ? <Player name={arg2} />
         : <Home />}

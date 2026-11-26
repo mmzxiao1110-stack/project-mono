@@ -50,7 +50,9 @@ import { ZG_ACTIONS, HANDLING, zgSubscribe, getZgKeys, getZgHandling, setZgKey, 
 import {
   W as Z_W, TOP as Z_TOP, VISIBLE as Z_VISIBLE, NEXT as Z_NEXT, GOAL as Z_GOAL, NAMES as Z_NAMES, newGame as zNewGame, shapeCells as zShapeCells,
   cellsOf as zCellsOf, dropped as zDropped, shift as zShift, down as zDown, rotate as zRotate, hold as zHold, hardDrop as zHardDrop,
+  ULTRA_MS as Z_ULTRA_MS, scoreOf as zScoreOf, towerLock as zTowerLock, incomingRows as zIncoming, applyLock as zApplyLock, syncTo as zSyncTo, GARBAGE as Z_GARBAGE, applyOp as zApplyOp,
 } from "../shared/zerog.js";
+import { botLock as zBotLock, zgBotPps } from "../shared/zgbot.js";
 import { SPRINT_ACTIONS, getSprintKeys, subscribeSprintKeys, setSprintKey, resetSprintKeys, sprintActionFor, mouseName, mouseLabel } from "./sprintKeys.js";
 import {
   SIZE as S_SIZE, GOAL as S_GOAL, NAMES as S_NAMES, newSprint, newSprintSeed, shapeOf as sShapeOf, spawn as sSpawn, cellsOf as sCellsOf,
@@ -765,6 +767,29 @@ const inkOf = (owner) => (owner === "S" ? { stroke: "cross", dir: 1 } : { stroke
  * `size` is in screen px and should be a whole number of pixels (usePx).
  * `fluid` fills its box instead.
  */
+/**
+ * The SAND texture: 8×8 pixels of grain (light and dark specks, edges a touch
+ * darker), drawn once, laid over a square's colour and scaled up with hard
+ * pixel edges.
+ */
+const SAND_TEX = (() => {
+  if (typeof document === "undefined") return null;
+  try {
+    const n = 8, cv = document.createElement("canvas");
+    cv.width = cv.height = n;
+    const g = cv.getContext("2d");
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+      const edge = x === 0 || y === 0 ? 0.1 : x === n - 1 || y === n - 1 ? -0.16 : 0;
+      const v = (rnd() - 0.5) * 0.34 + edge;
+      g.fillStyle = v >= 0 ? `rgba(255,255,255,${v.toFixed(3)})` : `rgba(0,0,0,${(-v).toFixed(3)})`;
+      g.fillRect(x, y, 1, 1);
+    }
+    return cv.toDataURL();
+  } catch { return null; }
+})();
+
 function Ink({ size, color, stroke, fluid = false, className, style }) {
   const picked = useContext(InkStyle);
   const P = usePx();
@@ -817,6 +842,23 @@ function Ink({ size, color, stroke, fluid = false, className, style }) {
     look = { background: `${dither("rgba(0,0,0,.45)")}, ${rings(art >= 8 ? 3 : art >= 5 ? 2 : 1)}` };
   } else if (kind === "outline") {
     look = { boxShadow: `inset 0 0 0 ${PX} ${c.light}, inset 0 0 0 ${px(2)} ${c.dark}`, background: `color-mix(in srgb, ${color} 14%, transparent)` };
+  } else if (kind === "retro") {
+    // An old console's block: a hard near-black edge, a light top-left bevel, a dark bottom-right one,
+    // a bright corner glint, all in chunky pixels (an eighth of the square each).
+    const u = fluid ? "12.5%" : `${Math.max(P, Math.round(size / 8))}px`;
+    const in1 = `calc(100% - 2 * ${u})`, far = `calc(100% - 2 * ${u})`;
+    look = { background: [
+      layer("rgba(255,255,255,.85)", u, u, u, u),
+      layer(c.light, u, u, in1, u), layer(c.light, u, u, u, in1),
+      layer(c.dark, u, far, in1, u), layer(c.dark, far, u, u, in1),
+      layer(c.base, u, u, in1, in1),
+      "#101015",
+    ].join(", ") };
+  } else if (kind === "sand") {
+    // Chalk / sand: the colour under a grainy pixel noise, like a block in a voxel game.
+    look = SAND_TEX
+      ? { background: `url(${SAND_TEX}) 0 0 / 100% 100% no-repeat, ${c.base}`, imageRendering: "pixelated" }
+      : { background: c.base };
   } else if (kind === "flat") {
     look = { background: `${layer(c.base, 0, 0, `calc(100% - ${PX})`, `calc(100% - ${PX})`)}, ${c.dark}` };
   } else {
@@ -2543,7 +2585,7 @@ function ThemeModal({ theme, setTheme, onClose }) {
       {tab === "blocks" && (
         <div className="pb-2">
           <div className="tb-t mb-2" style={{ color: UI.dim }}>STROKE</div>
-          <div className={`grid grid-cols-3 gap-2 ${wide ? "mb-3" : "mb-5"}`}>
+          <div className={`grid grid-cols-5 gap-2 ${wide ? "mb-3" : "mb-5"}`}>
             {Object.entries(STROKES).map(([k, st]) => {
               const on = theme.stroke === k;
               return (
@@ -3570,12 +3612,12 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
         <PlayModal status={status} authed={authed} verified={verified} profile={profile}
           onClose={() => setModal(null)}
           onPick={(t) => {
-            if (t === "MATCHMAKING" || t === "BLITZ") {
+            if (t === "MATCHMAKING" || t === "BLITZ" || t === "TOWER") {
               if (status !== "online") return;
               if (!authed) return setModal("login");
               if (!verified) return setModal("VERIFY");
               // Ranked: its own lobby, in place of PLAY.
-              return setModal(t === "BLITZ" ? "LOBBY:blitz" : "LOBBY:control");
+              return setModal(t === "BLITZ" ? "LOBBY:blitz" : t === "TOWER" ? "LOBBY:tower" : "LOBBY:control");
             }
             setModal(null);
             onPick(t);
@@ -3652,7 +3694,7 @@ function PlayModal({ status, authed, verified, profile, onPick, onClose }) {
     const i = rankedInfo(mode, profile);
     return i.placed ? { sub: `${i.tr} glicko ±${i.rd}`, note: i.rank.name, noteInk: i.rank.color } : { sub: `${Math.min(i.games, PLACEMENT_GAMES)}/${PLACEMENT_GAMES} placement matches`, note: "UNPLACED" };
   };
-  const rb = ranked("blitz"), rc = ranked("control");
+  const rb = ranked("blitz"), rc = ranked("control"), rt = ranked("tower");
   const half = (a, b) => (
     <div className="flex w-full" style={{ gap: 8 }}>
       <div style={{ flex: 1, minWidth: 0 }}>{a}</div>
@@ -3661,7 +3703,7 @@ function PlayModal({ status, authed, verified, profile, onPick, onClose }) {
   );
   return (
     // In place of the menu's buttons: just the modes.
-    <InlineFrame title="PLAY" label="Play" onClose={onClose} maxW={phone ? 480 : 600}
+    <InlineFrame title="PLAY" label="Play" onClose={onClose} maxW={phone ? 480 : 900}
       aside={<span className="tb-t text-right" style={{ color: UI.text, opacity: 0.6 }}>{!online ? "offline" : count ? `${count} online` : ""}</span>}>
             {/* Two families: BLITZ (speed) on the left, CONTROL (thinking) on the right. */}
             <div className="flex items-start" style={{ gap: phone ? 10 : 18 }}>
@@ -3685,10 +3727,25 @@ function PlayModal({ status, authed, verified, profile, onPick, onClose }) {
                       <ModeCard ink={MODE_INK.sprint} icon={Clock} title="SPRINT" sub={sprintBest.get() ? `best ${fmtClock(sprintBest.get())}` : "40 lines"} h={56} delay={400} disabled={lock()} onClick={() => onPick("SPRINT")} />,
                       <ModeCard ink={MODE_INK.ultra} icon={Flag} title="ULTRA" sub={ultraBest.get() ? `best ${ultraBest.get().toLocaleString("en-US")}` : "2 min"} h={56} delay={600} disabled={lock()} onClick={() => onPick("ULTRA")} />,
                     )}
-                    <ModeCard ink={MODE_INK.zerog} icon={Stack} title="ZERO-G" sub={zgBest.get() ? `best ${fmtClock(zgBest.get())}` : "falling blocks, no gravity · 40 lines"} h={56} delay={700} disabled={lock()} onClick={() => onPick("ZEROG")} />
                   </>
                 )}
               </div>
+              {/* ZERO-G in the middle (keyboard only, so not on a phone): TOWER ranked, its bot, Sprint and Ultra. */}
+              {!phone && (
+                <div className="flex flex-col min-w-0" style={{ flex: 1, gap: 8 }}>
+                  <ModeCard big ink={MODE_INK.ranked} icon={Stack} title="TOWER" h={100} delay={100}
+                    sub={rt.sub} note={rt.note} noteInk={rt.noteInk}
+                    disabled={!online || lock("tower")} onClick={() => onPick("TOWER")} />
+                  {half(
+                    <ModeCard ink={MODE_INK.ai} icon={Robot} title="VS BOT" sub="zero-g 1v1" h={56} delay={250} disabled={lock()} onClick={() => onPick("TOWERBOT")} />,
+                    <ModeCard ink={MODE_INK.zerog} icon={Clock} title="SPRINT" sub={zgBest.get() ? `best ${fmtClock(zgBest.get())}` : "zero-g · 40 lines"} h={56} delay={350} disabled={lock()} onClick={() => onPick("ZEROG")} />,
+                  )}
+                  {half(
+                    <ModeCard ink={MODE_INK.zerog} icon={Flag} title="ULTRA" sub={zgUltraBest.get() ? `best ${zgUltraBest.get().toLocaleString("en-US")}` : "zero-g · 2 min"} h={56} delay={450} disabled={lock()} onClick={() => onPick("ZEROGULTRA")} />,
+                    <div />,
+                  )}
+                </div>
+              )}
               <div className="flex flex-col min-w-0 items-end" style={{ flex: 1, gap: 8 }}>
                 <ModeCard big ink={MODE_INK.ranked} icon={Trophy} title="CONTROL" h={phone ? 96 : 100} delay={500}
                   sub={rc.sub} note={rc.note} noteInk={rc.noteInk}
@@ -3714,13 +3771,13 @@ const useQueueMode = () => useSyncExternalStore((f) => { qstore.subs.add(f); ret
 const useQueueFound = () => useSyncExternalStore((f) => { qstore.subs.add(f); return () => qstore.subs.delete(f); }, () => qstore.found);
 function startQueue(mode, loadout) {
   if (qstore.mode || qstore.found) return;
-  if (mode === "blitz") net.blitzQueue(); else net.queue(loadout, false);
+  if (mode === "blitz") net.blitzQueue(); else if (mode === "tower") net.towerQueue(); else net.queue(loadout, false);
   qstore.mode = mode; qstore.since = Date.now(); qemit();
   sfx.pick();
 }
 function stopQueue() {
   if (!qstore.mode) return;
-  if (qstore.mode === "blitz") net.blitzCancel(); else net.unqueue();
+  if (qstore.mode === "blitz" || qstore.mode === "tower") net.blitzCancel(); else net.unqueue();
   qstore.mode = null; qemit();
 }
 const useLobby = () => useSyncExternalStore(subs.online, () => net.lobby);
@@ -3734,8 +3791,8 @@ const fmtWait = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return `
 
 /** A ranked mode's standing for a player: rating, rank, placement. */
 function rankedInfo(mode, profile) {
-  const r = mode === "blitz" ? profile?.blitz?.rating : profile?.rating;
-  const games = mode === "blitz" ? (profile?.blitz?.games || 0) : (profile?.stats?.games || 0);
+  const r = mode === "blitz" || mode === "tower" ? profile?.[mode]?.rating : profile?.rating;
+  const games = mode === "blitz" || mode === "tower" ? (profile?.[mode]?.games || 0) : (profile?.stats?.games || 0);
   const tr = r ? Math.round(r.r) : 1500;
   return { tr, rd: r ? Math.round(r.rd) : 350, games, placed: games >= PLACEMENT_GAMES, rank: RANKS[rankIndexFor(tr)] };
 }
@@ -3757,12 +3814,13 @@ function RankedLobby({ mode, profile, loadout, onClose }) {
   const mine = q === mode, other = q && q !== mode, matched = found === mode;
   const ink = MODE_INK.ranked;
   const count = (k) => lobby?.[k]?.[mode] ?? 0;
-  const games = mode === "blitz" ? profile?.blitz : profile?.stats;
+  const games = mode === "blitz" || mode === "tower" ? profile?.[mode] : profile?.stats;
+  const NAME = { blitz: "BLITZ", tower: "TOWER", control: "CONTROL" };
   return (
-    <InlineFrame title={mode === "blitz" ? "BLITZ" : "CONTROL"} label={`${mode} ranked`} onClose={onClose} maxW={440}
+    <InlineFrame title={NAME[mode] || "CONTROL"} label={`${mode} ranked`} onClose={onClose} maxW={440}
       aside={<span className="tb-t text-right" style={{ color: UI.text, opacity: 0.6 }}>{online ? `${online} online` : ""}</span>}>
       <div className="flex flex-col items-center text-center" style={{ gap: 5 * P, paddingTop: 4 * P }}>
-        <div className="tb-t" style={{ color: UI.dim }}>{mode === "blitz" ? "8×8 race · spikes send junk" : "simultaneous turns · own the board"}</div>
+        <div className="tb-t" style={{ color: UI.dim }}>{mode === "blitz" ? "8×8 race · spikes send junk" : mode === "tower" ? "zero-g 1v1 · clears send garbage" : "simultaneous turns · own the board"}</div>
         {/* Your standing. */}
         <div className="flex items-center" style={{ gap: 5 * P }}>
           <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
@@ -3793,10 +3851,10 @@ function RankedLobby({ mode, profile, loadout, onClose }) {
             ? <span style={{ fontFamily: '"Silkscreen", monospace', fontWeight: 700, fontSize: "calc(var(--p) * 13)", lineHeight: 1 }}>{matched ? "FOUND" : "SEARCHING"}</span>
             : <PixelWord text="PLAY" from="var(--tb-text)" to={ink} scale={2} />}
           <span className="tb-t" style={{ color: UI.text, opacity: 0.85 }}>
-            {matched ? "match found" : mine ? `${fmtWait(now - qstore.since)} · click to cancel` : `${mode === "blitz" ? "ranked blitz" : "ranked control"}`}
+            {matched ? "match found" : mine ? `${fmtWait(now - qstore.since)} · click to cancel` : `ranked ${(NAME[mode] || "CONTROL").toLowerCase()}`}
           </span>
         </button>
-        {other && <div className="tb-t" style={{ color: GOLD }}>You're searching for {q === "blitz" ? "Blitz" : "Control"}. Cancel that first.</div>}
+        {other && <div className="tb-t" style={{ color: GOLD }}>You're searching for {q === "blitz" ? "Blitz" : q === "tower" ? "TOWER" : "Control"}. Cancel that first.</div>}
         <div className="flex justify-center tb-t" style={{ gap: 6 * P, color: UI.dim }}>
           <span><span className="tb-b" style={{ color: UI.text }}>{count("playing")}</span> in game</span>
           <span><span className="tb-b" style={{ color: UI.text }}>{count("queueing")}</span> searching</span>
@@ -3816,7 +3874,7 @@ function QueuePill({ onOpen }) {
   return (
     <button onClick={onOpen} className="absolute tb-t tb-pulse" style={{ top: `calc(env(safe-area-inset-top, 0px) + ${4 * P}px)`, left: "50%", transform: "translateX(-50%)", zIndex: 30,
       padding: `${2 * P}px ${5 * P}px`, ...skFill(MODE_INK.ranked), color: UI.text }}>
-      {found ? "MATCH FOUND" : `SEARCHING ${q === "blitz" ? "BLITZ" : "CONTROL"} · ${fmtWait(now - qstore.since)}`}
+      {found ? "MATCH FOUND" : `SEARCHING ${q === "blitz" ? "BLITZ" : q === "tower" ? "TOWER" : "CONTROL"} · ${fmtWait(now - qstore.since)}`}
     </button>
   );
 }
@@ -4851,25 +4909,156 @@ function ZgControlsSection() {
 }
 
 /** The run clock, written straight into the page every frame (no re-render). */
-function ZgClock({ run, style }) {
+function ZgClock({ run, style, left = 0 }) {
   const el = useRef(null);
   useEffect(() => {
     let raf;
     const loop = () => {
       raf = requestAnimationFrame(loop);
       const r = run.current;
-      if (el.current) el.current.textContent = fmtClock(r.startAt ? (r.endAt || performance.now()) - r.startAt : 0);
+      const t = r.startAt ? Math.max(0, (r.endAt || performance.now()) - r.startAt) : 0;
+      if (el.current) el.current.textContent = fmtClock(left ? Math.max(0, left - t) : t);
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [run]);
-  return <span ref={el} className="tb-t tb-b tabular-nums" style={style}>0:00.00</span>;
+  }, [run, left]);
+  return <span ref={el} className="tb-t tb-b tabular-nums" style={style}>{fmtClock(left)}</span>;
 }
 
-const freshZg = () => ({ st: zNewGame(), startAt: 0, endAt: 0, result: null, newBest: false, flash: null, pop: null });
+/** Is the stack within 5 rows of the top of the field? */
+function zgDanger(board) {
+  for (let y = 0; y < Z_TOP + 5; y++) if (board[y].some((v) => v !== null)) return true;
+  return false;
+}
 
-/** ZERO-G SPRINT: 40 lines on a 10×40 board, falling-block rules, no gravity. */
-function ZeroGGame({ onExit }) {
+/**
+ * One side of a ZERO-G game, drawn the same way for you and your opponent:
+ * hold and stats on the left, the board (piece, ghost, garbage bar, clear
+ * flash) in the middle, the next five on the right. `L` is the layout
+ * measured by the game; `extra` goes under the board (the buttons).
+ */
+function ZgField({ L, st, stats, pop, bottom, incoming = 0, flash = null, overlay = null, buttons = null, name = null, nameInk = "var(--tb-you)", holdKey = null }) {
+  const P = usePx();
+  // BOARD SHADE: how dark the board is behind the pieces; at most a very dark grey, never pure black.
+  const shade = useSyncExternalStore(zgSubscribe, getZgHandling).shade ?? 30;
+  const { cell, g, side, font, pad, boxW, colW, sideTop, sideH, boardW, boardH, top0 } = L;
+  const land = st.cur ? zDropped(st.board, st.cur) : null;
+  const landed = !!land && land.y === st.cur.y;
+  const at = new Set(land ? zCellsOf(land).map(([x, y]) => y * Z_W + x) : []);
+  const flashRows = flash ? flash.rows : [];
+  const danger = zgDanger(st.board);
+  return (
+    <div className="flex items-start">
+      {/* Left: hold, then the stats, the last clear, and the clock at the bottom. */}
+      <div className="flex flex-col items-end text-right tb-t" style={{ fontSize: font, lineHeight: 1.25, width: colW, gap: 4 * P, marginTop: sideTop, height: sideH, marginRight: side }}>
+        <div className="flex flex-col items-center" style={{ width: boxW, gap: 2 * P, padding: pad, ...glass(UI.line) }}>
+          <span style={{ color: UI.dim }}>HOLD{holdKey ? ` (${holdKey})` : ""}</span>
+          <div className="flex items-center justify-center" style={{ height: 2 * cell + g }}>
+            {st.hold != null && <ZPiece id={st.hold} cell={cell} gap={g} />}
+          </div>
+        </div>
+        <div className="flex flex-col items-end" style={{ gap: 3 * P, marginTop: 2 * P }}>{stats}</div>
+        <div className="flex flex-col items-end" style={{ gap: P, minHeight: 14 * P, marginTop: 2 * P }}>
+          {pop && (
+            <div key={pop.key} className="flex flex-col items-end tb-rise" style={{ gap: P }}>
+              {pop.b2b > 0 && <span className="tb-b" style={{ color: GOLD }}>B2B ×{pop.b2b}</span>}
+              {pop.name && <span className="tb-b" style={{ color: pop.name.includes("-SPIN") ? S_INK[pop.piece] : pop.name === "QUAD" ? S_INK[0] : UI.text, fontSize: "1.2em" }}>{pop.name}</span>}
+              {pop.combo >= 1 && <span className="tb-b" style={{ color: nameInk }}>{pop.combo} COMBO</span>}
+              {pop.allClear && <span className="tb-b" style={{ color: GOLD, fontSize: "1.2em" }}>ALL CLEAR</span>}
+            </div>
+          )}
+        </div>
+        <div className="flex flex-col items-end" style={{ marginTop: "auto", gap: P, whiteSpace: "nowrap" }}>{bottom}</div>
+      </div>
+      {/* The board, the line of light under it, and (in a versus game) whose it is. */}
+      <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
+        <div className="relative" style={{ width: boardW, height: boardH }}>
+          <div className="absolute pointer-events-none" style={{ left: 0, right: 0, bottom: 0, height: Z_VISIBLE * (cell + g) - g, background: `rgba(13, 13, 17, ${shade / 100})` }} />
+          <div className="relative" style={{ display: "grid", gridTemplateColumns: `repeat(${Z_W}, ${cell}px)`, gap: g }}>
+            {Array.from({ length: ZG_SHOW }, (_, i) => top0 + i).map((y) => st.board[y].map((v, x) => {
+              const k = y * Z_W + x, mark = at.has(k), buffer = y < Z_TOP;
+              return (
+                <div key={k} style={{ position: "relative", width: cell, height: cell }}>
+                  {/* An empty square's glass fades as the board gets darker (BOARD SHADE), down to a faint grid. */}
+                  {v === null && !buffer && <div className="absolute inset-0" style={{ ...GLASS, opacity: 1 - 0.9 * (shade / 100) }} />}
+                  {v !== null && <Ink size={cell} color={zInk(v)} />}
+                  {v === null && mark && <div className="absolute inset-0" style={{ opacity: landed ? 1 : 0.4 }}><Ink size={cell} color={S_INK[st.cur.id]} /></div>}
+                </div>
+              );
+            }))}
+          </div>
+          {/* The piece itself, wherever it floats (above the board too, without taking room from it). */}
+          {st.cur && !landed && zCellsOf(st.cur).map(([x, y]) => (
+            <div key={`p${x},${y}`} className="absolute pointer-events-none" style={{ left: x * (cell + g), top: (y - top0) * (cell + g) }}><Ink size={cell} color={S_INK[st.cur.id]} /></div>
+          ))}
+          {flashRows.filter((y) => y >= top0).map((y) => (
+            <div key={`${flash.key}-${y}`} className="absolute pointer-events-none tb-zgflash" style={{ left: 0, width: boardW, top: (y - top0) * (cell + g), height: cell }} />
+          ))}
+          {/* Garbage on its way: a red bar in the gap left of the board, a square per row. */}
+          {incoming > 0 && (
+            <div className="absolute pointer-events-none" style={{ left: -side - P, width: side + P, bottom: 0, height: Math.min(Z_VISIBLE, incoming) * (cell + g) - g, background: "#E0506A", boxShadow: "0 0 8px rgba(224,80,106,.6)" }} />
+          )}
+          {/* Within 5 rows of the top: the board's top corners pulse dark red. */}
+          {danger && ["left", "right"].map((k) => (
+            <div key={k} className="absolute pointer-events-none tb-zgdanger" style={{ top: 2 * (cell + g), [k]: 0, width: boardW * 0.45, height: boardH * 0.3,
+              background: `radial-gradient(ellipse at top ${k}, rgba(175,22,42,.95), rgba(130,14,32,.5) 42%, transparent 75%)` }} />
+          ))}
+          {overlay}
+        </div>
+        <BoardLine width={boardW} />
+        {name && <div className="tb-t tb-b" style={{ width: boardW, textAlign: "center", fontSize: font, color: nameInk, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{name}</div>}
+      </div>
+      {/* Right: the next five; the buttons (yours only) in a column under them. */}
+      <div className="flex flex-col items-start tb-t" style={{ fontSize: font, lineHeight: 1.25, width: colW, marginTop: sideTop, height: sideH, marginLeft: side }}>
+        <div aria-label="Next pieces" className="flex flex-col items-center" style={{ width: boxW, flex: 1, minHeight: 0, justifyContent: "space-between", gap: 2 * P, padding: pad, ...glass(UI.line) }}>
+          <span style={{ color: UI.dim }}>NEXT</span>
+          {(st.queue || []).slice(0, Z_NEXT).map((id, i) => (
+            <div key={i} role="img" aria-label={`Next ${i + 1}: ${Z_NAMES[id]}`} className="flex items-center justify-center" style={{ height: 2 * cell + g, opacity: i ? 0.8 : 1 }}>
+              <ZPiece id={id} cell={cell} gap={g} />
+            </div>
+          ))}
+        </div>
+        {buttons && <div className="flex flex-col items-start" style={{ marginTop: 3 * P, gap: 3 * P, flexShrink: 0 }}>{buttons}</div>}
+      </div>
+    </div>
+  );
+}
+
+const zgUltraBest = { get: () => Number(store.get("tb:zgUltraBest")) || 0, set: (n) => store.set("tb:zgUltraBest", String(n)) };
+const zgBotSkill = { get: () => Math.max(1, Math.min(10, Number(store.get("tb:zgBotSkill")) || 6)), set: (n) => store.set("tb:zgBotSkill", String(n)) };
+const ZG_GARBAGE_INK = "#4B4757"; // garbage: dark, so it reads as the floor, not as pieces
+const zInk = (v) => (v === Z_GARBAGE ? ZG_GARBAGE_INK : S_INK[v]);
+/**
+ * A run. `holds` counts hold presses for the piece in play (sent with the
+ * lock), `seen` the garbage messages received. In a versus game `opp` is the
+ * other side: a local bot's game, or the latest view of the online opponent.
+ */
+function freshZg(mode, seed = undefined, goAt = 0) {
+  const st = zNewGame(seed, mode === "sprint" ? Z_GOAL : Infinity);
+  st.incoming = [];
+  const versus = mode === "tower" || mode === "towerbot";
+  // The other side, played out on a copy of the same game: the bot's moves, or the online opponent's (as they arrive, in time).
+  const opp = versus ? { st: Object.assign(zNewGame(st.seed, Infinity), { incoming: [] }), given: 0, sent: 0, q: [] } : null;
+  return { out: [], mode, st, startAt: 0, endAt: 0, result: null, newBest: false, flash: null, pop: null, score: 0, holds: 0, seen: 0, sent: 0, given: 0, opp, goAt: versus ? goAt : 0, ratings: null };
+}
+
+/** Shows a clear on the opponent's side: its name, combo and back-to-back, and the rows flashing. */
+function oppClear(o, L, key) {
+  o.pop = { name: L.name, piece: L.piece?.id ?? L.piece, combo: L.combo, b2b: L.b2b, allClear: L.allClear, key };
+  o.flash = L.rows?.length ? { rows: L.rows, key } : null;
+  setTimeout(() => { if (o.flash?.key === key) o.flash = null; }, 200);
+  setTimeout(() => { if (o.pop?.key === key) o.pop = null; }, 1400);
+}
+
+/**
+ * ZERO-G: falling-block rules on a 10×40 board, no gravity.
+ *   sprint    40 lines, fastest time
+ *   ultra     2 minutes, highest score
+ *   tower     ranked 1v1, run by the server: clears send garbage rows
+ *   towerbot  the same against the ZERO-G bot (skill 1–10)
+ */
+function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
+  const versus = mode === "tower" || mode === "towerbot", online = mode === "tower";
   useGameMusic();
   useEffect(() => { sky.slow = true; return () => { sky.slow = false; }; }, []);
   const P = usePx();
@@ -4877,38 +5066,69 @@ function ZeroGGame({ onExit }) {
   const keys = useSyncExternalStore(zgSubscribe, getZgKeys);
   const wipe = useContext(WipeCtx);
   // The live run (key handlers change it at once) and what's drawn: a copy, taken whenever something changes.
-  const [first] = useState(freshZg);
+  const [first] = useState(() => {
+    if (!online) return freshZg(mode, undefined, versus ? goTime() : 0);
+    const t = net.tower;
+    return freshZg(mode, t?.seed, performance.now() + Math.max(0, (t?.countdown || 0) - (Date.now() - (t?.got || Date.now()))));
+  });
   const run = useRef(first);
   const [r, setSnap] = useState(() => ({ ...first, now: 0 }));
   const bump = useCallback(() => setSnap({ ...run.current, now: performance.now() }), []);
-  const [best, setBest] = useState(zgBest.get);
+  const record = mode === "ultra" ? zgUltraBest : zgBest;
+  const [best, setBest] = useState(record.get);
+  const [skill, setSkill] = useState(zgBotSkill.get);
   const [showEnd, setShowEnd] = useState(false);
   const [opts, setOpts] = useState(false);
   // Held keys: which way the piece slides, since when, and the soft drop.
   const hold = useRef({ left: false, right: false, dir: 0, dasAt: 0, step: 0, soft: false, dcd: 0 });
 
+  // How a run ends: done (40 lines), time (Ultra), stuck (topped out), won/lost (TOWER), forfeit.
   const finish = useCallback((result) => {
     const r = run.current;
     if (r.result) return;
-    r.endAt = performance.now(); r.result = result;
+    if (online && result === "forfeit") { net.forfeit(); return; } // the server ends it (towerEnd)
+    r.endAt = result === "time" ? r.startAt + Z_ULTRA_MS : performance.now(); r.result = result;
     if (result === "done") {
       const ms = Math.round(r.endAt - r.startAt);
       if (!zgBest.get() || ms < zgBest.get()) { zgBest.set(ms); setBest(ms); r.newBest = true; }
-      sfx.zgFinish();
-    } else if (result === "forfeit") sfx.forfeit();
+    }
+    if (mode === "ultra" && result !== "forfeit" && r.score > zgUltraBest.get()) { zgUltraBest.set(r.score); setBest(r.score); r.newBest = true; }
+    if (result === "done" || result === "time" || result === "won") sfx.zgFinish();
+    else if (result === "forfeit") sfx.forfeit();
     else sfx.zgTopOut();
     bump();
-    setTimeout(() => wipe(() => { if (run.current.result) setShowEnd(true); }), result === "forfeit" ? 0 : 700);
-  }, [bump, wipe]);
-  const retry = useCallback(() => { run.current = freshZg(); setShowEnd(false); sfx.pick(); bump(); }, [bump]);
-  const start = () => { const r = run.current; if (!r.startAt) r.startAt = performance.now(); };
+    setTimeout(() => wipe(() => { if (run.current.result) setShowEnd(true); }), result === "forfeit" ? 0 : 900);
+  }, [bump, wipe, mode, online]);
+  const retry = useCallback(() => {
+    if (online) return; // a ranked match isn't retried; queue again from the end screen
+    run.current = freshZg(mode, undefined, versus ? goTime() : 0); setShowEnd(false); sfx.pick(); bump();
+  }, [bump, mode, online, versus]);
+  const start = () => { const r = run.current; if (!r.startAt) r.startAt = r.goAt || performance.now(); };
+  const waiting = useCallback(() => versus && performance.now() < run.current.goAt, [versus]);
+  // Online, every change you make is a move sent to the server (see shared/zerog.js), timed from GO.
+  const rec = useCallback((code, arg) => {
+    if (!online) return;
+    const r = run.current;
+    const t = Math.max(0, Math.round(performance.now() - r.goAt));
+    r.out.push(arg === undefined ? [t, code] : [t, code, arg]);
+  }, [online]);
+  const flush = useCallback(() => { const r = run.current; if (online && r.out.length) { net.send({ t: "towerOps", ops: r.out }); r.out = []; } }, [online]);
 
   const doHard = useCallback(() => {
     const r = run.current, st = r.st;
-    if (!st.cur) return;
+    if (!st.cur || waiting()) return;
     start();
     const before = st.combo; // clears in a row so far (-1: none)
+    rec("H", r.seen);
     const L = zHardDrop(st);
+    r.holds = 0;
+    if (mode === "ultra") r.score += zScoreOf(L);
+    if (versus) {
+      const atk = zTowerLock(st, L);
+      r.sent += atk;
+      if (online) flush(); // a lock goes out at once (garbage depends on it)
+      else if (atk > 0) r.opp.st.incoming.push({ n: atk, hole: Math.floor(Math.random() * Z_W), i: r.opp.given++ });
+    }
     sfx.zgDrop();
     if (L.lines || L.spin) sfx.zgClear({ lines: L.lines, spin: L.spin, piece: L.piece.id, combo: Math.max(0, L.combo), b2b: L.b2b, allClear: L.allClear });
     // A big combo just ended: its melody (5 or more clears in a row).
@@ -4923,43 +5143,49 @@ function ZeroGGame({ onExit }) {
       r.pop = { name: L.name, piece: L.piece.id, combo: -1, b2b: -1, key: st.pieces };
     }
     hold.current.dcd = performance.now() + getZgHandling().dcd;
-    if (st.over) finish(st.won ? "done" : "stuck");
+    if (st.over) {
+      if (online) { r.toppedOut = true; } // the server says who won
+      else finish(st.won ? "done" : versus ? "lost" : "stuck");
+    }
     bump();
-  }, [bump, finish]);
+  }, [bump, finish, mode, versus, online, waiting, rec, flush]);
 
   const press = useCallback((a) => {
     if (a === "retry") { retry(); return; }
     const r = run.current, st = r.st, h = hold.current, now = performance.now();
     if (r.result) return;
-    if (a === "forfeit") { finish("forfeit"); return; }
-    if (!st.cur) return;
+    if (a === "forfeit") { if (!online) finish("forfeit"); return; } // ranked: no forfeit key (leaving still counts as a loss)
+    if (!st.cur || r.toppedOut) return;
     if (a === "left" || a === "right") {
       h[a] = true; h.dir = a === "left" ? -1 : 1; h.dasAt = now; h.step = 0;
+      if (waiting()) return; // held through the countdown, it slides as soon as it's GO
       start();
-      if (zShift(st, h.dir)) { sfx.zgMove(); bump(); }
+      if (zShift(st, h.dir)) { rec(h.dir < 0 ? "l" : "r"); sfx.zgMove(); bump(); }
       return;
     }
     if (a === "soft") {
       // Instant: straight to the floor, without locking. Held, it keeps the piece there.
       h.soft = true;
+      if (waiting()) return;
       start();
       let moved = false;
       while (zDown(st)) moved = true;
-      if (moved) { sfx.zgLand(); bump(); }
+      if (moved) { rec("d"); sfx.zgLand(); bump(); }
       return;
     }
     if (a === "hard") { doHard(); return; }
+    if (waiting()) return;
     if (a === "cw" || a === "ccw" || a === "r180") {
       start();
       const dir = a === "cw" ? 1 : a === "ccw" ? -1 : 2;
-      if (zRotate(st, dir)) { sfx.zgRotate(dir); h.dcd = now + getZgHandling().dcd; bump(); }
+      if (zRotate(st, dir)) { rec(dir === 1 ? "c" : dir === -1 ? "w" : "f"); sfx.zgRotate(dir); h.dcd = now + getZgHandling().dcd; bump(); }
       return;
     }
     if (a === "hold") {
       start();
-      if (zHold(st)) { sfx.zgHold(); h.dcd = now + getZgHandling().dcd; if (st.over) finish("stuck"); bump(); }
+      if (zHold(st)) { r.holds++; rec("h"); sfx.zgHold(); h.dcd = now + getZgHandling().dcd; if (st.over && !online) finish(versus ? "lost" : "stuck"); bump(); }
     }
-  }, [retry, finish, doHard, bump]);
+  }, [retry, finish, doHard, bump, waiting, online, versus, rec]);
 
   const release = useCallback((a) => {
     const h = hold.current;
@@ -4977,23 +5203,115 @@ function ZeroGGame({ onExit }) {
     const loop = () => {
       raf = requestAnimationFrame(loop);
       const r = run.current, st = r.st, h = hold.current;
-      if (!st.cur || r.result) return;
+      // The online opponent's moves, played at the time they made them (a beat behind, so it's smooth).
+      if (online && r.opp?.q.length && !r.result) {
+        const o = r.opp, at = performance.now() - r.goAt - 120;
+        let any = false;
+        while (o.q.length && (o.q[0][0] <= at || o.q.length > 60)) {
+          const op = o.q.shift(), before = o.st.pieces;
+          if (!zApplyOp(o.st, op)) continue;
+          any = true;
+          if (op[1] === "H" && o.st.pieces > before) {
+            const L = o.st.last;
+            o.sent += zTowerLock(o.st, L, op[2]);
+            if (L.lines || L.spin) oppClear(o, L, o.st.pieces);
+          }
+        }
+        if (any) bump();
+      }
+      if (!st.cur || r.result || r.toppedOut) return;
       const hd = getZgHandling(), now = performance.now();
+      if (versus && now < r.goAt) return;
+      if (versus && !r.startAt) { r.startAt = r.goAt; bump(); }
       let moved = false;
       if (h.dir && now - h.dasAt >= hd.das && now >= h.dcd) {
-        if (hd.arr <= 0) { while (zShift(st, h.dir)) moved = true; }
+        if (hd.arr <= 0) { while (zShift(st, h.dir)) { moved = true; rec(h.dir < 0 ? "l" : "r"); } }
         else {
           if (!h.step) h.step = h.dasAt + hd.das - hd.arr;
-          for (let i = 0; i < 10 && now - h.step >= hd.arr; i++) { h.step += hd.arr; if (zShift(st, h.dir)) moved = true; else { h.step = now; break; } }
+          for (let i = 0; i < 10 && now - h.step >= hd.arr; i++) { h.step += hd.arr; if (zShift(st, h.dir)) { moved = true; rec(h.dir < 0 ? "l" : "r"); } else { h.step = now; break; } }
         }
         if (moved) sfx.zgMove();
       }
-      if (h.soft) while (zDown(st)) moved = true;
+      if (h.soft) { let down = false; while (zDown(st)) down = true; if (down) { moved = true; rec("d"); } }
       if (moved) bump();
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [bump]);
+  }, [bump, versus, online, rec]);
+
+  // Danger (your stack within 5 rows of the top): a low stab, over and over, until you dig out.
+  useEffect(() => {
+    const h = setInterval(() => {
+      const r = run.current;
+      if (!r.result && r.st.cur && r.startAt && zgDanger(r.st.board)) sfx.zgAlarm();
+    }, 650);
+    return () => clearInterval(h);
+  }, []);
+
+  // ULTRA: two minutes from the first move.
+  useEffect(() => {
+    if (mode !== "ultra" || !r.startAt || r.result) return undefined;
+    const t = setTimeout(() => finish("time"), Math.max(0, r.startAt + Z_ULTRA_MS - performance.now()));
+    return () => clearTimeout(t);
+  }, [mode, r.startAt, r.result, finish]);
+
+  // VS BOT: the bot locks a piece at its own (uneven) pace; its garbage comes to you.
+  useEffect(() => {
+    if (mode !== "towerbot") return undefined;
+    let t;
+    const next = () => {
+      const c = run.current;
+      t = setTimeout(() => {
+        const r = run.current;
+        if (r !== c) return;
+        if (r.result || performance.now() < r.goAt) { if (!r.result) next(); return; }
+        const o = r.opp, m = zBotLock(o.st);
+        const L = m && zApplyLock(o.st, m);
+        if (!L) { finish("won"); return; }
+        const atk = zTowerLock(o.st, L);
+        o.sent = (o.sent || 0) + atk;
+        if (L.lines || L.spin) oppClear(o, L, o.st.pieces);
+        if (atk > 0) { r.st.incoming.push({ n: atk, hole: Math.floor(Math.random() * Z_W), i: r.seen++ }); sfx.zgLand(); }
+        if (o.st.over) { finish("won"); return; }
+        bump();
+        next();
+      }, (1000 / zgBotPps(skill)) * (0.6 + Math.random() * 0.8));
+    };
+    next();
+    return () => clearTimeout(t);
+  }, [mode, skill, finish, bump, r.goAt]);
+
+  // TOWER online: your moves go out in small batches (a lock goes at once). The server allows 20 messages a second.
+  useEffect(() => {
+    if (!online) return undefined;
+    const h = setInterval(flush, 80);
+    return () => clearInterval(h);
+  }, [online, flush]);
+
+  // TOWER online: garbage, the opponent's board, corrections, the result.
+  useEffect(() => {
+    if (!online) return undefined;
+    const offs = [
+      net.on("towerStart", (m) => { if (m.resume) { run.current = { ...freshZg(mode, m.seed, performance.now()), startAt: performance.now() }; bump(); } }),
+      net.on("towerGarbage", (m) => { const r = run.current; r.st.incoming.push({ n: m.n, hole: m.hole, i: m.i }); r.seen = Math.max(r.seen, m.i + 1); sfx.zgLand(); bump(); }),
+      net.on("towerOps", (m) => { const r = run.current; if (m.side !== net.tower?.you && r.opp) r.opp.q.push(...m.ops); }),
+      net.on("towerOppGarbage", (m) => { const o = run.current.opp; if (o) o.st.incoming.push({ n: m.n, hole: m.hole, i: m.i }); }),
+      // After a reconnect: both games as the server has them.
+      net.on("towerBoard", (m) => {
+        const r = run.current;
+        if (!m.fix) return;
+        if (m.side === net.tower?.you) { r.st = zSyncTo(r.st.seed, m); r.holds = 0; r.toppedOut = false; r.out = []; }
+        else if (r.opp) { r.opp.st = zSyncTo(r.st.seed, m); r.opp.q = []; r.opp.sent = m.sent || 0; }
+        bump();
+      }),
+      net.on("towerEnd", (m) => {
+        const r = run.current;
+        // The match, kept as a replay: both players' moves and the garbage, timed.
+        if (m.log?.length) replays.save({ kind: "tower", ranked: true, seed: m.seed, moves: m.log, names: m.names, you: m.you, winner: m.winner, sent: m.sent, ratings: m.ratings, date: Date.now() });
+        r.ratings = m.ratings ? m.ratings[m.you] : null; r.oppName = net.tower?.opponent?.name; r.sentBy = m.sent; r.toppedOut = false; r.result = null; finish(m.winner === m.you ? "won" : "lost"); }),
+    ];
+    return () => offs.forEach((f) => f());
+  }, [online, mode, bump, finish]);
 
   useEffect(() => {
     if (opts) return undefined;
@@ -5021,6 +5339,36 @@ function ZeroGGame({ onExit }) {
   const keyOf = (id) => (keys[id] === " " ? "SPACE" : bindLabel(keys[id]));
   const railD = useBubble(false);
 
+  const oppSt = r.opp?.st || null;
+  const oppView = oppSt
+    ? { board: oppSt.board, cur: oppSt.cur, hold: oppSt.hold, queue: oppSt.queue, incoming: zIncoming(oppSt), sent: r.opp.sent || 0, lines: oppSt.lines, pieces: oppSt.pieces, pop: r.opp.pop, flash: r.opp.flash }
+    : r.opp?.view;
+  const oppName = mode === "towerbot" ? `BOT ${skill}` : (net.tower?.opponent?.name || "OPPONENT");
+  if (showEnd && r.result && versus) {
+    const won = r.result === "won";
+    const apm = ms > 0 ? r.sent / (ms / 60000) : 0;
+    return (
+      <EndScreen verdict={won ? "VICTORY" : "DEFEAT"} ink={won ? GOLD : UI.bad} sound={won ? "win" : "lose"}
+        note={`${st.pieces} pieces · ${pps.toFixed(2)} PPS · ${apm.toFixed(1)} APM · ${st.lines} lines`}
+        left={{ name: net.profile?.name || "YOU", score: `${r.sent} SENT`, ink: "var(--tb-you)", won }}
+        right={{ name: oppName, score: `${online ? (r.sentBy?.[net.tower?.you === "A" ? "B" : "A"] ?? oppView?.sent ?? 0) : (oppView?.sent || 0)} SENT`, ink: "var(--tb-rival)", won: !won }}
+        actions={online
+          ? [{ label: "MENU", onClick: onExit }, { label: "PLAY AGAIN", onClick: () => onRequeue?.(), main: true }]
+          : [{ label: "MENU", onClick: onExit }, { label: `REMATCH (${keyOf("retry")})`, onClick: retry, main: true }]}>
+        {r.ratings && <RatingPanel from={r.ratings.before} to={r.ratings.after} rdFrom={r.ratings.rdBefore} rdTo={r.ratings.rdAfter} />}
+      </EndScreen>
+    );
+  }
+  if (showEnd && r.result && mode === "ultra") {
+    return (
+      <EndScreen verdict={r.newBest ? "NEW BEST" : r.result === "time" ? "TIME UP" : r.result === "stuck" ? "TOPPED OUT" : "FORFEIT"}
+        ink={r.result === "forfeit" ? UI.bad : GOLD} sound={r.result === "forfeit" ? "lose" : "win"} compare={false}
+        note={`${st.lines} lines · ${st.pieces} pieces · ${pps.toFixed(2)} PPS · ${st.stats.quad} quads · ${st.stats.tspin} spins · max combo ${Math.max(0, st.stats.maxCombo)}`}
+        left={{ name: "SCORE", score: r.score.toLocaleString("en-US"), ink: "var(--tb-you)", won: r.newBest }}
+        right={{ name: "BEST", score: best ? best.toLocaleString("en-US") : "—", ink: GOLD }}
+        actions={[{ label: "MENU", onClick: onExit }, { label: `RETRY (${keyOf("retry")})`, onClick: retry, main: true }]} />
+    );
+  }
   if (showEnd && r.result) {
     const good = r.result === "done";
     return (
@@ -5036,9 +5384,10 @@ function ZeroGGame({ onExit }) {
   // The field: 10 wide, the 20 visible rows plus 2 buffer rows above them, as big as the screen allows.
   const g = P;
   const side = 2 * P; // the small gap between the board and the panels beside it
-  const availH = stage.h - 24 * P; // the whole height (one row more is kept free above the board for the floating piece)
-  const fitW = (stage.w - 24 * P - 9 * g) / 19; // the board plus both side columns must fit across
-  const cell = Math.max(4 * P, Math.min(40 * P, Math.floor(Math.min((availH - ZG_SHOW * g) / (ZG_SHOW + 1), fitW) / P) * P));
+  const availH = stage.h - 24 * P - (versus ? 30 * P : 0); // a versus game has its small title on top // the whole height (one row more is kept free above the board for the floating piece)
+  const fitW = (stage.w - 24 * P - 9 * g) / (versus ? 40 : 19); // the board, both side columns (and in a versus game the opponent's board) must fit across
+  // In a versus game the two boards sit side by side, so each is a little smaller.
+  const cell = Math.max(4 * P, Math.min(40 * P, Math.floor(Math.min((availH - ZG_SHOW * g) / (ZG_SHOW + 1) * (versus ? 0.82 : 1), fitW) / P) * P));
   // Text and buttons grow with the board.
   const zoom = Math.max(1, cell / (8 * P));
   const font = Math.round(8 * P * Math.min(zoom, 1.6));
@@ -5052,102 +5401,82 @@ function ZeroGGame({ onExit }) {
   const sideTop = 2 * (cell + g); // the side columns start level with the field's top row
   const sideH = boardH - sideTop;
   const top0 = Z_TOP - 2;
-  // The piece where it floats, and its ghost where it will land (solid once the piece rests there).
-  const land = st.cur ? zDropped(st.board, st.cur) : null;
-  const landed = !!land && land.y === st.cur.y;
-  const at = new Set(land ? zCellsOf(land).map(([x, y]) => y * Z_W + x) : []);
-  const flashRows = new Set(r.flash ? r.flash.rows : []);
-  const stat = (label, value, ink = UI.text) => (
-    <div className="flex flex-col items-end" style={{ gap: P }}><span style={{ color: UI.dim }}>{label}</span><span className="tb-b tabular-nums" style={{ color: ink }}>{value}</span></div>
+  const L = { cell, g, side, font, pad, boxW, colW, sideTop, sideH, boardW, boardH, top0 };
+  // In a versus game each stat is one line (label and value), so two sides' worth fit.
+  const stat = (label, value, ink = UI.text) => (versus
+    ? <div key={label} className="flex items-baseline justify-end" style={{ gap: 3 * P, whiteSpace: "nowrap" }}><span style={{ color: UI.dim }}>{label}</span><span className="tb-b tabular-nums" style={{ color: ink }}>{value}</span></div>
+    : <div key={label} className="flex flex-col items-end" style={{ gap: P }}><span style={{ color: UI.dim }}>{label}</span><span className="tb-b tabular-nums" style={{ color: ink }}>{value}</span></div>);
+  const apmOf = (sent) => (ms > 0 ? sent / (ms / 60000) : 0).toFixed(1);
+  const ppsOf = (n) => (ms > 0 ? n / (ms / 1000) : 0).toFixed(2);
+  const myStats = [
+    mode === "ultra" && stat("SCORE", r.score.toLocaleString("en-US"), GOLD),
+    versus && stat("SENT", r.sent, GOLD),
+    stat("PIECES", st.pieces),
+    stat("PPS", pps.toFixed(2)),
+    versus && stat("APM", apmOf(r.sent)),
+    !versus && stat("BEST", best ? (mode === "ultra" ? best.toLocaleString("en-US") : fmtClock(best)) : "—", GOLD),
+    mode === "towerbot" && (
+      <div key="skill" className="flex items-baseline justify-end" style={{ gap: 2 * P, whiteSpace: "nowrap" }}>
+        <span style={{ color: UI.dim }}>BOT</span>
+        <div className="flex items-center" style={{ gap: 2 * P }}>
+          <button className="tb-t tb-b" aria-label="Easier bot" onClick={() => { const v = Math.max(1, skill - 1); setSkill(v); zgBotSkill.set(v); }} style={{ color: UI.dim, padding: `0 ${2 * P}px` }}>−</button>
+          <span className="tb-b tabular-nums">{skill}</span>
+          <button className="tb-t tb-b" aria-label="Harder bot" onClick={() => { const v = Math.min(10, skill + 1); setSkill(v); zgBotSkill.set(v); }} style={{ color: UI.dim, padding: `0 ${2 * P}px` }}>+</button>
+        </div>
+      </div>
+    ),
+  ].filter(Boolean);
+  const myBottom = (
+    <>
+      <span className="tb-b tabular-nums">{mode === "sprint" ? `${Math.min(st.lines, Z_GOAL)} / ${Z_GOAL}` : `${st.lines} LINES`}</span>
+      <ZgClock run={run} left={mode === "ultra" ? Z_ULTRA_MS : 0} style={{ fontSize: "1.1em", color: "var(--tb-you)" }} />
+    </>
   );
-  const pop = r.pop;
+  const myOverlay = (
+    <>
+      {mode === "towerbot" && !r.result && <Countdown goAt={r.goAt} block={false} />}
+      {!versus && !r.startAt && !r.result && (
+        <div className="absolute inset-x-0 flex justify-center pointer-events-none" style={{ top: 5 * (cell + g) }}>
+          <span className="tb-t" style={{ color: UI.text, padding: `${P}px ${3 * P}px`, background: "color-mix(in srgb, var(--tb-panel-solid) 80%, transparent)" }}>
+            {mode === "ultra" ? "2 MINUTES · THE CLOCK STARTS ON YOUR FIRST MOVE" : "NO GRAVITY · THE CLOCK STARTS ON YOUR FIRST MOVE"}
+          </span>
+        </div>
+      )}
+    </>
+  );
+  // A ranked match has no buttons: no settings, no forfeit button (Escape still forfeits).
+  const myButtons = online ? null : (
+    <>
+      <Bubble w={btn} h={btn} label="Controls and handling" onClick={() => setOpts(true)}><Settings2 /></Bubble>
+      {!online && <Bubble w={btn} h={btn} label={`Retry (${keyOf("retry")})`} onClick={retry}><RefreshCw /></Bubble>}
+      {r.result
+        ? <Bubble w={btn} h={btn} label="Menu" onClick={onExit}><LogOut /></Bubble>
+        : <ForfeitButton size={btn} ranked={online} onConfirm={() => finish("forfeit")} />}
+    </>
+  );
+  // The opponent, drawn the same way: a bot's whole game, or the online opponent's latest view.
+  const opp = versus ? (oppView || { board: zNewGame(st.seed, Infinity).board, queue: [], hold: null, cur: null, sent: 0, lines: 0, pieces: 0, incoming: 0 }) : null;
 
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono select-none" style={{ color: UI.text }}>
-      <div ref={stageRef} className="relative flex-1 min-h-0 flex flex-col items-center w-full mx-auto px-3" style={{ maxWidth: 1600 }}>
-        {/* No title here: just the game, in the middle of the screen. */}
+      <div ref={stageRef} className="relative flex-1 min-h-0 flex flex-col items-center w-full mx-auto px-3" style={{ maxWidth: 1900 }}>
+        {/* TOWER: a small TESELLA on top, "competitive" (or "vs bot") in grey under it. Sprint and Ultra: no title. */}
+        {versus && (
+          <div className="flex flex-col items-center shrink-0" style={{ paddingTop: 7 * P, gap: P }}>
+            <span style={{ fontFamily: '"Silkscreen", monospace', fontWeight: 700, fontSize: 12 * P, lineHeight: 1, letterSpacing: P, color: UI.text }}>TESELLA</span>
+            <span className="tb-t" style={{ color: UI.dim, opacity: 0.7, letterSpacing: 2 * P }}>{online ? "COMPETITIVE" : "VS BOT"}</span>
+          </div>
+        )}
         <div style={{ flex: 1, minHeight: cell + 2 * P }} />
-        <div className="flex items-start">
-          {/* Left: hold, flush against the board, then the stats and the last clear. */}
-          <div className="flex flex-col items-end text-right tb-t" style={{ fontSize: font, lineHeight: 1.25, width: colW, gap: 4 * P, marginTop: sideTop, height: sideH, marginRight: side }}>
-            <div className="flex flex-col items-center" style={{ width: boxW, gap: 2 * P, padding: pad, ...glass(UI.line) }}>
-              <span style={{ color: UI.dim }}>HOLD ({keyOf("hold")})</span>
-              <div className="flex items-center justify-center" style={{ height: 2 * cell + g }}>
-                {st.hold !== null && <ZPiece id={st.hold} cell={cell} gap={g} />}
-              </div>
-            </div>
-            <div className="flex flex-col items-end" style={{ gap: 3 * P, marginTop: 2 * P }}>
-              {stat("PIECES", st.pieces)}
-              {stat("PPS", pps.toFixed(2))}
-              {stat("BEST", best ? fmtClock(best) : "—", GOLD)}
-            </div>
-            {/* The last clear: its name, the combo, back-to-back. */}
-            <div className="flex flex-col items-end" style={{ gap: P, minHeight: 14 * P, marginTop: 2 * P }}>
-              {pop && (
-                <div key={pop.key} className="flex flex-col items-end tb-rise" style={{ gap: P }}>
-                  {pop.b2b > 0 && <span className="tb-b" style={{ color: GOLD }}>B2B ×{pop.b2b}</span>}
-                  {pop.name && <span className="tb-b" style={{ color: pop.name.includes("-SPIN") ? S_INK[pop.piece] : pop.name === "QUAD" ? S_INK[0] : UI.text, fontSize: "1.2em" }}>{pop.name}</span>}
-                  {pop.combo >= 1 && <span className="tb-b" style={{ color: "var(--tb-you)" }}>{pop.combo} COMBO</span>}
-                  {pop.allClear && <span className="tb-b" style={{ color: GOLD, fontSize: "1.2em" }}>ALL CLEAR</span>}
-                </div>
-              )}
-            </div>
-            {/* The clock and the lines, level with the board's floor. */}
-            <div className="flex flex-col items-end" style={{ marginTop: "auto", gap: P }}>
-              <span className="tb-b tabular-nums">{Math.min(st.lines, Z_GOAL)} / {Z_GOAL}</span>
-              <ZgClock run={run} style={{ fontSize: "1.1em", color: "var(--tb-you)" }} />
-            </div>
-          </div>
-          {/* The board, with the line of light under it. */}
-          <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
-            <div className="relative" style={{ width: boardW, height: boardH, padding: 0 }}>
-              <div style={{ display: "grid", gridTemplateColumns: `repeat(${Z_W}, ${cell}px)`, gap: g }}>
-                {Array.from({ length: ZG_SHOW }, (_, i) => top0 + i).map((y) => st.board[y].map((v, x) => {
-                  const k = y * Z_W + x, mark = at.has(k), buffer = y < Z_TOP;
-                  return (
-                    <div key={k} style={{ position: "relative", width: cell, height: cell, ...(v === null && !buffer ? GLASS : null) }}>
-                      {v !== null && <Ink size={cell} color={S_INK[v]} />}
-                      {v === null && mark && <div className="absolute inset-0" style={{ opacity: landed ? 1 : 0.4 }}><Ink size={cell} color={S_INK[st.cur.id]} /></div>}
-                    </div>
-                  );
-                }))}
-              </div>
-              {/* The piece itself, wherever it floats (above the board too, without taking room from it). */}
-              {st.cur && !landed && zCellsOf(st.cur).map(([x, y]) => (
-                <div key={`p${x},${y}`} className="absolute pointer-events-none" style={{ left: x * (cell + g), top: (y - top0) * (cell + g) }}><Ink size={cell} color={S_INK[st.cur.id]} /></div>
-              ))}
-              {/* A clear: the rows flash and fade in under a fifth of a second. */}
-              {r.flash && [...flashRows].filter((y) => y >= top0).map((y) => (
-                <div key={`${r.flash.key}-${y}`} className="absolute pointer-events-none tb-zgflash" style={{ left: 0, width: boardW, top: (y - top0) * (cell + g), height: cell }} />
-              ))}
-              {!r.startAt && !r.result && (
-                <div className="absolute inset-x-0 flex justify-center pointer-events-none" style={{ top: 5 * (cell + g) }}>
-                  <span className="tb-t" style={{ color: UI.text, padding: `${P}px ${3 * P}px`, background: "color-mix(in srgb, var(--tb-panel-solid) 80%, transparent)" }}>
-                    NO GRAVITY · THE CLOCK STARTS ON YOUR FIRST MOVE
-                  </span>
-                </div>
-              )}
-            </div>
-            <BoardLine width={boardW} />
-          </div>
-          {/* Right: the next five, flush against the board; the buttons in a column at its bottom. */}
-          <div className="flex flex-col items-start tb-t" style={{ fontSize: font, lineHeight: 1.25, width: colW, marginTop: sideTop, height: sideH, marginLeft: side }}>
-            <div aria-label="Next pieces" className="flex flex-col items-center" style={{ width: boxW, flex: 1, minHeight: 0, justifyContent: "space-between", gap: 2 * P, padding: pad, ...glass(UI.line) }}>
-              <span style={{ color: UI.dim }}>NEXT</span>
-              {st.queue.slice(0, Z_NEXT).map((id, i) => (
-                <div key={i} role="img" aria-label={`Next ${i + 1}: ${Z_NAMES[id]}`} className="flex items-center justify-center" style={{ height: 2 * cell + g, opacity: i ? 0.8 : 1 }}>
-                  <ZPiece id={id} cell={cell} gap={g} />
-                </div>
-              ))}
-            </div>
-            <div className="flex flex-col items-start" style={{ marginTop: 3 * P, gap: 3 * P, flexShrink: 0 }}>
-              <Bubble w={btn} h={btn} label="Controls and handling" onClick={() => setOpts(true)}><Settings2 /></Bubble>
-              <Bubble w={btn} h={btn} label={`Retry (${keyOf("retry")})`} onClick={retry}><RefreshCw /></Bubble>
-              {r.result
-                ? <Bubble w={btn} h={btn} label="Menu" onClick={onExit}><LogOut /></Bubble>
-                : <ForfeitButton size={btn} onConfirm={() => finish("forfeit")} />}
-            </div>
-          </div>
+        <div className="flex items-start" style={{ gap: 10 * P }}>
+          <ZgField L={L} st={st} stats={myStats} pop={r.pop} bottom={myBottom} incoming={versus ? zIncoming(st) : 0} flash={r.flash} overlay={myOverlay} buttons={myButtons}
+            holdKey={keyOf("hold")} name={versus ? (net.profile?.name || "YOU") : null} />
+          {versus && (
+            <ZgField L={L} st={opp} nameInk="var(--tb-rival)" name={oppName} incoming={opp.incoming || 0} pop={opp.pop} flash={opp.flash}
+              stats={[stat("SENT", opp.sent || 0, GOLD), stat("PIECES", opp.pieces || 0), stat("PPS", ppsOf(opp.pieces || 0)), stat("APM", apmOf(opp.sent || 0))]}
+              bottom={<span className="tb-b tabular-nums">{opp.lines || 0} LINES</span>}
+              buttons={myButtons && <div aria-hidden="true" className="flex flex-col" style={{ visibility: "hidden", gap: 3 * P }}>{myButtons}</div>} />
+          )}
         </div>
         <div style={{ flex: 1, minHeight: 2 * P }} />
       </div>
@@ -6476,7 +6805,7 @@ function replaySides(rec) {
   return { me, them, meName: rec.you ? "YOU" : rec.players.A.name, themName: rec.players[them].name };
 }
 
-const REPLAY_TABS = [["all", "ALL"], ["match", "CONTROL"], ["blitz", "BLITZ"], ["sprint", "SPRINT"], ["ultra", "ULTRA"], ["marathon", "MARATHON"]];
+const REPLAY_TABS = [["all", "ALL"], ["tower", "TOWER"], ["match", "CONTROL"], ["blitz", "BLITZ"], ["sprint", "SPRINT"], ["ultra", "ULTRA"], ["marathon", "MARATHON"]];
 function ReplayList({ onOpen, onBack }) {
   const P = usePx();
   const all = useReplayList();
@@ -6512,6 +6841,19 @@ function ReplayList({ onOpen, onBack }) {
         <div className="flex-1 min-h-0 overflow-y-auto mt-2 flex flex-col gap-2 pr-1">
           {!list.length && <div className="tb-t text-center py-10" style={{ color: UI.dim }}>No replays here yet. Every game you finish is saved here.</div>}
           {list.map((rec) => {
+            if (rec.kind === "tower") {
+              const them = rec.you === "A" ? "B" : "A";
+              const won = rec.winner === rec.you;
+              return (
+                <button key={rec.id} onClick={() => onOpen(rec.id)} className="w-full text-left flex items-center gap-3 px-3 py-2" style={{ ...glass(UI.line) }}>
+                  <div className="flex-1 min-w-0">
+                    <div className="tb-t truncate">{rec.names?.[rec.you] || "YOU"} <span style={{ color: UI.dim }}>vs</span> {rec.names?.[them] || "?"}</div>
+                    <div className="tb-t truncate" style={{ color: UI.dim }}>TOWER · {rec.ranked ? "RANKED" : "MATCH"} · {rec.sent?.[rec.you] ?? 0}–{rec.sent?.[them] ?? 0} SENT · {fmtDate(rec.date)}</div>
+                  </div>
+                  <span className="tb-t tb-b" style={{ color: won ? GOLD : UI.bad }}>{won ? "WIN" : "LOSS"}</span>
+                </button>
+              );
+            }
             if (rec.kind === "blitz") {
               const them = rec.you === "A" ? "B" : "A";
               const won = rec.winner === rec.you;
@@ -6806,12 +7148,12 @@ function useTimedPlayback(end) {
 }
 
 /** The page every replay uses: a header, the boards as big as fit, the transport at the bottom. */
-function ReplayPage({ onBack, head, aside, stageRef, children, pb, rec, frames, ink, label }) {
+function ReplayPage({ onBack, head, aside, stageRef, children, pb, rec, frames, ink, label, endMs = 0 }) {
   const P = usePx();
   const compact = useCompact();
   const d = useBubble(compact);
   const { time, playing, setPlaying, speed, setSpeed, seek } = pb;
-  const end = frames[frames.length - 1].t;
+  const end = frames ? frames[frames.length - 1].t : endMs;
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ color: UI.text }}>
       <div className="relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: 1500 }}>
@@ -6838,7 +7180,7 @@ function ReplayPage({ onBack, head, aside, stageRef, children, pb, rec, frames, 
                   style={{ height: d * P, ...(speed === sp ? skFill(UI.text) : glass(UI.line)), color: speed === sp ? UI.text : UI.dim }}>{sp}×</button>
               ))}
             </div>
-            <VideoButton rec={rec} frames={frames} onStart={() => setPlaying(false)} />
+            {frames && <VideoButton rec={rec} frames={frames} onStart={() => setPlaying(false)} />}
           </div>
           <div className="tb-t tabular-nums" style={{ color: UI.dim }}>{label}</div>
         </div>
@@ -6993,6 +7335,68 @@ function BlitzReplayViewer({ rec, colors, onBack }) {
       head={<><span style={{ color: colors.you }}>{rec.names?.[me] || "YOU"}</span> vs <span style={{ color: colors.rival }}>{rec.names?.[them] || "?"}</span> · {rec.ranked ? "BLITZ · RANKED" : "BLITZ"} · {fmtDate(rec.date)}</>}
       label={fmtClock(time)}>
       <div className="flex items-start" style={{ gap: 10 * P }}>{side(me)}{side(them)}</div>
+    </ReplayPage>
+  );
+}
+
+/** A TOWER match at time `T` (ms from GO): both games, replayed from the log of moves and garbage. */
+function towerAt(rec, T) {
+  const mk = () => Object.assign(zNewGame(rec.seed, Infinity), { incoming: [] });
+  const sim = { A: mk(), B: mk(), sent: { A: 0, B: 0 }, pop: { A: null, B: null }, flash: { A: null, B: null } };
+  for (const e of rec.moves) {
+    if (e[0] > T) break;
+    const [t, side, code, ...rest] = e;
+    if (code === "G") { sim[side].incoming.push({ n: rest[0], hole: rest[1], i: rest[2] }); continue; }
+    const st = sim[side], before = st.pieces;
+    if (!zApplyOp(st, [t, code, ...rest]) || code !== "H" || st.pieces === before) continue;
+    const L = st.last;
+    sim.sent[side] += zTowerLock(st, L, rest[0]);
+    if (L.lines || L.spin) {
+      sim.pop[side] = T - t < 1400 ? { name: L.name, piece: L.piece.id, combo: L.combo, b2b: L.b2b, allClear: L.allClear, key: `${side}${st.pieces}` } : null;
+      sim.flash[side] = L.rows.length && T - t < 200 ? { rows: L.rows, key: `${side}${st.pieces}` } : null;
+    }
+  }
+  return sim;
+}
+
+/** Sizes for a ZERO-G side from its square size (as the game measures them). */
+function zgLayout(cell, P) {
+  const g = P, zoom = Math.max(1, cell / (8 * P));
+  const pad = Math.round(4 * P * Math.min(zoom, 1.5));
+  const boxW = 4 * cell + 3 * g + 2 * pad;
+  const boardH = ZG_SHOW * cell + (ZG_SHOW - 1) * g;
+  return { cell, g, side: 2 * P, font: Math.round(8 * P * Math.min(zoom, 1.6)), pad, boxW, colW: Math.max(boxW, Math.round(46 * P * Math.min(zoom, 1.6))),
+    sideTop: 2 * (cell + g), sideH: boardH - 2 * (cell + g), boardW: Z_W * cell + (Z_W - 1) * g, boardH, top0: Z_TOP - 2 };
+}
+
+/** A TOWER replay: both sides exactly as they were played, with the transport under them. */
+function TowerReplayViewer({ rec, onBack }) {
+  const P = usePx();
+  const [stageRef, stage] = useSize();
+  const end = (rec.moves[rec.moves.length - 1]?.[0] || 0) + 1500;
+  const pb = useTimedPlayback(end);
+  const sim = useMemo(() => towerAt(rec, pb.time), [rec, pb.time]);
+  const cell = Math.max(3 * P, Math.min(30 * P, Math.floor(Math.min((stage.h - 30 * P) / (ZG_SHOW + 1), (stage.w - 30 * P) / 40) / P) * P));
+  const L = zgLayout(cell, P);
+  const stat = (label, value, ink = UI.text) => (
+    <div key={label} className="flex items-baseline justify-end" style={{ gap: 3 * P, whiteSpace: "nowrap" }}><span style={{ color: UI.dim }}>{label}</span><span className="tb-b tabular-nums" style={{ color: ink }}>{value}</span></div>
+  );
+  const sec = pb.time / 1000;
+  const side = (k) => {
+    const st = sim[k];
+    return (
+      <ZgField key={k} L={L} st={st} name={rec.names?.[k] || k} nameInk={k === rec.you ? "var(--tb-you)" : "var(--tb-rival)"}
+        incoming={zIncoming(st)} pop={sim.pop[k]} flash={sim.flash[k]}
+        stats={[stat("SENT", sim.sent[k], GOLD), stat("PIECES", st.pieces), stat("PPS", (sec > 0 ? st.pieces / sec : 0).toFixed(2)), stat("APM", (sec > 0 ? sim.sent[k] / (sec / 60) : 0).toFixed(1))]}
+        bottom={<span className="tb-b tabular-nums">{st.lines} LINES</span>} />
+    );
+  };
+  const them = rec.you === "A" ? "B" : "A";
+  return (
+    <ReplayPage onBack={onBack} stageRef={stageRef} pb={pb} rec={rec} frames={null} endMs={end} ink={MODE_INK.zerog}
+      head={`TOWER · ${rec.names?.[rec.you] || "YOU"} vs ${rec.names?.[them] || "?"} · ${rec.winner === rec.you ? "WIN" : "LOSS"}`}
+      label={`${fmtClock(pb.time)} / ${fmtClock(end)}`}>
+      <div className="flex items-start" style={{ gap: 10 * P }}>{side(rec.you || "A")}{side(them)}</div>
     </ReplayPage>
   );
 }
@@ -7340,7 +7744,11 @@ export default function TurfBlocks() {
       if (b.resume) { setScreen("BLITZ"); return; }
       begin("blitz", b.opponent);
     });
-    return () => { offF(); offB(); };
+    const offT = net.on("towerStart", (t) => {
+      if (t.resume) { setScreen("TOWER"); return; }
+      begin("tower", t.opponent);
+    });
+    return () => { offF(); offB(); offT(); };
   }, [setScreen]);
 
   const status = useStatus();
@@ -7439,6 +7847,8 @@ export default function TurfBlocks() {
       /* The end screen's panels rise into place, four pixels in four steps. */
       @keyframes tbRise { from { opacity: 0; transform: translateY(calc(var(--p) * 4)) } to { opacity: 1; transform: none } }
       .tb-rise { animation: tbRise 480ms steps(4) both; }
+      .tb-zgdanger { animation: tbZgDanger 650ms ease-in-out infinite alternate; }
+      @keyframes tbZgDanger { from { opacity: .35; } to { opacity: 1; } }
       .tb-zgflash { background: linear-gradient(90deg, rgba(200,250,255,.0), rgba(220,252,255,.95) 20%, rgba(255,255,255,1) 50%, rgba(220,252,255,.95) 80%, rgba(200,250,255,0)); animation: tbZgFlash 190ms ease-out both; }
       @keyframes tbZgFlash { 0% { opacity: 1; transform: scaleY(1); } 100% { opacity: 0; transform: scaleY(.15); } }
       /* A collision: the square glitches side to side. */
@@ -7582,7 +7992,7 @@ export default function TurfBlocks() {
           else if (t === "PRIVATE") setScreen("PRIVATE");
           else if (t === "REPLAYS") setScreen("REPLAYS");
           // Every game mode: in on the tide (the game then counts down from 3).
-          else if (["MARATHON", "SPRINT", "ULTRA", "ZEROG", "BLITZBOT", "TURNBASED", "HOTSEAT"].includes(t)) wipe(() => { setSeed((s) => s + 1); setScreen(t); });
+          else if (["MARATHON", "SPRINT", "ULTRA", "ZEROG", "ZEROGULTRA", "TOWERBOT", "BLITZBOT", "TURNBASED", "HOTSEAT"].includes(t)) wipe(() => { setSeed((s) => s + 1); setScreen(t); });
         }}
         loadout={loadout} setLoadout={setLoadout}
         colors={colors} profile={profile} status={status}
@@ -7599,7 +8009,9 @@ export default function TurfBlocks() {
   else if (screen === "REPLAYS")
     view = <ReplayList onOpen={(id) => { setReplayId(id); setScreen("REPLAY"); }} onBack={() => setScreen("MENU")} />;
   else if (screen === "REPLAY")
-    view = replays.get(replayId)?.kind === "blitz"
+    view = replays.get(replayId)?.kind === "tower"
+      ? <TowerReplayViewer rec={replays.get(replayId)} onBack={() => setScreen("REPLAYS")} />
+      : replays.get(replayId)?.kind === "blitz"
       ? <BlitzReplayViewer rec={replays.get(replayId)} colors={colors} onBack={() => setScreen("REPLAYS")} />
       : replays.get(replayId)?.kind
       ? <SoloReplayViewer rec={replays.get(replayId)} onBack={() => setScreen("REPLAYS")} />
@@ -7631,8 +8043,9 @@ export default function TurfBlocks() {
       onRequeue={() => { startQueue("blitz", loadout); setMenuModal("LOBBY:blitz"); setScreen("MENU"); }} />;
   else if (screen === "SPRINT" || screen === "ULTRA")
     view = <SprintGame key={`${screen}${seed}`} ultra={screen === "ULTRA"} onExit={() => setScreen("MENU")} />;
-  else if (screen === "ZEROG")
-    view = <ZeroGGame key={`${screen}${seed}`} onExit={() => setScreen("MENU")} />;
+  else if (screen === "ZEROG" || screen === "ZEROGULTRA" || screen === "TOWERBOT" || screen === "TOWER")
+    view = <ZeroGGame key={`${screen}${seed}`} mode={{ ZEROG: "sprint", ZEROGULTRA: "ultra", TOWERBOT: "towerbot", TOWER: "tower" }[screen]} onExit={() => setScreen("MENU")}
+      onRequeue={() => { startQueue("tower", loadout); setMenuModal("LOBBY:tower"); setScreen("MENU"); }} />;
   else if (screen === "MARATHON")
     view = <MarathonGame key={seed} theme={theme} onExit={(again) => (again ? setSeed((s) => s + 1) : setScreen("MENU"))} />;
   else
@@ -7650,7 +8063,7 @@ export default function TurfBlocks() {
       <PixelSky theme={theme} />{shell}{view}
       {intro && (
         <VersusIntro key={intro.id} intro={intro} wipe={wipe}
-          onScreen={() => { qstore.found = null; qemit(); setMenuModal(null); setScreen(intro.mode === "blitz" ? "BLITZ" : "RANKED"); }}
+          onScreen={() => { qstore.found = null; qemit(); setMenuModal(null); setScreen(intro.mode === "blitz" ? "BLITZ" : intro.mode === "tower" ? "TOWER" : "RANKED"); }}
           onDone={() => setIntro(null)} />
       )}
       {wipeRun && (
