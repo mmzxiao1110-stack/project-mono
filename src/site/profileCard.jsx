@@ -17,12 +17,16 @@ const rgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
 const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
 
 /** The card's sky: a low-resolution canvas, dithered, scaled up crisp. */
-export function CardSky({ card, pixel = 6 }) {
+export function CardSky({ card, pixel = 6, world = null, at = null }) {
   const ref = useRef(null), box = useRef(null);
   const c = cleanCard(card);
-  // Square pixels: as many as fit the card at `pixel` CSS pixels each.
-  const [{ w, h }, setDims] = useState({ w: 120, h: 30 });
+  // Square pixels: as many as fit at `pixel` CSS pixels each. With `world`
+  // (the whole card's size) every piece of the card draws the same sky and
+  // shows its own part of it (`at`), so the gradient runs on unbroken.
+  const [own, setDims] = useState({ w: 120, h: 30 });
+  const { w, h } = world ? { w: Math.max(16, Math.round(world.w / pixel)), h: Math.max(8, Math.round(world.h / pixel)) } : own;
   useEffect(() => {
+    if (world) return undefined;
     const el = box.current; if (!el) return undefined;
     const fit = () => setDims((d) => {
       const nw = Math.max(16, Math.round(el.clientWidth / pixel)), nh = Math.max(8, Math.round(el.clientHeight / pixel));
@@ -32,7 +36,7 @@ export function CardSky({ card, pixel = 6 }) {
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(fit) : null;
     ro?.observe(el);
     return () => ro?.disconnect();
-  }, [pixel]);
+  }, [pixel, world]);
   useEffect(() => {
     const cv = ref.current; if (!cv) return undefined;
     const ctx = cv.getContext("2d"), img = ctx.createImageData(w, h), d = img.data;
@@ -90,7 +94,7 @@ export function CardSky({ card, pixel = 6 }) {
     return () => cancelAnimationFrame(raf);
   }, [c.sky, c.accent, c.pattern, w, h]);
   return (
-    <div ref={box} className="absolute inset-0">
+    <div ref={box} className="absolute" style={world ? { left: -(at?.x || 0), top: -(at?.y || 0), width: world.w, height: world.h } : { inset: 0 }}>
       <canvas ref={ref} width={w} height={h} aria-hidden="true" className="absolute inset-0 w-full h-full" style={{ imageRendering: "pixelated" }} />
     </div>
   );
@@ -135,22 +139,22 @@ function Tag({ n, ink }) {
 }
 
 /**
- * One mode's mini-card: a glass bubble over the same sky as the card. Light
- * from the top left: a bright rim and a glint there, a shade bottom right.
+ * One mode's mini-card: a glass bubble over the card's own sky (the same
+ * pixels, carried on unbroken). Light from the top left: a bright rim and a
+ * glint there, a shade bottom right. No border.
  */
-function Mini({ card, label, big, lead, tag, sub, size = 1, style }) {
+const Mini = ({ card, world, at, label, big, lead, tag, sub, size = 1, style, boxRef }) => {
   const ink = CARD_INKS[card.accent];
   return (
-    <div className="relative" style={{ clipPath: STEP(1), ...style }}>
-      <CardSky card={card} />
+    <div ref={boxRef} className="relative" style={{ clipPath: STEP(1), ...style }}>
+      {world && at && <CardSky card={card} world={world} at={at} />}
       <div className="relative flex flex-col items-center text-center" style={{
-        padding: `${px(3 + 2 * size)} ${px(3)} ${px(3 + 2 * size)}`, gap: px(1 + size), minWidth: 0,
-        background: `color-mix(in srgb, ${ink} 12%, rgba(255,255,255,.07))`,
-        boxShadow: `inset ${px(1)} ${px(1)} 0 rgba(255,255,255,.32), inset ${px(-1)} ${px(-1)} 0 rgba(0,0,0,.25), inset ${px(2)} ${px(2)} 0 rgba(255,255,255,.08)`,
+        padding: `${px(3 + 2 * size)} ${px(3)}`, gap: px(1 + size), minWidth: 0,
+        background: `color-mix(in srgb, ${ink} 10%, rgba(255,255,255,.07))`,
+        boxShadow: `inset ${px(1)} ${px(1)} 0 rgba(255,255,255,.3), inset ${px(-1)} ${px(-1)} 0 rgba(0,0,0,.25), inset ${px(2)} ${px(2)} 0 rgba(255,255,255,.07)`,
       }}>
-        {/* the glint */}
-        <span aria-hidden="true" className="absolute" style={{ left: px(3), top: px(3), width: px(3), height: px(1), background: "rgba(255,255,255,.55)" }} />
-        <span aria-hidden="true" className="absolute" style={{ left: px(3), top: px(4), width: px(1), height: px(2), background: "rgba(255,255,255,.4)" }} />
+        <span aria-hidden="true" className="absolute" style={{ left: px(3), top: px(3), width: px(3), height: px(1), background: "rgba(255,255,255,.5)" }} />
+        <span aria-hidden="true" className="absolute" style={{ left: px(3), top: px(4), width: px(1), height: px(2), background: "rgba(255,255,255,.35)" }} />
         <span className="tb-t" style={{ color: "rgba(255,255,255,.65)", letterSpacing: px(1) }}>{label}</span>
         <div className="flex items-center justify-center flex-wrap" style={{ gap: px(2) }}>
           {lead}
@@ -161,37 +165,49 @@ function Mini({ card, label, big, lead, tag, sub, size = 1, style }) {
       </div>
     </div>
   );
-}
+};
 
-/** The card's options, behind the pencil (your own card only). */
+/** The card's options, behind the pencil (your own card only): see-through glass. */
 function CardOptions({ card, onChange, onClose }) {
   const pick = (patch) => onChange({ ...card, ...patch });
-  const row = (label, kids) => (
-    <div className="flex items-center flex-wrap" style={{ gap: px(2) }}>
-      <span className="tb-t" style={{ color: "rgba(255,255,255,.7)", width: px(44), flexShrink: 0 }}>{label}</span>{kids}
-    </div>
-  );
-  const sq = (on) => ({ width: px(9), height: px(9), clipPath: STEP(0.5), boxShadow: on ? `inset 0 0 0 ${px(1)} #fff` : "none", outline: "none" });
+  const ink = CARD_INKS[card.accent];
+  const head = (t) => <span className="tb-t" style={{ color: "rgba(255,255,255,.6)", letterSpacing: px(1) }}>{t}</span>;
+  const frame = (on) => (on ? { boxShadow: `0 0 0 ${px(1)} #fff, ${px(1)} ${px(1)} 0 ${px(1)} rgba(0,0,0,.4)` } : { boxShadow: `${px(1)} ${px(1)} 0 rgba(0,0,0,.35)` });
   return (
-    <div className="absolute flex flex-col" onClick={(e) => e.stopPropagation()} style={{ right: px(4), top: px(4), zIndex: 5, gap: px(2), padding: px(4),
-      background: "rgba(8,6,22,.82)", clipPath: STEP(1) }}>
-      {row("SKY", Object.entries(SKIES).map(([k, c]) => (
-        <button key={k} aria-label={`Sky ${k}`} aria-pressed={card.sky === k} onClick={() => pick({ sky: k })}
-          style={{ ...sq(card.sky === k), width: px(12), background: `linear-gradient(180deg, ${c[0]} 0 50%, ${c[1]} 50% 80%, ${c[2]} 80%)` }} />
-      )))}
-      {row("ACCENT", CARD_INKS.map((c, i) => (
-        <button key={c} aria-label={`Accent ${i + 1}`} aria-pressed={card.accent === i} onClick={() => pick({ accent: i })} style={{ ...sq(card.accent === i), background: c }} />
-      )))}
-      {row("PATTERN", PATTERNS.map((k) => (
-        <button key={k} aria-pressed={card.pattern === k} onClick={() => pick({ pattern: k })} className="tb-t"
-          style={{ padding: `0 ${px(2)}`, color: card.pattern === k ? "#fff" : "rgba(255,255,255,.55)", background: card.pattern === k ? `color-mix(in srgb, ${CARD_INKS[card.accent]} 45%, transparent)` : "rgba(255,255,255,.08)", clipPath: STEP(0.5) }}>{k.toUpperCase()}</button>
-      )))}
-      <button onClick={onClose} className="tb-t self-end" style={{ color: "rgba(255,255,255,.75)" }}>DONE</button>
+    <div className="absolute flex flex-col" onClick={(e) => e.stopPropagation()} style={{ right: px(6), top: px(5), zIndex: 6, gap: px(3), padding: px(5), width: px(118),
+      background: `color-mix(in srgb, ${ink} 10%, rgba(10,8,28,.78))`, clipPath: STEP(1),
+      boxShadow: `inset ${px(1)} ${px(1)} 0 rgba(255,255,255,.28), inset ${px(-1)} ${px(-1)} 0 rgba(0,0,0,.3)` }}>
+      <div className="flex items-center justify-between">
+        <span className="tb-t tb-b" style={{ color: "#fff", letterSpacing: px(1) }}>YOUR CARD</span>
+        <button onClick={onClose} aria-label="Close" className="tb-t tb-b" style={{ color: "#fff", padding: `0 ${px(2)}`, background: "rgba(255,255,255,.12)", clipPath: STEP(0.5) }}>✕</button>
+      </div>
+      {head("SKY")}
+      <div className="grid" style={{ gridTemplateColumns: "repeat(4, 1fr)", gap: px(2) }}>
+        {Object.entries(SKIES).map(([k, c]) => (
+          <button key={k} aria-label={`Sky ${k}`} aria-pressed={card.sky === k} onClick={() => pick({ sky: k })} title={k}
+            style={{ height: px(11), background: `linear-gradient(180deg, ${c[0]} 0 40%, ${c[1]} 40% 75%, ${c[2]} 75% 88%, ${c[3]} 88%)`, ...frame(card.sky === k) }} />
+        ))}
+      </div>
+      {head("ACCENT")}
+      <div className="grid" style={{ gridTemplateColumns: "repeat(6, 1fr)", gap: px(2) }}>
+        {CARD_INKS.map((c, i) => (
+          <button key={c} aria-label={`Accent ${i + 1}`} aria-pressed={card.accent === i} onClick={() => pick({ accent: i })}
+            style={{ height: px(9), background: `linear-gradient(180deg, color-mix(in srgb, ${c} 70%, white) 0 25%, ${c} 25% 75%, color-mix(in srgb, ${c} 75%, black) 75%)`, ...frame(card.accent === i) }} />
+        ))}
+      </div>
+      {head("PATTERN")}
+      <div className="grid" style={{ gridTemplateColumns: "repeat(2, 1fr)", gap: px(2) }}>
+        {PATTERNS.map((k) => (
+          <button key={k} aria-pressed={card.pattern === k} onClick={() => pick({ pattern: k })} className="tb-t"
+            style={{ padding: `${px(1)} 0`, color: card.pattern === k ? "#fff" : "rgba(255,255,255,.6)", background: card.pattern === k ? `color-mix(in srgb, ${ink} 40%, transparent)` : "rgba(255,255,255,.07)", clipPath: STEP(0.5) }}>{k.toUpperCase()}</button>
+        ))}
+      </div>
     </div>
   );
 }
 
 const PENCIL = ["......11", ".....111", "....111.", "...111..", "..111...", ".111....", "111.....", "11......"];
+const hours = (sec) => (!sec ? "0 HOURS" : sec < 3600 ? `${Math.max(1, Math.round(sec / 60))} MIN` : `${Math.round(sec / 3600).toLocaleString("en-US")} HOURS`);
 
 export function ProfileCard({ p, compact = false, href = null, onEdit = null }) {
   const card = cleanCard(p.card);
@@ -199,46 +215,68 @@ export function ProfileCard({ p, compact = false, href = null, onEdit = null }) 
   const bz = p.blitz;
   const bRank = bz && bz.games >= PLACEMENT_GAMES ? RANKS[rankIndexFor(bz.rating)] : null;
   const cRank = p.rank ? RANKS.find((r) => r.name === p.rank) : null;
-  const k = compact ? 0.75 : 1;
-  const av = Math.round(30 * k), bleed = Math.round(6 * k);   // picture size and how far it hangs over the corner (in pixels of --p)
+  const k = compact ? 0.8 : 1;
+  const av = Math.round(48 * k);
+  const SIDE = 3, BOTTOM = 4; // how far (in pixels of --p) the side cards and the picture hang out: a little
+  // Where the card and each mini-card sit, so they can all show the same sky.
+  const root = useRef(null), body = useRef(null), m0 = useRef(null), m1 = useRef(null), m2 = useRef(null);
+  const [geo, setGeo] = useState(null);
+  useEffect(() => {
+    const el = root.current; if (!el) return undefined;
+    const measure = () => {
+      const r = el.getBoundingClientRect();
+      const at = (x) => { const b = x.current?.getBoundingClientRect(); return b ? { x: b.left - r.left, y: b.top - r.top } : null; };
+      setGeo({ world: { w: Math.round(r.width), h: Math.round(r.height) }, body: at(body), minis: [at(m0), at(m1), at(m2)] });
+    };
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    ro?.observe(el);
+    const raf = requestAnimationFrame(measure);
+    return () => { ro?.disconnect(); cancelAnimationFrame(raf); };
+  }, []);
   return (
-    <div className="relative w-full font-mono tb-pcard" style={{ padding: `${px(bleed)} ${px(bleed)} 0` }}>
+    <div ref={root} className="relative w-full font-mono tb-pcard" style={{ padding: `0 ${px(SIDE)} ${px(BOTTOM)}` }}>
       <style>{`.tb-pcard .tb-pencil { opacity: 0; transition: opacity .15s steps(3); } .tb-pcard:hover .tb-pencil, .tb-pcard:focus-within .tb-pencil { opacity: 1; } @media (hover: none) { .tb-pcard .tb-pencil { opacity: .8; } }`}</style>
-      <div className="relative w-full" style={{ clipPath: STEP(1) }}>
-        <CardSky card={card} />
-        <div className="relative flex items-start" style={{ padding: `${px(4)} ${px(5)} ${px(Math.round(30 * k))} ${px(av - bleed + 5)}`, gap: px(4), minHeight: px(av + 10) }}>
-          <div className="flex flex-col min-w-0 flex-1" style={{ gap: px(2) }}>
-            <span className="truncate" style={{ ...BIG, fontSize: px(compact ? 14 : 20), textShadow: `${px(1)} ${px(1)} 0 rgba(0,0,0,.55)` }}>{p.name}</span>
-            {p.joined && <span className="tb-t" style={{ color: "rgba(255,255,255,.7)" }}>JOINED {timeAgo(p.joined).toUpperCase()}</span>}
+      {/* The card itself, its sky behind everything. */}
+      <div ref={body} className="absolute overflow-hidden" style={{ left: px(SIDE), right: px(SIDE), top: 0, bottom: px(BOTTOM), clipPath: STEP(1) }}>
+        {geo && <CardSky card={card} world={geo.world} at={geo.body} />}
+      </div>
+      <div className="relative" style={{ padding: `${px(6)} ${px(6)} 0` }}>
+        <div className="flex items-center" style={{ gap: px(5) }}>
+          {/* The picture: left, centred, hanging just over the left edge. */}
+          <div style={{ marginLeft: px(-6 - SIDE), boxShadow: `${px(2)} ${px(2)} 0 rgba(0,0,0,.35)`, flexShrink: 0 }}><Avatar name={p.name} size={px(av)} /></div>
+          <div className="flex flex-col min-w-0" style={{ gap: px(2), flex: "1 1 auto" }}>
+            <span className="truncate" style={{ ...BIG, fontSize: px(compact ? 15 : 22), textShadow: `${px(1)} ${px(1)} 0 rgba(0,0,0,.55)` }}>{p.name}</span>
             <span className="tb-t flex items-center" style={{ gap: px(2), color: "rgba(255,255,255,.7)" }}>
-              CONTROL {cRank ? <RankIcon rank={cRank} size={px(9)} /> : null}
+              CONTROL {cRank ? <RankIcon rank={cRank} size={px(10)} /> : null}
               <span className="tb-b" style={{ color: "#fff" }}>{p.tr != null ? p.tr : p.placementLeft != null ? `${PLACEMENT_GAMES - p.placementLeft}/${PLACEMENT_GAMES} placement` : "—"}</span>
             </span>
           </div>
-          {onEdit && (
-            <button className="tb-pencil absolute" aria-label="Edit card colours" onClick={() => setEditing((e) => !e)}
-              style={{ right: px(4), top: px(4), padding: px(2), background: "rgba(255,255,255,.16)", clipPath: STEP(0.5), zIndex: 4 }}>
-              <svg viewBox="0 0 8 8" style={{ width: px(8), height: px(8), display: "block", shapeRendering: "crispEdges" }}>
-                {PENCIL.flatMap((row, y) => [...row].map((b, x) => (b === "1" ? <rect key={`${x},${y}`} x={x} y={y} width="1" height="1" fill="rgba(255,255,255,.85)" /> : null)))}
-              </svg>
-            </button>
-          )}
-          {editing && onEdit && <CardOptions card={card} onChange={onEdit} onClose={() => setEditing(false)} />}
+          <div className="flex flex-col items-end text-right shrink-0" style={{ gap: px(2), marginRight: onEdit ? px(12) : 0 }}>
+            {p.joined && <span className="tb-t" style={{ color: "rgba(255,255,255,.75)" }}>JOINED {timeAgo(p.joined).toUpperCase()}</span>}
+            <span className="tb-t" style={{ color: "rgba(255,255,255,.75)" }}>{hours(p.played ?? p.seconds)} PLAYED</span>
+          </div>
+        </div>
+        {/* The three modes: Blitz biggest in the middle, Sprint and Ultra lower, over the bottom corners. */}
+        <div className="grid items-end" style={{ margin: `${px(8)} ${px(-6 - SIDE)} ${px(-BOTTOM)}`, gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr)", gap: px(compact ? 5 : 8) }}>
+          <Mini boxRef={m0} card={card} world={geo?.world} at={geo?.minis[0]} label="SPRINT · 40L" style={{ marginBottom: 0 }}
+            big={p.sprint ? clock(p.sprint.best) : "—"} tag={p.sprint?.position} sub={p.sprint?.at ? timeAgo(p.sprint.at).toUpperCase() : "no run yet"} />
+          <Mini boxRef={m1} card={card} world={geo?.world} at={geo?.minis[1]} label="BLITZ" size={compact ? 1 : 2} style={{ marginBottom: px(BOTTOM + 4) }}
+            lead={bz ? <RankIcon rank={bRank} size={px(compact ? 14 : 22)} /> : null}
+            big={bz ? bz.rating : "—"} tag={bz?.position}
+            sub={bz ? (bz.pps != null ? `${bz.apm?.toFixed(1)} APM · ${bz.pps.toFixed(2)} PPS · ${bz.vs?.toFixed(1)} VS` : `${bz.games} games`) : "unplayed"} />
+          <Mini boxRef={m2} card={card} world={geo?.world} at={geo?.minis[2]} label="ULTRA · 2 MIN" style={{ marginBottom: px(2) }}
+            big={p.ultra ? p.ultra.best.toLocaleString("en-US") : "—"} tag={p.ultra?.position} sub={p.ultra?.at ? timeAgo(p.ultra.at).toUpperCase() : "no run yet"} />
         </div>
       </div>
-      {/* The picture, on the corner: it hangs over the top and the left by the same amount. */}
-      <div className="absolute" style={{ left: 0, top: 0, boxShadow: `${px(2)} ${px(2)} 0 rgba(0,0,0,.35)` }}><Avatar name={p.name} size={px(av)} /></div>
-      {/* The three modes: Blitz biggest in the middle, Sprint and Ultra lower, covering the bottom corners. */}
-      <div className="relative grid items-start" style={{ margin: `${px(Math.round(-26 * k))} ${px(-bleed)} 0`, gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.45fr) minmax(0, 1fr)", gap: px(compact ? 4 : 7), zIndex: 1 }}>
-        <Mini card={card} label="SPRINT · 40L" style={{ marginTop: px(Math.round(16 * k)) }}
-          big={p.sprint ? clock(p.sprint.best) : "—"} tag={p.sprint?.position} sub={p.sprint?.at ? timeAgo(p.sprint.at).toUpperCase() : "no run yet"} />
-        <Mini card={card} label="BLITZ" size={compact ? 1 : 2}
-          lead={bz ? <RankIcon rank={bRank} size={px(compact ? 14 : 22)} /> : null}
-          big={bz ? bz.rating : "—"} tag={bz?.position}
-          sub={bz ? (bz.pps != null ? `${bz.apm?.toFixed(1)} APM · ${bz.pps.toFixed(2)} PPS · ${bz.vs?.toFixed(1)} VS` : `${bz.games} games`) : "unplayed"} />
-        <Mini card={card} label="ULTRA · 2 MIN" style={{ marginTop: px(Math.round(9 * k)) }}
-          big={p.ultra ? p.ultra.best.toLocaleString("en-US") : "—"} tag={p.ultra?.position} sub={p.ultra?.at ? timeAgo(p.ultra.at).toUpperCase() : "no run yet"} />
-      </div>
+      {onEdit && (
+        <button className="tb-pencil absolute" aria-label="Edit card colours" onClick={() => setEditing((e) => !e)}
+          style={{ right: px(SIDE + 4), top: px(4), padding: px(2), background: "rgba(255,255,255,.16)", clipPath: STEP(0.5), zIndex: 5 }}>
+          <svg viewBox="0 0 8 8" style={{ width: px(8), height: px(8), display: "block", shapeRendering: "crispEdges" }}>
+            {PENCIL.flatMap((row, y) => [...row].map((b, x) => (b === "1" ? <rect key={`${x},${y}`} x={x} y={y} width="1" height="1" fill="rgba(255,255,255,.85)" /> : null)))}
+          </svg>
+        </button>
+      )}
+      {editing && onEdit && <CardOptions card={card} onChange={onEdit} onClose={() => setEditing(false)} />}
       {href && (
         <a href={href} target="_blank" rel="noopener" className="tb-t flex items-center justify-center no-underline"
           style={{ marginTop: px(5), gap: px(2), color: "#fff", letterSpacing: px(1) }}>↗ VIEW FULL PROFILE</a>
