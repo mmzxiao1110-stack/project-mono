@@ -4907,13 +4907,15 @@ function ZeroGGame({ onExit }) {
     const r = run.current, st = r.st;
     if (!st.cur) return;
     start();
+    const before = st.combo; // clears in a row so far (-1: none)
     const L = zHardDrop(st);
-    sfx.zgDrop(L.piece.x + 1);
-    if (L.lines || L.spin) sfx.zgClear({ lines: L.lines, spin: L.spin, piece: L.piece.id, b2b: L.b2b, allClear: L.allClear });
+    sfx.zgDrop();
+    if (L.lines || L.spin) sfx.zgClear({ lines: L.lines, spin: L.spin, piece: L.piece.id, combo: Math.max(0, L.combo), b2b: L.b2b, allClear: L.allClear });
+    // A big combo just ended: its melody (5 or more clears in a row).
+    if (!L.lines && before >= 4) sfx.zgComboEnd(before + 1);
     if (L.lines) {
       const at = st.pieces;
       r.flash = { rows: L.rows, key: at };
-      if (L.combo >= 1) sfx.zgCombo(L.combo);
       r.pop = { name: L.name, piece: L.piece.id, combo: L.combo, b2b: L.b2b, allClear: L.allClear, key: at };
       setTimeout(() => { const c = run.current; if (c.flash && c.flash.key === at) { c.flash = null; bump(); } }, 200);
       setTimeout(() => { const c = run.current; if (c.pop && c.pop.key === at) { c.pop = null; bump(); } }, 1400);

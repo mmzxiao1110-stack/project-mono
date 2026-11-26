@@ -329,64 +329,60 @@ function play(name, ms, fn) {
 }
 
 /* ------------------------------------------------------------------
-   ZERO-G voices: a harp, a high glassy piano, a bell, all in one key
-   (D major, or D minor with the setting on), drowned in the echo.
+   ZERO-G sounds: bubbles, a low harp, an aquatic chip voice and a soft
+   high piano far back in the reverb. All in A major (A minor with the
+   MINOR KEY setting on).
    ------------------------------------------------------------------ */
 
 const ZG_MAJOR = [0, 2, 4, 5, 7, 9, 11];
 const ZG_MINOR = [0, 2, 3, 5, 7, 8, 10];
-/** Scale degree `d` (0 = D4) as a MIDI note, in the key the player picked. */
-const zdeg = (d, base = 62) => base + 12 * Math.floor(d / 7) + (getZgMinor() ? ZG_MINOR : ZG_MAJOR)[((d % 7) + 7) % 7];
-/** A chord on degree `r` from stacked thirds in the scale: 3 notes a triad, 4 a seventh, 5 a ninth. */
-const zchord = (r, n = 4) => Array.from({ length: n }, (_, i) => r + 2 * i);
-// Each piece's own chord (for its spins): I on I, ii on S, iii on Z, IV on L, V on J, vi on T, vii on O.
-const PIECE_ROOT = [0, 6, 5, 1, 2, 4, 3]; // I O T S Z J L
-const spread = (i, n) => (n > 1 ? (i / (n - 1)) * 1.2 - 0.6 : 0); // across the stereo field
+const A3 = 57, A5 = 81;
+/** Scale degree `d` above `base` (an A) as a MIDI note, in the key the player picked. */
+const za = (d, base = A3) => base + 12 * Math.floor(d / 7) + (getZgMinor() ? ZG_MINOR : ZG_MAJOR)[((d % 7) + 7) % 7];
+const spread = (i, n) => (n > 1 ? (i / (n - 1)) * 1.2 - 0.6 : 0);
+const COMBO_TOP = 7; // the combo melody climbs one octave of the scale, A to A
 
-/** A harp string: a bright pluck that darkens as it rings, with a slightly detuned twin for fuzz. */
-function harp(c, t, m, { vol = 0.045, d = 1.3, pan = 0, wet = 0.55 } = {}) {
+/** The chip voice: a pulse wave in a deep, watery room (a low-pass that closes, a little wobble, lots of echo). */
+function chip(c, t, m, { vol = 0.03, d = 0.45, duty = "p25", pan = 0, wet = 0.7, steps = null } = {}) {
   const f = mtof(m);
-  tone(c, t, { wave: "triangle", f, vol, a: 0.001, d, pan, wet, lp: [Math.min(16000, f * 10), f * 1.4, 0.8] });
-  tone(c, t, { wave: "sine", f, vol: vol * 0.45, a: 0.002, d: d * 1.1, pan: -pan, wet, detune: 9 });
-  tone(c, t, { wave: "sine", f: f * 2, vol: vol * 0.25, a: 0.001, d: d * 0.4, pan, wet });
+  tone(c, t, { wave: duty, f, to: steps ? mtof(steps) : null, glide: 3 * FRAME, steps: !!steps, vol, a: 0.002, d, pan, wet, lp: [7000, 1400, 1.2], vib: 0.0035 });
+  tone(c, t, { wave: "sine", f: f / 2, vol: vol * 0.35, a: 0.004, d: d * 0.8, pan: -pan, wet });
 }
-/** A high, glassy piano note: a sine with quickly fading overtones and a soft hammer. */
-function piano(c, t, m, { vol = 0.04, d = 1.5, pan = 0, wet = 0.5 } = {}) {
+/** A low harp string: a soft pluck that darkens as it rings, with a slightly detuned twin. */
+function harp(c, t, m, { vol = 0.05, d = 1.6, pan = 0, wet = 0.5 } = {}) {
   const f = mtof(m);
-  tone(c, t, { wave: "sine", f, vol, a: 0.002, d, pan, wet });
-  tone(c, t, { wave: "triangle", f: f * 2, vol: vol * 0.3, a: 0.002, d: d * 0.4, pan, wet });
-  tone(c, t, { wave: "sine", f: f * 3, vol: vol * 0.12, a: 0.001, d: d * 0.2, pan, wet });
-  tone(c, t, { wave: "sine", f: f * 4.02, vol: vol * 0.06, a: 0.001, d: d * 0.12, pan, wet });
-  hiss(c, t, { type: "highpass", f: 7000, vol: vol * 0.3, d: 0.018, pan, wet: 0.15 });
+  tone(c, t, { wave: "triangle", f, vol, a: 0.002, d, pan, wet, lp: [Math.min(9000, f * 9), f * 1.3, 0.7] });
+  tone(c, t, { wave: "sine", f, vol: vol * 0.5, a: 0.003, d: d * 1.1, pan: -pan, wet, detune: 8 });
 }
-/** A bell far away: an inharmonic partial and a slow shimmer. */
-function zbell(c, t, m, { vol = 0.025, d = 2.2, pan = 0 } = {}) {
-  const f = mtof(m);
-  tone(c, t, { wave: "sine", f, vol, a: 0.003, d, pan, wet: 0.9, vib: 0.003, hold: 0.05 });
-  tone(c, t, { wave: "sine", f: f * 2.76, vol: vol * 0.35, a: 0.002, d: d * 0.5, pan: -pan, wet: 0.9 });
-}
-/** A soft pad that swells and fades: the "space" under the big moments. */
-function pad(c, t, notes, { vol = 0.018, a = 0.25, d = 2.4 } = {}) {
-  notes.forEach((m, i) => {
-    tone(c, t, { wave: "triangle", f: mtof(m), vol, a, hold: 0.2, d, pan: spread(i, notes.length), wet: 0.85, detune: -6, lp: [2400, 500, 0.5] });
-    tone(c, t, { wave: "sine", f: mtof(m), vol: vol * 0.8, a, hold: 0.2, d, pan: -spread(i, notes.length), wet: 0.85, detune: 7 });
+/**
+ * The piano, high and far away: stretched overtones (a real string's are
+ * slightly sharp), a pair of detuned strings for the beating, a felt hammer,
+ * a fast first decay into a long tail, and nearly all of it sent to the reverb.
+ */
+function piano(c, t, m, { vol = 0.018, d = 3, pan = 0, wet = 1 } = {}) {
+  const f = mtof(m), B = 0.0003;
+  [[1, 1], [2, 0.42], [3, 0.2], [4, 0.1], [5, 0.05], [6, 0.03]].forEach(([n, g]) => {
+    const fn = n * f * Math.sqrt(1 + B * n * n);
+    if (fn > 16000) return;
+    tone(c, t, { wave: "sine", f: fn, vol: vol * g, a: 0.002, d: d / Math.pow(n, 0.7), pan, wet });
+    if (n === 1) {
+      tone(c, t, { wave: "sine", f: fn, vol: vol * 0.55, a: 0.002, d, pan: -pan, wet, detune: 3 });
+      tone(c, t, { wave: "sine", f: fn, vol: vol * 0.6, a: 0.002, d: 0.18, pan, wet: wet * 0.5 }); // the bright first moment
+    }
   });
+  hiss(c, t, { type: "lowpass", f: 2200, q: 0.7, vol: vol * 0.5, d: 0.025, pan, wet: 0.4 });
 }
-/** A rolled chord: the notes one after another, quick, like a hand across strings. */
-function roll(c, t, notes, voice = harp, { step = 0.03, ...o } = {}) {
-  notes.forEach((m, i) => voice(c, t + i * step, m, { pan: spread(i, notes.length), ...o }));
-  return t + notes.length * step;
-}
-/** A glissando through every note of the scale from degree a to b. */
-function gliss(c, t, a, b, voice = harp, { step = 0.02, base = 62, ...o } = {}) {
+/** A rolled run on the harp through the scale from degree a to b. */
+function harpRun(c, t, a, b, { step = 0.04, base = A3, vol = 0.04, d = 1.4 } = {}) {
   const dir = b >= a ? 1 : -1, n = Math.abs(b - a) + 1;
-  for (let i = 0; i < n; i++) voice(c, t + i * step, zdeg(a + dir * i, base), { pan: spread(i, n) * dir, ...o });
+  for (let i = 0; i < n; i++) harp(c, t + i * step, za(a + dir * i, base), { vol, d, pan: spread(i, n) * 0.7 });
   return t + n * step;
 }
-/** A swirl of water: noise turning through a filter, for spins. */
-function swirl(c, t, { vol = 0.05, up = true, d = 0.35 } = {}) {
-  hiss(c, t, { type: "bandpass", f: up ? 500 : 3500, to: up ? 3500 : 500, q: 4, vol, d, wet: 0.6, pan: -0.4 });
-  hiss(c, t + 0.05, { type: "bandpass", f: up ? 700 : 2800, to: up ? 4200 : 400, q: 6, vol: vol * 0.7, d, wet: 0.6, pan: 0.4 });
+/** The muffled underwater thump of a piece landing, with a pixel step down in pitch. */
+function muffle(c, t, { vol = 0.3, f = 150 } = {}) {
+  tone(c, t, { wave: "sine", f, to: f * 0.35, glide: 0.09, vol, a: 0.002, d: 0.16, wet: 0.08 });
+  tone(c, t, { wave: "p25", f: f * 0.75, to: f * 0.4, glide: 4 * FRAME, steps: true, vol: vol * 0.12, a: 0.002, d: 0.1, wet: 0.15, lp: [700, 180, 1] });
+  hiss(c, t, { type: "lowpass", f: 500, to: 150, q: 1, vol: vol * 0.25, d: 0.1, wet: 0.2 });
 }
 
 export const sfx = {
@@ -531,148 +527,132 @@ export const sfx = {
 
   /* ---------- ZERO-G (the falling-block Sprint) ---------- */
 
-  /** A step sideways: the faintest glassy tick. */
+  /** Left or right: a small tick, under water. */
   zgMove() {
-    play("zgMove", 18, (c, t) => tone(c, t, { wave: "sine", f: rand(2300, 2500), vol: 0.016, a: 0.001, d: 0.025, wet: 0.08 }));
+    play("zgMove", 22, (c, t) => {
+      tone(c, t, { wave: "sine", f: rand(1500, 1700), to: 900, glide: 0.02, vol: 0.022, a: 0.001, d: 0.03, wet: 0.15, lp: [2400, 1200, 1] });
+    });
   },
-  /** A turn: one high harp string (higher for clockwise, higher still for 180) and a breath of water. */
+  /** A turn: one small bubble. */
   zgRotate(dir = 1) {
-    play("zgRotate", 25, (c, t) => {
-      harp(c, t, zdeg(dir === 2 ? 18 : dir > 0 ? 16 : 14), { vol: 0.022, d: 0.35, wet: 0.3, pan: dir === 2 ? 0 : dir * 0.3 });
-      hiss(c, t, { f: 2600, to: 1200, q: 2, vol: 0.012, d: 0.05, wet: 0.1 });
-    });
+    play("zgRotate", 25, (c, t) => bubble(c, t, dir === 2 ? rand(820, 900) : dir > 0 ? rand(700, 760) : rand(600, 660), 0.05, dir === 2 ? 0 : dir * 0.25, 0.35));
   },
-  /** Hold: two harp strings and a bubble sinking into a pocket. */
+  /** Hold: two bubbles. */
   zgHold() {
-    play("zgHold", 50, (c, t) => {
-      harp(c, t, zdeg(11), { vol: 0.03, d: 0.6, pan: -0.3 });
-      harp(c, t + 0.04, zdeg(9), { vol: 0.028, d: 0.6, pan: 0.3 });
-      tone(c, t, { wave: "sine", f: 900, to: 420, glide: 0.09, vol: 0.04, d: 0.12, wet: 0.35 });
-    });
+    play("zgHold", 50, (c, t) => { bubble(c, t, rand(520, 580), 0.045, -0.2, 0.35); bubble(c, t + 0.05, rand(760, 820), 0.04, 0.2, 0.35); });
   },
-  /** A soft drop reaching the floor: a muffled tap. */
+  /** Soft drop reaching the floor: a small muffled thump. */
   zgLand() {
-    play("zgLand", 50, (c, t) => tone(c, t, { wave: "sine", f: 220, to: 120, glide: 0.05, vol: 0.05, d: 0.07, wet: 0.05 }));
+    play("zgLand", 50, (c, t) => muffle(c, t, { vol: 0.18, f: 170 }));
+  },
+  /** Hard drop: the muffled thump, a little heavier, and a bubble. */
+  zgDrop() {
+    play("zgDrop", 20, (c, t) => { muffle(c, t, { vol: 0.3, f: 150 }); bubble(c, t + 0.03, rand(500, 700), 0.025, rand(-0.3, 0.3), 0.3); });
   },
   /**
-   * Hard drop: a clean low thump, and a soft piano note picked by the column
-   * it lands in, so where you drop pieces plays a melody.
+   * A clear (or a spin). `combo` counts clears in a row from 0.
+   *   1–3 lines  a low harp, bubbles, and the chip on A, a step higher in
+   *              the scale for every clear in a row; from the second, the harp
+   *              rolls from A up to that note, and at the top of the octave it
+   *              runs fast from A to A.
+   *   quad, spin double, spin triple (any piece)  their own sharp chip figures.
+   *   The piano answers from far back.
    */
-  zgDrop(col = 4) {
-    play("zgDrop", 20, (c, t) => {
-      thump(c, t, { f: 190, to: 60, vol: 0.28, d: 0.13 });
-      piano(c, t + 0.005, zdeg(Math.max(0, Math.min(9, col)) + 7), { vol: 0.022, d: 0.7, pan: (col - 4.5) / 6, wet: 0.45 });
-      bubble(c, t + 0.02, rand(900, 1200), 0.03, rand(-0.3, 0.3), 0.3);
-    });
-  },
-  /**
-   * A clear, a spin, or both.
-   *   1 line  a rolled harp triad          2  a rolled seventh, a piano note on top
-   *   3       a fast harp arpeggio, two octaves up
-   *   4       a wide piano chord rolled from the bass and a harp glissando
-   *   spins   the piece's own chord, with a swirl of water:
-   *           mini  three bright piano sparks        no lines  a quiet rolled chord
-   *           single an arpeggio up     double a glissando down into a rolled ninth
-   *           triple a falling glissando, a three-octave chord, an arpeggio to the top and a bell
-   *   back-to-back adds a far bell; an all clear a long glissando up and down over a pad.
-   */
-  zgClear({ lines = 0, spin = null, piece = 2, b2b = 0, allClear = false } = {}) {
+  zgClear({ lines = 0, spin = null, combo = 0, b2b = 0, allClear = false } = {}) { // every piece's spin sounds the same
     play("zgClear", 30, (c, t) => {
-      if (spin) {
-        const r = PIECE_ROOT[piece] ?? 5;
-        swirl(c, t, { vol: spin === "mini" ? 0.03 : 0.05 });
-        if (spin === "mini") {
-          [14, 16, 18].forEach((d, i) => piano(c, t + 0.05 + i * 0.045, zdeg(r + d), { vol: 0.03, d: 0.9, pan: spread(i, 3) }));
-          if (lines) roll(c, t + 0.2, zchord(r, 3).map((d) => zdeg(d + 7)), harp, { step: 0.03, vol: 0.035 });
-        } else if (!lines) {
-          roll(c, t + 0.04, zchord(r, 4).map((d) => zdeg(d)), harp, { step: 0.04, vol: 0.03 });
-        } else if (lines === 1) {
-          const notes = [...zchord(r, 4), ...zchord(r + 7, 3)].map((d) => zdeg(d));
-          const end = roll(c, t + 0.03, notes, harp, { step: 0.024, vol: 0.04 });
-          piano(c, end, zdeg(r + 16), { vol: 0.04, d: 1.6 });
-        } else if (lines === 2) {
-          const end = gliss(c, t + 0.02, r + 21, r + 9, harp, { step: 0.018, vol: 0.026 });
-          roll(c, end, zchord(r, 5).map((d) => zdeg(d)), piano, { step: 0.03, vol: 0.04, d: 2 });
-          pad(c, end, zchord(r, 3).map((d) => zdeg(d, 50)));
-        } else {
-          // The triple: everything.
-          tone(c, t, { wave: "sine", f: mtof(zdeg(r, 38)), vol: 0.12, a: 0.25, d: 1.6, wet: 0.3 });
-          const end = gliss(c, t + 0.02, r + 28, r + 7, harp, { step: 0.014, vol: 0.024 });
-          roll(c, end, [...zchord(r, 4).map((d) => zdeg(d, 50)), ...zchord(r, 5).map((d) => zdeg(d)), ...zchord(r + 7, 3).map((d) => zdeg(d))], piano, { step: 0.026, vol: 0.038, d: 2.4 });
-          gliss(c, end + 0.35, r + 7, r + 25, harp, { step: 0.03, vol: 0.022 });
-          zbell(c, end + 0.5, zdeg(r + 21), { vol: 0.03 });
-          pad(c, end, zchord(r, 4).map((d) => zdeg(d, 50)), { vol: 0.022, d: 3 });
-          fizz(c, end, 10, 0.6, { lo: 600, hi: 2200, vol: 0.035, spread: 0.8 });
+      const step = Math.max(0, Math.min(combo, COMBO_TOP));
+      const note = za(step, A5);
+      // The low harp, by lines.
+      if (lines) [0, 4, 7].slice(0, Math.min(lines, 3)).forEach((d, i) => harp(c, t + i * 0.05, za(d, 45), { vol: 0.06, d: 1.8, pan: spread(i, 3) * 0.5 }));
+      // The harp roll up to the combo note, or the fast A to A at the top.
+      if (lines && combo >= 1) {
+        if (step >= COMBO_TOP) harpRun(c, t + 0.04, 0, 7, { step: 0.022, vol: 0.035, d: 1 });
+        else harpRun(c, t + 0.04, 0, step, { step: 0.045, vol: 0.038 });
+      }
+      const special = lines >= 4 || (spin === "full" && lines >= 2);
+      if (!special) {
+        if (lines) chip(c, t, note, { vol: 0.032, d: 0.55 });
+        if (spin === "mini" || (spin && lines <= 1)) {
+          // A small spin: two quick chip blips going up.
+          chip(c, t, za(step + 4, A5), { vol: 0.022, d: 0.12, duty: "p12" });
+          chip(c, t + 0.06, za(step + 7, A5), { vol: 0.022, d: 0.2, duty: "p12" });
         }
-      } else if (lines === 1) {
-        roll(c, t, zchord(0, 3).map((d) => zdeg(d)), harp, { step: 0.035, vol: 0.04 });
-      } else if (lines === 2) {
-        const end = roll(c, t, zchord(0, 4).map((d) => zdeg(d)), harp, { step: 0.03, vol: 0.04 });
-        piano(c, end, zdeg(11), { vol: 0.035, d: 1.4 });
-      } else if (lines === 3) {
-        const notes = [...zchord(3, 3), ...zchord(10, 3), ...zchord(17, 2)].map((d) => zdeg(d));
-        roll(c, t, notes, harp, { step: 0.022, vol: 0.036 });
       } else if (lines >= 4) {
-        roll(c, t, [zdeg(0, 38), ...zchord(0, 3).map((d) => zdeg(d, 50)), ...zchord(0, 5).map((d) => zdeg(d))], piano, { step: 0.03, vol: 0.04, d: 2.2 });
-        gliss(c, t + 0.25, 7, 21, harp, { step: 0.018, vol: 0.022 });
-        zbell(c, t + 0.6, zdeg(21));
-        pad(c, t, zchord(0, 4).map((d) => zdeg(d, 50)));
+        // The quad: a fast staccato chip arpeggio twice, then a crisp stab.
+        [0, 2, 4, 7, 2, 4, 7, 9].forEach((d, i) => chip(c, t + i * 0.035, za(d, A5), { vol: 0.026, d: 0.08, duty: "p12", pan: spread(i % 4, 4) * 0.6 }));
+        chip(c, t + 0.3, za(7, A5), { vol: 0.036, d: 0.7, steps: za(7, A5) });
+        chip(c, t + 0.3, za(4, A5), { vol: 0.022, d: 0.7 });
+        harp(c, t + 0.3, za(0, 33), { vol: 0.07, d: 2.2 });
+      } else if (lines === 2) {
+        // Spin double: a pitch zip up in console frames, then two crisp stabs.
+        chip(c, t, za(0, 69), { vol: 0.026, d: 0.12, steps: za(7, A5), duty: "p12" });
+        chip(c, t + 0.12, za(4, A5), { vol: 0.034, d: 0.14 });
+        chip(c, t + 0.22, za(7, A5), { vol: 0.036, d: 0.6 });
+        chip(c, t + 0.22, za(14, A5), { vol: 0.012, d: 0.4, duty: "p12" });
+      } else {
+        // Spin triple: three rising stabs, then a sparkling cascade falling from high A.
+        [2, 4, 7].forEach((d, i) => chip(c, t + i * 0.09, za(d, A5), { vol: 0.034, d: i === 2 ? 0.5 : 0.1 }));
+        for (let i = 0; i < 10; i++) chip(c, t + 0.3 + i * 0.03, za(14 - i, A5), { vol: 0.016, d: 0.12, duty: "p12", pan: spread(i, 10) });
+        harp(c, t + 0.27, za(0, 33), { vol: 0.07, d: 2.4 });
       }
       if (lines) {
-        hiss(c, t, { type: "highpass", f: 5000, vol: 0.02, d: 0.15, wet: 0.4 });
-        fizz(c, t + 0.02, 2 + lines, 0.16, { lo: 700, hi: 1900, vol: 0.03 });
+        fizz(c, t + 0.02, 2 + Math.min(lines, 4), 0.18, { lo: 450, hi: 1400, vol: 0.045 });
+        // The piano, far back: a chord tone two octaves over the harp.
+        piano(c, t + 0.08, za([4, 2, 0, 7][Math.min(lines, 4) - 1] + step, 81), { vol: 0.014 });
       }
-      if (b2b > 0) zbell(c, t + 0.12, zdeg(14 + Math.min(b2b, 7)), { vol: 0.028 });
+      if (b2b > 0) chip(c, t + 0.12, za(14, A5), { vol: 0.012, d: 0.6, duty: "p12" });
       if (allClear) {
-        const top = gliss(c, t + 0.3, 0, 21, harp, { step: 0.03, vol: 0.026 });
-        gliss(c, top, 20, 7, harp, { step: 0.04, vol: 0.02 });
-        pad(c, t + 0.3, zchord(0, 5).map((d) => zdeg(d)), { vol: 0.02, d: 3.5 });
-        zbell(c, top, zdeg(28), { vol: 0.03, d: 3 });
+        const end = harpRun(c, t + 0.2, 0, 7, { step: 0.025, vol: 0.035, d: 1 });
+        harpRun(c, end, 7, 14, { step: 0.025, vol: 0.035, d: 1.2 });
+        [0, 4, 7, 11, 14].forEach((d, i) => piano(c, end + i * 0.08, za(d, 81), { vol: 0.016 }));
+        fizz(c, end, 12, 0.8, { lo: 500, hi: 1800, vol: 0.04, spread: 0.8 });
       }
     });
   },
   /**
-   * The combo: a melody that climbs the scale one note per clear (piano,
-   * high), over a broken chord moving I–V–vi–IV; every fourth clear in a row
-   * gets a fast arpeggio flourish up to the melody note.
+   * A big combo has ended (`n` clears in a row): a short melody, 3 to 5
+   * notes by size, on the chip with the piano doubling it from far back.
    */
-  zgCombo(n) {
-    if (n < 1) return;
-    play("zgCombo", 30, (c, t) => {
-      const PROG = [0, 4, 5, 3];
-      const r = PROG[(n - 1) % 4];
-      const top = zdeg(Math.min(7 + n - 1, 26));
-      roll(c, t + 0.01, zchord(r, 3).map((d) => zdeg(d)), harp, { step: 0.045, vol: 0.026, d: 1 });
-      piano(c, t, top, { vol: 0.05, d: 1.6 });
-      piano(c, t + 0.003, top + 12, { vol: 0.012, d: 0.8 });
-      if (n % 4 === 0) {
-        const notes = Array.from({ length: 8 }, (_, i) => zdeg(Math.min(7 + n - 1, 26) - 14 + i * 2));
-        roll(c, t + 0.12, notes, harp, { step: 0.016, vol: 0.022, d: 0.6 });
-      }
-      bubble(c, t + 0.02, mtof(top) / 2, 0.03, rand(-0.4, 0.4), 0.4);
+  zgComboEnd(n) {
+    play("zgComboEnd", 200, (c, t) => {
+      const tunes = [[4, 7, 9], [7, 4, 9], [2, 4, 7, 9], [4, 2, 7, 11], [0, 4, 7, 9, 14], [7, 9, 11, 9, 14]];
+      const len = n >= 10 ? 5 : n >= 7 ? 4 : 3;
+      const pick = tunes.filter((m) => m.length === len);
+      const tune = pick[Math.floor(Math.random() * pick.length)];
+      harp(c, t, za(0, 45), { vol: 0.06, d: 2.4 });
+      harp(c, t + 0.05, za(4, 45), { vol: 0.045, d: 2.2 });
+      tune.forEach((d, i) => {
+        const last = i === tune.length - 1;
+        chip(c, t + 0.08 + i * 0.14, za(d, A5), { vol: 0.03, d: last ? 0.9 : 0.16 });
+        piano(c, t + 0.08 + i * 0.14, za(d, 69), { vol: 0.02, d: last ? 3.5 : 2 });
+      });
+      fizz(c, t + 0.1, 6, 0.6, { lo: 500, hi: 1500, vol: 0.035, spread: 0.7 });
     });
   },
-  /** Forty lines: a wide rolled chord and a glissando to the top. */
+  /** Forty lines: the harp runs A to A twice, the chip and the piano finish on A. */
   zgFinish() {
     play("zgFinish", 200, (c, t) => {
-      const end = roll(c, t, [zdeg(0, 38), ...zchord(0, 4).map((d) => zdeg(d, 50)), ...zchord(0, 5).map((d) => zdeg(d)), zdeg(14)], piano, { step: 0.045, vol: 0.045, d: 2.8 });
-      gliss(c, end, 7, 28, harp, { step: 0.025, vol: 0.024 });
-      pad(c, t, zchord(0, 4).map((d) => zdeg(d, 50)), { vol: 0.024, d: 3.5 });
-      zbell(c, end + 0.6, zdeg(28), { vol: 0.035, d: 3 });
+      const mid = harpRun(c, t, 0, 7, { step: 0.03, vol: 0.04 });
+      const end = harpRun(c, mid, 7, 14, { step: 0.03, vol: 0.04 });
+      [0, 4, 7, 14].forEach((d, i) => chip(c, end + i * 0.1, za(d, A5), { vol: 0.03, d: i === 3 ? 1 : 0.15 }));
+      piano(c, end + 0.3, za(14, 69), { vol: 0.024, d: 4 });
+      fizz(c, end, 10, 0.8, { lo: 500, hi: 1600, vol: 0.04, spread: 0.8 });
     });
   },
-  /** Topped out: a slow arpeggio sinking in the minor, under water. */
+  /** Topped out: the chip sinking down the minor scale, slowly, under water. */
   zgTopOut() {
     play("zgTopOut", 200, (c, t) => {
-      [14, 11, 9, 7, 4, 2, 0].forEach((d, i) => harp(c, t + i * 0.09, 62 + 12 * Math.floor(d / 7) + ZG_MINOR[d % 7], { vol: 0.035, d: 1.4, pan: -spread(i, 7) }));
-      tone(c, t, { wave: "sine", f: mtof(38), vol: 0.1, a: 0.2, d: 2, wet: 0.4 });
+      [7, 5, 3, 2, 0].forEach((d, i) => chip(c, t + i * 0.16, A5 + 12 * Math.floor(d / 7) + ZG_MINOR[d % 7], { vol: 0.03, d: 0.4 }));
+      harp(c, t + 0.8, 45, { vol: 0.07, d: 2.5 });
+      muffle(c, t, { vol: 0.3, f: 110 });
     });
   },
-  /** Plays a sample of the key (when the minor setting is switched). */
+  /** A sample of the key, when MINOR KEY is switched. */
   zgKeyPreview() {
     play("zgKeyPreview", 200, (c, t) => {
-      roll(c, t, zchord(0, 5).map((d) => zdeg(d)), harp, { step: 0.04, vol: 0.04 });
-      pad(c, t, zchord(0, 3).map((d) => zdeg(d, 50)), { vol: 0.016, d: 2 });
+      const end = harpRun(c, t, 0, 4, { step: 0.05, vol: 0.04 });
+      chip(c, end, za(4, A5), { vol: 0.03, d: 0.6 });
+      piano(c, end + 0.05, za(2, 81), { vol: 0.016 });
     });
   },
 
