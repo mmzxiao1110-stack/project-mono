@@ -239,7 +239,12 @@ export function ProfileCard({ p, compact = false, href = null, onEdit = null }) 
         {geo && <CardSky card={card} world={geo.world} at={geo.body} />}
       </div>
       <div className="relative" style={{ padding: `${px(compact ? 7 : 10)} ${px(6)} ${px(compact ? 7 : 9)}` }}>
-        <div className="flex items-start" style={{ gap: px(5) }}>
+        {/* Marathon: under the name, inside Blitz's width, a little longer than the other small cards. */}
+        <div className="absolute" style={{ left: "33%", width: "34%", top: px(compact ? 7 + 30 : 10 + 38) }}>
+          <Mini boxRef={m3} card={card} world={geo?.world} at={geo?.minis[3]} label="MARATHON"
+            big={p.marathon ? p.marathon.best.toLocaleString("en-US") : "—"} tag={p.marathon?.position} sub={p.marathon?.at ? timeAgo(p.marathon.at).toUpperCase() : "no game yet"} />
+        </div>
+        <div className="flex items-start" style={{ gap: px(5), minHeight: px(compact ? 80 : 92) }}>
           {/* The picture: big, on the left, set a little lower, hanging just over the left edge. */}
           <div style={{ marginLeft: px(-6 - SIDE), marginTop: px(6), boxShadow: `${px(2)} ${px(2)} 0 rgba(0,0,0,.35)`, flexShrink: 0 }}><Avatar name={p.name} size={px(av)} /></div>
           <div className="flex flex-col min-w-0" style={{ gap: px(2), flex: "1 1 auto" }}>
@@ -248,11 +253,6 @@ export function ProfileCard({ p, compact = false, href = null, onEdit = null }) 
               CONTROL {cRank ? <RankIcon rank={cRank} size={px(10)} /> : null}
               <span className="tb-b" style={{ color: "#fff" }}>{p.tr != null ? p.tr : p.placementLeft != null ? `${PLACEMENT_GAMES - p.placementLeft}/${PLACEMENT_GAMES} placement` : "—"}</span>
             </span>
-          </div>
-          {/* Marathon: right of the name, left of joined / played, set lower than the name. */}
-          <div className="self-end" style={{ width: "26%", minWidth: 0, flexShrink: 0, marginTop: px(compact ? 10 : 14) }}>
-            <Mini boxRef={m3} card={card} world={geo?.world} at={geo?.minis[3]} label="MARATHON"
-              big={p.marathon ? p.marathon.best.toLocaleString("en-US") : "—"} tag={p.marathon?.position} sub={p.marathon?.at ? timeAgo(p.marathon.at).toUpperCase() : "no game yet"} />
           </div>
           <div className="flex flex-col items-end text-right shrink-0" style={{ gap: px(3), minWidth: 0 }}>
             <div className="flex flex-col items-end" style={{ gap: px(1), marginRight: onEdit ? px(12) : 0 }}>
