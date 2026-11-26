@@ -305,6 +305,16 @@ class Net {
     this.send({ t: "delete", turn, cells, ...(pins ? { pins } : null) });
   }
 
+  /* ---------- safety ---------- */
+
+  /** Block or unblock a player by name: their chat stops reaching you and queues never pair you. */
+  block(name, on = true) { this.send({ t: on ? "block" : "unblock", name }); }
+  isBlocked(name) { return !!name && (this.blocked || new Set()).has(name); }
+  /** Report a player: reason is chat | name | cheating | other. */
+  report(name, reason, note = "") { this.send({ t: "report", name, reason, note: String(note).slice(0, 300) }); }
+  /** Deletes the signed-in account for good: password accounts confirm with the password, Google ones with the username. */
+  deleteAccount({ password, confirm }) { this.send({ t: "deleteAccount", password, confirm }); }
+
   /** A line of chat to your opponent (the server filters it and echoes it back). */
   chat(text) {
     const t = String(text || "").trim().slice(0, 120);
@@ -393,6 +403,8 @@ class Net {
           this.emit("match", null);
           this.setNotice("Your match was interrupted by a server restart and didn't count.");
         }
+        this.blocked = new Set(m.blocked || []);
+        this.emit("blocked", this.blocked);
         this.token = m.token;
         this.auth = "authed";
         this.authBusy = false;
@@ -568,7 +580,33 @@ class Net {
         }
         break;
 
+      case "blocked":
+        this.blocked = new Set(m.list || []);
+        this.emit("blocked", this.blocked);
+        break;
+
+      case "reported":
+        this.emit("reported", m.name);
+        break;
+
+      case "deleteError":
+        this.emit("deleteError", m.msg);
+        break;
+
+      case "accountDeleted":
+        // Gone on the server: forget it here too, without asking the server to log out.
+        this.token = null;
+        this.auth = "anon";
+        this.profile = null;
+        this.blocked = new Set();
+        this.emit("profile", null);
+        this.emit("accountDeleted");
+        this.bumpAuth();
+        break;
+
       case "chat":
+        // Lines from someone you blocked are dropped here too (the server already stops them).
+        if (this.match && this.isBlocked(m.name) && this.match.you !== m.side) break;
         if (this.match) this.patch({ chat: [...(this.match.chat || []), { side: m.side, name: m.name, text: m.text, at: m.at, got: Date.now() }].slice(-60), chatError: null });
         break;
 

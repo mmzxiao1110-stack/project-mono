@@ -34,6 +34,7 @@ import {
   createAccount, saveAccount, findByUsername, findByEmail, nameTaken,
   findByIdentity, linkIdentity, freeUsername, getAccount,
   createSession, resolveSession, destroySession, destroySessionsFor,
+  allProfiles, peekProfile, deleteAccountData, saveReport,
 } from "./store.js";
 import {
   str, validateSignup, passwordProblem, nameProblem, hashPassword, verifyPassword,
@@ -42,9 +43,9 @@ import {
   CODE_TTL_MS, CODE_RESEND_MS, CODE_MAX_TRIES, CODES_PER_DAY,
   throttled, noteFailure, clearFailures, cleanChat,
 } from "./auth.js";
-import { sendCode } from "./mail.js";
+import { sendCode, sendReport } from "./mail.js";
 import {
-  signupLimit, mailLimit, authLimit, messageLimit, chatLimit,
+  signupLimit, mailLimit, authLimit, messageLimit, chatLimit, reportLimit,
   MAX_MESSAGE_BYTES, MAX_SOCKETS_PER_IP,
 } from "./limits.js";
 import { Queue } from "./queue.js";
@@ -55,6 +56,7 @@ import { unref } from "./timers.js";
 const sockets = new Map(); // userId -> socket
 const inMatch = new Map(); // userId -> { match, side }
 const marathons = new Map(); // userId -> { seed, at }: the Marathon game each player has open
+const lastChat = new Map();  // userId -> the match they last chatted in (its recent lines back a report)
 // Games left open for half a day are forgotten.
 // (swept by startTimers)
 const perIp = new Map();   // ip -> open sockets
@@ -228,6 +230,7 @@ function authenticateGuest(ws, userId, profile, gid) {
   if (existing && existing !== ws) { send(existing, { t: "kicked" }); existing.close(); }
   ws.userId = userId;
   sockets.set(userId, ws);
+  ws.blocked ||= new Set(); // a guest's blocks last for the visit
   const active = inMatch.get(userId);
   send(ws, { t: "guestOk", gid, profile: { playerId: userId, name: profile.name, guest: true }, inMatch: !!active });
   if (active) active.match.onReconnect(active.side, ws);
@@ -248,9 +251,10 @@ function authenticate(ws, userId, token) {
   const acct = getAccount(userId);
   const profile = getProfile(userId);
   const active = inMatch.get(userId);
+  ws.blocked = new Set((acct && acct.blocked) || []);
   // `inMatch` lets a client that was mid-match before a server restart learn
   // that the match is gone, instead of waiting on it forever.
-  send(ws, { t: "auth", token, profile: publicProfile(profile, acct), inMatch: !!active });
+  send(ws, { t: "auth", token, profile: publicProfile(profile, acct), inMatch: !!active, blocked: blockedNames(ws) });
   if (active) active.match.onReconnect(active.side, ws);
   resumeRoom(userId);
 }
@@ -292,6 +296,29 @@ function checkCode(acct, record, code) {
     return `Wrong code. ${CODE_MAX_TRIES - record.tries} tries left.`;
   }
   return null;
+}
+
+const REPORT_REASONS = ["chat", "name", "cheating", "other"];
+
+/** The names on a socket's block list (for the client to show). */
+function blockedNames(ws) {
+  return [...(ws.blocked || [])].map((id) => (isGuest(id) ? guests.get(id) : peekProfile(id))?.name).filter(Boolean);
+}
+
+/** A player by name: your current opponent (guests too), else an account or display name. */
+function findPlayer(ws, name) {
+  const want = String(name || "").trim().toLowerCase();
+  if (!want) return null;
+  const active = inMatch.get(ws.userId);
+  const m = active ? active.match : lastChat.get(ws.userId);
+  if (m) for (const side of ["A", "B"]) {
+    const p = m.seats[side].profile;
+    if (p.name.toLowerCase() === want) return { id: p.playerId, name: p.name };
+  }
+  const acct = findByUsername(want);
+  if (acct) return { id: acct.userId, name: getProfile(acct.userId).name };
+  const p = allProfiles().find((x) => x.name.toLowerCase() === want);
+  return p ? { id: p.playerId, name: p.name } : null;
 }
 
 const PUBLIC = new Set(["hello", "signup", "login", "google", "verify", "resend", "resetRequest", "resetConfirm", "guest", "ping"]);
@@ -547,7 +574,7 @@ async function handle(ws, msg) {
         const profile = profileOf(ws.userId);
         const uid = ws.userId;
         casualQueue.add({
-          playerId: uid, profile, rating: profile.rating, loadout: sanitizeLoadout(),
+          playerId: uid, profile, rating: profile.rating, loadout: sanitizeLoadout(), blocked: ws.blocked,
           onProgress: (p) => sendTo(uid, { t: "searching", ...p }),
         });
         console.log(`[queue] + ${profile.name} (unranked) — ${casualQueue.size} waiting`);
@@ -562,6 +589,7 @@ async function handle(ws, msg) {
       const uid = ws.userId;
       queue.add({
         playerId: uid,
+        blocked: ws.blocked,
         profile,
         rating: profile.rating,
         loadout: sanitizeLoadout(msg.loadout),
@@ -598,6 +626,70 @@ async function handle(ws, msg) {
       if (!text) return;
       if (!chatLimit.take(ws.userId)) return send(ws, { t: "chatError", msg: "Slow down a little." });
       active.match.chat(active.side, text);
+      lastChat.set(ws.userId, active.match);
+      lastChat.set(active.match.seats[active.match.other(active.side)].profile.playerId, active.match);
+      break;
+    }
+
+    /* ---------- safety: block, report ---------- */
+
+    case "block":
+    case "unblock": {
+      const who = findPlayer(ws, str(msg.name, 32));
+      if (!who) return fail(ws, "Couldn't find that player.");
+      if (who.id === ws.userId) return fail(ws, "That's you.");
+      ws.blocked ||= new Set();
+      if (msg.t === "block") ws.blocked.add(who.id); else ws.blocked.delete(who.id);
+      const acct = getAccount(ws.userId);
+      if (acct) { acct.blocked = [...ws.blocked]; saveAccount(acct); }
+      send(ws, { t: "blocked", name: who.name, on: msg.t === "block", list: blockedNames(ws) });
+      break;
+    }
+
+    case "report": {
+      const who = findPlayer(ws, str(msg.name, 32));
+      if (!who) return fail(ws, "Couldn't find that player.");
+      if (who.id === ws.userId) return fail(ws, "That's you.");
+      if (!reportLimit.take(ws.userId)) return fail(ws, "You've sent a lot of reports. Try again later.");
+      const reason = REPORT_REASONS.includes(msg.reason) ? msg.reason : "other";
+      const m = lastChat.get(ws.userId);
+      const sharedChat = m && [m.seats.A, m.seats.B].some((s) => s.profile.playerId === who.id) ? (m.chatLog || []).slice() : [];
+      const r = saveReport({
+        at: Date.now(), reporter: ws.userId, reporterName: profileOf(ws.userId)?.name || "?",
+        target: who.id, targetName: who.name, reason, note: str(msg.note, 300).trim(), chat: sharedChat,
+      });
+      console.log(`[report] ${r.reporterName} reported ${r.targetName} (${reason})`);
+      sendReport(r).catch((e) => console.error("[report] email failed:", e.message));
+      send(ws, { t: "reported", name: who.name });
+      break;
+    }
+
+    /* ---------- deleting your account ---------- */
+
+    case "deleteAccount": {
+      if (isGuest(ws.userId)) return fail(ws, "Guests don't have an account to delete.");
+      const acct = getAccount(ws.userId);
+      if (!acct) return fail(ws, "No account.");
+      if (inMatch.has(ws.userId)) return send(ws, { t: "deleteError", msg: "Finish or leave your match first." });
+      if (!authLimit.take(ip)) return send(ws, { t: "deleteError", msg: "Too many attempts. Try again in a minute." });
+      if (acct.provider === "password" || acct.hash) {
+        const ok = await verifyPassword(str(msg.password, 200), acct.salt, acct.hash);
+        if (!ok) return send(ws, { t: "deleteError", msg: "That password isn't right." });
+      } else if (str(msg.confirm, 32).toLowerCase() !== acct.username.toLowerCase()) {
+        return send(ws, { t: "deleteError", msg: "Type your username exactly to confirm." });
+      }
+      const uid = ws.userId;
+      leaveQueues(uid);
+      leaveRoom(uid);
+      marathons.delete(uid);
+      lastChat.delete(uid);
+      deleteAccountData(uid);
+      for (const s of sockets.values()) s.blocked?.delete(uid); // and from the block lists of anyone online
+      sockets.delete(uid);
+      ws.userId = null;
+      ws.blocked = new Set();
+      console.log(`[account] deleted ${acct.username}`);
+      send(ws, { t: "accountDeleted" });
       break;
     }
 
@@ -696,6 +788,7 @@ export function connect(conn, ip) {
   conn.ip = ip;
   conn.isAlive = true;
   conn.userId = null;
+  conn.blocked = new Set();
   conn.tokens = messageLimit.burst;
   conn.tokensAt = Date.now();
   send(conn, { t: "online", n: clients.size, host: hostName });

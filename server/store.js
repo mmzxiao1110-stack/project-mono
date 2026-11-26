@@ -17,7 +17,7 @@ import { newRating } from "../shared/glicko.js";
 import { newUserId, newToken } from "./auth.js";
 
 const SESSION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
-export const TABLES = ["accounts", "usernames", "emails", "identities", "sessions", "profiles"];
+export const TABLES = ["accounts", "usernames", "emails", "identities", "sessions", "profiles", "reports"];
 
 const table = (src = {}) => Object.assign(Object.create(null), src);
 const has = (t, k) => Object.prototype.hasOwnProperty.call(t, k);
@@ -218,7 +218,48 @@ export function saveProfile(profile) {
 /** Final save, for shutdown (whatever the persister does). */
 export const flush = () => flusher();
 
+/* ---------- deleting an account ---------- */
+
+/**
+ * Removes everything stored for `userId`: the account, its name and email
+ * claims, linked sign-ins, sessions and profile (ratings, stats, Marathon).
+ * Other players' match lists keep the match but no longer name them.
+ */
+export function deleteAccountData(userId) {
+  const acct = getAccount(userId);
+  if (!acct) return false;
+  const name = (db.profiles[userId] && db.profiles[userId].name) || acct.username;
+  for (const [k, v] of Object.entries(db.usernames)) if (v === userId) { delete db.usernames[k]; mark("usernames", k); }
+  for (const [k, v] of Object.entries(db.emails)) if (v === userId) { delete db.emails[k]; mark("emails", k); }
+  for (const [k, v] of Object.entries(db.identities)) if (v === userId) { delete db.identities[k]; mark("identities", k); }
+  destroySessionsFor(userId);
+  delete db.accounts[userId]; mark("accounts", userId);
+  delete db.profiles[userId]; mark("profiles", userId);
+  for (const a of Object.values(db.accounts)) {
+    if (a.blocked && a.blocked.includes(userId)) { a.blocked = a.blocked.filter((id) => id !== userId); mark("accounts", a.userId); }
+  }
+  for (const p of Object.values(db.profiles)) {
+    const recent = p.stats && p.stats.recent;
+    if (!recent || !recent.some((m) => m.name === name)) continue;
+    p.stats.recent = recent.map((m) => (m.name === name ? { ...m, name: "deleted player" } : m));
+    mark("profiles", p.playerId);
+  }
+  return true;
+}
+
+/* ---------- reports ---------- */
+
+/** Keeps a player report (who, about whom, why, and the chat around it). */
+export function saveReport(report) {
+  const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  db.reports[id] = { id, ...report };
+  mark("reports", id);
+  return db.reports[id];
+}
+
 /** Every stored profile (for the leaderboard and player search). Read-only use. */
 export const allProfiles = () => Object.values(db.profiles);
+/** A profile if there is one; unlike getProfile, never creates it. */
+export const peekProfile = (userId) => (userId && has(db.profiles, userId) ? db.profiles[userId] : null);
 
 export const countAccounts = () => Object.keys(db.accounts).length;

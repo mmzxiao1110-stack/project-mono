@@ -57,6 +57,7 @@ export const mailLimit = new Limiter({ burst: 5, perMinute: 5 / 60 });    // ema
 export const authLimit = new Limiter({ burst: 20, perMinute: 10 });       // login/verify/reset attempts
 // Per socket: a client legitimately sends a few messages a second at most.
 export const chatLimit = new Limiter({ burst: 4, perMinute: 20 });    // chat lines per player
+export const reportLimit = new Limiter({ burst: 5, perMinute: 5 / 60 }); // reports per player: 5, then 5 an hour
 export const messageLimit = { burst: 40, perSecond: 20 };
 
 export const MAX_MESSAGE_BYTES = 16 * 1024;

@@ -259,8 +259,13 @@ export class Match {
   /** A chat line from `side`, to both players (the sender sees it echoed). */
   chat(side, text) {
     const msg = { t: "chat", side, name: this.seats[side].profile.name, text, at: Date.now() };
-    this.send("A", msg);
-    this.send("B", msg);
+    // The last lines, kept only while the match lasts, so a report can include them.
+    (this.chatLog ||= []).push({ name: msg.name, text, at: msg.at });
+    if (this.chatLog.length > 30) this.chatLog.shift();
+    this.send(side, msg);
+    // Someone who blocked the sender doesn't get their lines.
+    const other = this.other(side);
+    if (!this.seats[other].socket?.blocked?.has(this.seats[side].profile.playerId)) this.send(other, msg);
   }
 
   applyDiscard(side) {
