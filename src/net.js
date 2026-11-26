@@ -326,7 +326,7 @@ class Net {
   /* ---------- Blitz 1v1 ---------- */
   blitzQueue() { this.blitz = null; this.send({ t: "blitzQueue" }); }
   blitzCancel() { this.send({ t: "unqueue" }); }
-  setCard(a, b) { this.send({ t: "setCard", card: [a, b] }); }
+  setCard(card) { this.send({ t: "setCard", card }); }
   blitzPlace(slot, rot, r, c) { this.send({ t: "blitzPlace", slot, rot, r, c }); }
   patchBlitz(p) { this.blitz = { ...(this.blitz || {}), ...p }; this.emit("blitz", this.blitz); }
 

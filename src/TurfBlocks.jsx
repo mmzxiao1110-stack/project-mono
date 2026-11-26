@@ -12,7 +12,8 @@ import { ACCENTS } from "./site/colors.js";
 import { PixelWord } from "./site/kit.jsx";
 import { Avatar, ProfileCard } from "./site/profileCard.jsx";
 import { RankIcon } from "./site/rankIcon.jsx";
-import { cardFromProfile, CARD_DEFAULT } from "./site/profileData.js";
+import { cardFromProfile } from "./site/profileData.js";
+import { cleanCard } from "../shared/card.js";
 
 /* The rules live in one place and the server imports the same file. */
 import {
@@ -1761,7 +1762,7 @@ function ProfilePopup({ name, guest = false, onClose }) {
   }, [who, isGuest]);
   const loading = !isGuest && res.who !== who;
   return (
-    <Popup title="PLAYER" onClose={onClose} maxW={640}>
+    <Popup title="PLAYER" onClose={onClose} maxW={820}>
       <div className="pt-4 pb-1 flex flex-col" style={{ gap: 4 * P }}>
         {who !== name && (
           <button onClick={() => setWho(name)} className="tb-t text-left flex items-center gap-1" style={{ color: UI.dim }}>
@@ -1778,7 +1779,7 @@ function ProfilePopup({ name, guest = false, onClose }) {
           <div className="tb-t" style={{ color: UI.dim }}>{res.error}</div>
         ) : (
           <>
-            <ProfileCard p={res.data} compact />
+            <ProfileCard p={res.data} href={`/terminal#/player/${encodeURIComponent(who)}`} />
             <PlayerRecord p={res.data} onOpen={setWho} />
           </>
         )}
@@ -2053,6 +2054,28 @@ function StatCell({ label, value, sub, color }) {
   );
 }
 
+/**
+ * Your card, and how it looks: a sky, an accent and a pattern, each picked
+ * from a fixed set (like the theme's colours). Changes show at once and are
+ * saved to your account.
+ */
+function CardEditor({ profile }) {
+  const [sel, setSel] = useState(() => cleanCard(profile.card));
+  const [api, setApi] = useState(null);
+  useEffect(() => {
+    let live = true;
+    apiGet(`/api/player/${encodeURIComponent(profile.name)}`).then((d) => live && setApi(d)).catch(() => {});
+    return () => { live = false; };
+  }, [profile.name]);
+  const edit = (next) => { const c = cleanCard(next); setSel(c); net.setCard(c); sfx.pick(); };
+  const p = { ...(api || cardFromProfile(profile)), card: sel };
+  return (
+    <div className="mt-2">
+      <ProfileCard p={p} href={`/terminal#/player/${encodeURIComponent(profile.name)}`} onEdit={edit} />
+    </div>
+  );
+}
+
 function StatsModal({ profile, status, onClose, onLogout, onDelete }) {
   const wide = useWidePanel();
   // No profile has two very different causes. Saying "offline" for both sent
@@ -2089,29 +2112,10 @@ function StatsModal({ profile, status, onClose, onLogout, onDelete }) {
   const next = ri < RANKS.length - 1 ? RANKS[ri + 1] : null;
   const toNext = next ? Math.max(0, Math.ceil(rankMin(ri + 1) - tr)) : 0;
   const winRate = st.games ? Math.round((st.wins / st.games) * 100) : 0;
-  const since = profile.createdAt ? new Date(profile.createdAt).toLocaleDateString(undefined, { month: "short", year: "numeric" }) : "—";
   const mar = profile.marathon;
 
-  const card = cardFromProfile(profile);
-  const cardColors = card.card || CARD_DEFAULT;
-  const who = (
-    <div className="mt-4 flex flex-col gap-2">
-      <ProfileCard p={card} />
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <label className="tb-t flex items-center gap-2" style={{ color: UI.dim }}>
-          CARD COLOURS
-          {[0, 1].map((k) => (
-            <input key={k} type="color" aria-label={`Card colour ${k + 1}`} defaultValue={cardColors[k]}
-              onChange={(e) => { const next = [...cardColors]; next[k] = e.target.value; net.setCard(next[0], next[1]); }}
-              style={{ width: 34, height: 26, ...glass(UI.line) }} />
-          ))}
-        </label>
-        <a href={`/terminal#/player/${encodeURIComponent(profile.name)}`} target="_blank" rel="noopener" className="tb-t no-underline"
-          style={{ padding: "6px 10px", ...skFill(ACCENTS.terminal), color: UI.text }}>FULL PROFILE ON T-TERMINAL</a>
-      </div>
-      <span className="tb-t" style={{ color: UI.dim }}>since {since}</span>
-    </div>
-  );
+  const who = <CardEditor profile={profile} />;
+
   const rankCard = (
     <div className="mt-3 rounded p-4" style={{ ...glass(UI.line) }}>
       <div className="flex items-center gap-4">
@@ -4798,6 +4802,7 @@ function BlitzGame({ onExit, online = false, colors, onRequeue }) {
   const [now, setNow] = useState(() => performance.now());
   const [chatM, setChatM] = useState(joining);
   const [showEnd, setShowEnd] = useState(false);
+  const [profileOf, setProfileOf] = useState(null); // a player's card, opened from their name
   const boardEl = useRef(null);
   const mouse = useRef(null);
   const toMouse = useCallback((a) => {
@@ -5034,7 +5039,10 @@ function BlitzGame({ onExit, online = false, colors, onRequeue }) {
         <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
           {/* Who this board is, and the spike building on it. */}
           <div className="flex items-center justify-between tb-t" style={{ width: boardW, height: cell - 2 * P }}>
-            <span className="truncate" style={{ color: mine ? "var(--tb-you)" : "var(--tb-rival)" }}>{mine ? myName : oppName}</span>
+            {(mine ? net.profile?.name : online && chatM?.opponent?.name)
+              ? <button onClick={() => setProfileOf(mine ? { name: net.profile.name } : { name: chatM.opponent.name, guest: !!chatM.opponent.guest })} className="truncate tb-t text-left"
+                  title="See their profile" style={{ color: mine ? "var(--tb-you)" : "var(--tb-rival)", textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 3 }}>{mine ? myName : oppName}</button>
+              : <span className="truncate" style={{ color: mine ? "var(--tb-you)" : "var(--tb-rival)" }}>{mine ? myName : oppName}</span>}
             {spiking ? <span className="tb-b" style={{ color: GOLD }}>SPIKE {st.spike}</span> : null}
           </div>
           <div ref={mine ? boardEl : undefined} className="relative" style={{ width: boardW, height: boardW }}>
@@ -5110,6 +5118,7 @@ function BlitzGame({ onExit, online = false, colors, onRequeue }) {
         {g && !online && !g.result && <Countdown key={g.startAt} goAt={g.startAt} block={false} />}
       </div>
       {online && g && chatM && <ChatDock m={{ chat: chatM.chat || [], you: chatM.you, opponent: chatM.opponent, chatError: chatM.chatError }} colors={colors} />}
+      {profileOf && <ProfilePopup name={profileOf.name} guest={profileOf.guest} onClose={() => setProfileOf(null)} />}
     </div>
   );
 }

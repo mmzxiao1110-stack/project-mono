@@ -16,17 +16,18 @@ export const GLICKO = {
 export const PLACEMENT_GAMES = 10;
 export const RANK_FLOOR = 1100;
 
+// Within a letter, − is the lightest shade and + the deepest.
 export const RANKS = [
   { name: "F", color: "#5A6572" },
-  { name: "C-", color: "#8A6A44" },
+  { name: "C-", color: "#C49C5C" },
   { name: "C", color: "#A8834E" },
-  { name: "C+", color: "#C49C5C" },
-  { name: "B-", color: "#4E8C6A" },
+  { name: "C+", color: "#8A6A44" },
+  { name: "B-", color: "#72CB9B" },
   { name: "B", color: "#5CAF83" },
-  { name: "B+", color: "#72CB9B" },
-  { name: "A-", color: "#B85450" },
+  { name: "B+", color: "#4E8C6A" },
+  { name: "A-", color: "#EC7A72" },
   { name: "A", color: "#D4635F" },
-  { name: "A+", color: "#EC7A72" },
+  { name: "A+", color: "#B85450" },
   { name: "S", color: "#E8B923" },
   { name: "X", color: "#7DD3FC" },
 ];

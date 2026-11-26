@@ -1,93 +1,80 @@
 /**
- * Rank emblems, as 16×16 pixel art in shades of each rank's colour. Each tier
- * has its own shape, getting grander as you climb:
- *   F  a plain plate        C  a shield          B  a crested shield
- *   A  a winged shield      S  a crowned shield  X  a shining diamond
- * with the letter, and the + or −, drawn in.
+ * Ranks are their letters, made as flashy as a pixel can be: chunky italic
+ * capitals (each row nudged right as it rises), banded like chrome (bright
+ * top, a dark horizon line through the middle, a second shine below), lit
+ * from the top left with a hard shadow falling down and right, the + or −
+ * as a superscript. `size` is the height.
  */
 import { RANKS } from "../../shared/glicko.js";
 
-const N = 16, C = 7.5;
+// Slim letters: 2-pixel strokes on a 16-row grid, 9 wide.
+const GLYPH = {
+  F: ["111111111", "111111111", "11.......", "11.......", "11.......", "11.......", "11.......", "1111111..", "1111111..", "11.......", "11.......", "11.......", "11.......", "11.......", "11.......", "11......."],
+  C: ["..1111111", ".11111111", "111......", "11.......", "11.......", "11.......", "11.......", "11.......", "11.......", "11.......", "11.......", "11.......", "11.......", "111......", ".11111111", "..1111111"],
+  B: ["1111111..", "11111111.", "11....111", "11.....11", "11.....11", "11....111", "11111111.", "1111111..", "11111111.", "11....111", "11.....11", "11.....11", "11.....11", "11....111", "11111111.", "1111111.."],
+  A: ["..11111..", ".1111111.", "111...111", "11.....11", "11.....11", "11.....11", "11.....11", "11.....11", "111111111", "111111111", "11.....11", "11.....11", "11.....11", "11.....11", "11.....11", "11.....11"],
+  S: ["..1111111", ".11111111", "111......", "11.......", "11.......", "111......", ".1111111.", "..1111111", "......111", ".......11", ".......11", ".......11", ".......11", "......111", "11111111.", "1111111.."],
+  X: [],
+  "?": ["..11111..", ".1111111.", "111...111", "11.....11", ".......11", "......111", ".....111.", "....111..", "...111...", "...11....", "...11....", ".........", ".........", "...11....", "...11....", "........."],
+};
+// One pixel wider than drawn: the middle column doubled (X is drawn as lines, below).
+for (const k of Object.keys(GLYPH)) GLYPH[k] = GLYPH[k].map((r) => r.slice(0, 5) + r[4] + r.slice(5));
+const MOD = { "+": ["..11..", "..11..", "111111", "111111", "..11..", "..11.."], "-": ["1111", "1111"] };
 const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
 const mix = (a, b, t) => `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * t)).join(",")})`;
-const W = [255, 255, 255], K = [12, 10, 24];
-
-const shield = (x, y) => {
-  if (y < 1 || y > 14) return false;
-  const w = y <= 8 ? 6 : 6 - (y - 8) * 1.05;
-  return Math.abs(x - C) <= w;
-};
-const SHAPES = {
-  F: (x, y) => Math.abs(x - C) <= 5.5 && Math.abs(y - C) <= 5.5 && !(Math.abs(x - C) > 4.5 && Math.abs(y - C) > 4.5),
-  C: shield,
-  // B: a shield with a notched crest along the top.
-  B: (x, y) => shield(x, y) && !(y === 1 && (x === 5 || x === 10)),
-  // A: a shield with a wing either side.
-  A: (x, y) => {
-    if (shield(x, y) && Math.abs(x - C) <= 4.5) return true;
-    const dx = Math.abs(x - C);
-    return dx > 4.5 && dx <= 7.5 && y >= 2 + (dx - 4.5) && y <= 9 - (dx - 4.5) * 0.6;
-  },
-  // S: a shield wearing a three-pointed crown.
-  S: (x, y) => (y >= 3 && shield(x, y)) || (y < 3 && [3, 4, 7, 8, 11, 12].includes(x) && (y >= 1 || x === 7 || x === 8)),
-  // X: a diamond.
-  X: (x, y) => Math.abs(x - C) + Math.abs(y - C) <= 7.6,
-};
-// 3×5 letters, and 3×3 marks for + and −.
-const GLYPH = {
-  F: ["111", "100", "110", "100", "100"], C: ["011", "100", "100", "100", "011"], B: ["110", "101", "110", "101", "110"],
-  A: ["010", "101", "111", "101", "101"], S: ["011", "100", "010", "001", "110"], X: ["101", "101", "010", "101", "101"],
-};
-const MARK = { "+": ["010", "111", "010"], "-": ["000", "111", "000"] };
+const W = [255, 255, 255], K = [10, 8, 22];
+// Chrome bands, top to bottom (+ toward white, − toward the dark).
+const ROWS = 16;
+const slant = (y) => Math.floor((ROWS - 1 - y) / 4); // italic: a step right every four rows up
 
 const cache = new Map();
-function pixels(name, color) {
-  const key = `${name}${color}`;
+function build(name, color) {
+  const key = name + color;
   if (cache.has(key)) return cache.get(key);
-  const tier = name[0], mod = name[1] || "";
-  const inside = SHAPES[tier] || SHAPES.F;
+  const letter = GLYPH[name[0]] || GLYPH["?"], mod = MOD[name[1]] || null;
+  const cells = new Map(); // "x,y" -> band index
+  if (name[0] === "X") {
+    // X is two straight strokes crossing on a leaning axis, drawn as lines, so
+    // the notches at the top and bottom come to a sharp V.
+    for (let y = 0; y < ROWS; y++) {
+      const off = (ROWS - 1 - y) / 4, d = (y - (ROWS - 1) / 2) * 0.72;
+      for (const e of [5 + d + off, 5 - d + off]) for (let dx = 0; dx < 2; dx++) cells.set(`${Math.round(e - 0.5) + dx + 1},${y + 2}`, y);
+    }
+  } else letter.forEach((row, y) => [...row].forEach((b, x) => { if (b === "1") cells.set(`${x + slant(y) + 1},${y + 2}`, y); }));
+  // The mark as a superscript, top right, banded on its own.
+  if (mod) mod.forEach((row, y) => [...row].forEach((b, x) => { if (b === "1") cells.set(`${x + 15},${y + (mod.length === 2 ? 4 : 2)}`, Math.min(ROWS - 1, Math.round((y / (mod.length - 1 || 1)) * (ROWS - 1) * 0.5))); }));
   const base = hexRgb(color);
-  const m = (x, y) => x >= 0 && y >= 0 && x < N && y < N && inside(x, y);
-  const out = [];
-  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-    if (!m(x, y)) continue;
-    const edge = !m(x - 1, y) || !m(x + 1, y) || !m(x, y - 1) || !m(x, y + 1);
-    const t = (x + y) / (2 * N);
-    let c;
-    if (edge) c = mix(base, K, 0.6);
-    else if (!m(x - 1, y - 1) || (!m(x, y - 2) && x < C)) c = mix(base, W, 0.55);   // the lit rim, top left
-    else if (t < 0.38) c = mix(base, W, 0.22);
-    else if (t > 0.66) c = mix(base, K, 0.28);
-    else c = `rgb(${base.join(",")})`;
-    out.push([x, y, c]);
+  const has = (x, y) => cells.has(`${x},${y}`);
+  const xs = [...cells.keys()].map((k) => Number(k.split(",")[0]));
+  const out = { w: Math.max(...xs) + 3, h: ROWS + 4, px: [] };
+  // A hard shadow down and to the right, in a deep shade of the rank's colour.
+  for (const k of cells.keys()) {
+    const [x, y] = k.split(",").map(Number);
+    if (!has(x + 1, y + 1)) out.px.push([x + 1, y + 1, mix(base, K, 0.7)]);
   }
-  // The letter (and its shadow), with the + or − beside it.
-  const gx = mod ? 4 : 6, gy = tier === "S" ? 6 : 5;
-  // Light letters on dark badges, dark letters on light ones (S, X).
-  const lum = 0.2126 * base[0] + 0.7152 * base[1] + 0.0722 * base[2];
-  const ink = lum > 165 ? mix(base, K, 0.78) : mix(base, W, 0.88), shade = lum > 165 ? mix(base, W, 0.6) : mix(base, K, 0.55);
-  const stamp = (g, ox, oy) => g.forEach((row, j) => [...row].forEach((bit, i) => {
-    if (bit === "1") { out.push([ox + i + 1, oy + j + 1, shade]); }
-  }));
-  const paint = (g, ox, oy) => g.forEach((row, j) => [...row].forEach((bit, i) => { if (bit === "1") out.push([ox + i, oy + j, ink]); }));
-  stamp(GLYPH[tier] || GLYPH.F, gx, gy); paint(GLYPH[tier] || GLYPH.F, gx, gy);
-  if (mod) { stamp(MARK[mod], 9, gy + 1); paint(MARK[mod], 9, gy + 1); }
-  // X shines: a few sparkle pixels around it.
-  if (tier === "X") for (const [x, y] of [[0, 0], [15, 2], [1, 14], [14, 15], [15, 0]]) out.push([x, y, mix(base, W, 0.8)]);
-  if (tier === "S") for (const [x, y] of [[7, 0], [8, 0]]) out.push([x, y, mix(base, W, 0.7)]);
+  // Cel shading, no white: a light top, the rank's own colour, a deep foot, the top edges a
+  // shade lighter, and one slanted stripe of shine across the letter.
+  const light = mix(base, W, 0.28), mid = `rgb(${base.join(",")})`, deep = mix(base, K, 0.32), rim = mix(base, W, 0.42);
+  for (const [k, row] of cells) {
+    const [x, y] = k.split(",").map(Number);
+    let c = row < 5 ? light : row < 11 ? mid : deep;
+    const d = x + (y - 2) * 0.55; // along the lean
+    if (d > 5.2 && d < 6.9 && row >= 3 && row <= 12) c = rim;   // the shine stripe
+    if (!has(x, y - 1)) c = rim;                                  // top edges
+    out.px.push([x, y, c]);
+  }
   cache.set(key, out);
   return out;
 }
 
-/** A rank's emblem. `rank` is a RANKS entry or a rank's name; null draws an unplaced (grey) plate. */
+/** A rank as its letter. `rank` is a RANKS entry or a rank's name; null draws a grey "?". */
 export function RankIcon({ rank, size = 32, title }) {
   const r = typeof rank === "string" ? RANKS.find((x) => x.name === rank) : rank;
-  const name = r ? r.name : "F", color = r ? r.color : "#55526A";
-  const px = pixels(r ? name : "F", color);
+  const g = build(r ? r.name : "?", r ? r.color : "#7A7694");
   return (
-    <svg role="img" aria-label={title || (r ? `Rank ${name}` : "Unplaced")} viewBox={`0 0 ${N} ${N}`}
-      style={{ width: size, height: size, display: "block", flexShrink: 0, shapeRendering: "crispEdges", opacity: r ? 1 : 0.6 }}>
-      {px.map(([x, y, c], i) => <rect key={i} x={x} y={y} width="1" height="1" fill={c} />)}
+    <svg role="img" aria-label={title || (r ? `Rank ${r.name}` : "Unplaced")} viewBox={`0 0 ${g.w} ${g.h}`}
+      style={{ height: size, width: "auto", aspectRatio: `${g.w} / ${g.h}`, display: "block", flexShrink: 0, shapeRendering: "crispEdges", overflow: "visible" }}>
+      {g.px.map(([x, y, c], i) => <rect key={i} x={x} y={y} width="1.02" height="1.02" fill={c} />)}
     </svg>
   );
 }

@@ -61,20 +61,18 @@ export const glassFill = (color = "var(--tb-you)") => ({
 });
 
 /** A word in big pixel letters: every font pixel is a 2×2 block, shaded from `from` to `to`. */
-export function PixelWord({ text, from = "var(--tb-you)", to = "var(--tb-rival)", scale = 2, className = "" }) {
-  // Titles are the game's own font, bold capitals, shaded top to bottom from
-  // one colour to the other. Silkscreen's capitals are 5 of its 8 em-pixels
-  // tall, so this is as tall as the old 7-row pixel letters at this scale.
+export function PixelWord({ text, scale = 2, className = "" }) {
+  // Titles are the game's own font in bold white capitals with a hard pixel
+  // shadow. (Silkscreen's capitals are 5 of its 8 em-pixels tall, so this is as
+  // tall as the old 7-row pixel letters at this scale.)
   const size = (7 * scale * 8) / 5;
   return (
     <span role="img" aria-label={String(text)} className={`tb-title ${className}`}
       style={{
         fontFamily: '"Silkscreen", ui-monospace, monospace', fontWeight: 700, textTransform: "uppercase", whiteSpace: "nowrap",
         fontSize: `calc(var(--p) * ${size})`, lineHeight: 1, letterSpacing: `calc(var(--p) * ${Math.max(1, scale / 2)})`,
-        display: "inline-block", paddingRight: "calc(var(--p) * 1)",
-        background: `linear-gradient(180deg, color-mix(in srgb, white 35%, ${from}) 0%, ${from} 30%, ${to} 100%)`,
-        WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent",
-        filter: `drop-shadow(var(--p) var(--p) 0 rgba(0,0,0,.5))`,
+        display: "inline-block", color: "#FFFFFF",
+        textShadow: `calc(var(--p) * ${Math.max(1, Math.round(scale / 2))}) calc(var(--p) * ${Math.max(1, Math.round(scale / 2))}) 0 rgba(0,0,0,.5)`,
       }}>{text}</span>
   );
 }
