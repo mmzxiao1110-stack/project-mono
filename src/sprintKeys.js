@@ -25,7 +25,8 @@ export const SPRINT_ACTIONS = [
 export const DAS_DEFAULT = 120;
 
 export const normalize = (k) => (typeof k === "string" && k.length === 1 ? k.toLowerCase() : k);
-const defaults = () => ({ ...Object.fromEntries(SPRINT_ACTIONS.map((a) => [a.id, a.def])), das: DAS_DEFAULT });
+// mode: "keyboard" (arrows move the piece) or "mouse" (the piece follows the cursor, click places).
+const defaults = () => ({ ...Object.fromEntries(SPRINT_ACTIONS.map((a) => [a.id, a.def])), das: DAS_DEFAULT, mode: "keyboard" });
 
 function load() {
   try {
@@ -34,6 +35,7 @@ function load() {
     const out = defaults();
     for (const a of SPRINT_ACTIONS) if (typeof saved[a.id] === "string" && saved[a.id]) out[a.id] = saved[a.id];
     if (Number.isFinite(saved.das)) out.das = Math.max(0, Math.min(400, Math.round(saved.das)));
+    if (saved.mode === "mouse") out.mode = "mouse";
     return out;
   } catch {
     return defaults();
@@ -54,7 +56,9 @@ export function setSprintKey(id, key) {
   keys = next; save();
 }
 export function setDas(ms) { keys = { ...keys, das: Math.max(0, Math.min(400, Math.round(ms))) }; save(); }
-export function resetSprintKeys() { keys = defaults(); save(); }
+export function setSprintMode(mode) { keys = { ...keys, mode: mode === "mouse" ? "mouse" : "keyboard" }; save(); }
+/** Back to the default keys and delay (the control mode stays as chosen). */
+export function resetSprintKeys() { keys = { ...defaults(), mode: keys.mode }; save(); }
 /** The action a key press means, or null. */
 export function sprintActionFor(key) {
   const k = normalize(key);

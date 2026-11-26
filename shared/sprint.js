@@ -124,6 +124,19 @@ export function shift(a, dr, dc, far = false) {
   }
   return cur;
 }
+/**
+ * Puts a piece as near as it can get to a point on the board (in squares,
+ * fractions allowed, e.g. from the mouse), always wholly on the board: past
+ * an edge, it sits against that edge.
+ */
+export function at(a, row, col) {
+  const s = shapeOf(a.id, a.rot);
+  const clamp = (v, max) => Math.max(0, Math.min(max, v));
+  const r = clamp(Math.round(row - s.h / 2), SIZE - s.h);
+  const c = clamp(Math.round(col - s.w / 2), SIZE - s.w);
+  return { ...a, cr: r + s.h / 2, cc: c + s.w / 2 };
+}
+
 /** Turns a quarter turn (dir 1 clockwise, -1 counter-clockwise) about its centre; shown pushed onto the board if it pokes out. */
 export const turn = (a, dir) => ({ ...a, rot: (a.rot + dir + 4) % 4 });
 export const canPlace = (st, a) => cellsOf(a).every(([r, c]) => st.board[r][c] === null);
