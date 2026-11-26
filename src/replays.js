@@ -25,7 +25,8 @@ export const replays = {
   subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
   /** Saves a replay record; returns its id. */
   save(rec) {
-    if (!rec || !Array.isArray(rec.turns) || !rec.turns.length) return null;
+    // A match keeps its turns; a solo run (Sprint, Ultra, Marathon) its seed and moves.
+    if (!rec || !((Array.isArray(rec.turns) && rec.turns.length) || (rec.kind && Array.isArray(rec.moves) && rec.moves.length))) return null;
     const id = rec.id || `${rec.date || Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const list = [{ ...rec, id }, ...all().filter((r) => r.id !== id)].slice(0, MAX);
     changed(list);

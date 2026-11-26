@@ -6,6 +6,9 @@
  *   GET /api/search?q=name       up to 20 players whose name contains q
  *   GET /api/player/NAME         one player's public profile
  *   GET /api/marathon?page=1     Marathon high scores, 50 a page
+ *   GET /api/sprint?page=1       Sprint (40 lines) fastest times, 50 a page
+ *   GET /api/ultra?page=1        Ultra (2 minutes) high scores, 50 a page
+ *   GET /api/run/MODE/NAME       a player's best Sprint or Ultra run (seed + timed moves), to replay
  *
  * Only public things go out: names, ratings, stats, recent results. Never an
  * email, an account id or anything about sign-in. Players who haven't
@@ -39,7 +42,12 @@ function ladder() {
   const byName = new Map(listed.map((p) => [p.name.toLowerCase(), p]));
   const marathon = listed.filter((p) => p.marathon?.best > 0).sort((a, b) => b.marathon.best - a.marathon.best || (a.marathon.at - b.marathon.at));
   const mpos = new Map(marathon.map((p, i) => [p.playerId, i + 1]));
-  cache = { at: Date.now(), listed, ladder: ladderList, pos, byName, marathon, mpos };
+  // Sprint: fastest first. Ultra: highest first.
+  const sprint = listed.filter((p) => p.sprint?.best > 0).sort((a, b) => a.sprint.best - b.sprint.best || (a.sprint.at - b.sprint.at));
+  const spos = new Map(sprint.map((p, i) => [p.playerId, i + 1]));
+  const ultra = listed.filter((p) => p.ultra?.best > 0).sort((a, b) => b.ultra.best - a.ultra.best || (a.ultra.at - b.ultra.at));
+  const upos = new Map(ultra.map((p, i) => [p.playerId, i + 1]));
+  cache = { at: Date.now(), listed, ladder: ladderList, pos, byName, marathon, mpos, sprint, spos, ultra, upos };
   return cache;
 }
 
@@ -56,6 +64,9 @@ function row(p, c) {
     wins: st.wins || 0,
   };
 }
+
+const srow = (p, c) => ({ name: p.name, position: c.spos.get(p.playerId), best: p.sprint.best, pieces: p.sprint.pieces, at: p.sprint.at || null });
+const urow = (p, c) => ({ name: p.name, position: c.upos.get(p.playerId), best: p.ultra.best, lines: p.ultra.lines, at: p.ultra.at || null });
 
 /** A row in the Marathon high scores. */
 const mrow = (p, c) => ({ name: p.name, position: c.mpos.get(p.playerId), best: p.marathon.best, lines: p.marathon.lines, at: p.marathon.at || null });
@@ -81,6 +92,8 @@ function card(p, c) {
     })),
     joined: p.createdAt || null,
     marathon: p.marathon?.best ? { best: p.marathon.best, lines: p.marathon.lines, games: p.marathon.games, at: p.marathon.at, position: c.mpos.get(p.playerId) || null } : null,
+    sprint: p.sprint?.best ? { best: p.sprint.best, pieces: p.sprint.pieces, games: p.sprint.games, at: p.sprint.at, position: c.spos.get(p.playerId) || null } : null,
+    ultra: p.ultra?.best ? { best: p.ultra.best, lines: p.ultra.lines, games: p.ultra.games, at: p.ultra.at, position: c.upos.get(p.playerId) || null } : null,
   };
 }
 
@@ -112,6 +125,8 @@ export function apiRoute(method, url, ip) {
       players: c.listed.length, ranked: c.ladder.length, online: onlineNow(),
       spread, top: c.ladder.slice(0, 5).map((p) => row(p, c)),
       marathon: c.marathon.slice(0, 5).map((p) => mrow(p, c)),
+      sprint: c.sprint.slice(0, 5).map((p) => srow(p, c)),
+      ultra: c.ultra.slice(0, 5).map((p) => urow(p, c)),
     } };
   }
   if (parts[1] === "leaderboard") {
@@ -123,6 +138,19 @@ export function apiRoute(method, url, ip) {
     const page = Math.max(1, Math.min(10_000, Number(url.searchParams.get("page")) || 1));
     const slice = c.marathon.slice((page - 1) * PAGE, page * PAGE);
     return { status: 200, body: { page, pages: Math.max(1, Math.ceil(c.marathon.length / PAGE)), total: c.marathon.length, players: slice.map((p) => mrow(p, c)) } };
+  }
+  if (parts[1] === "sprint" || parts[1] === "ultra") {
+    const list = c[parts[1]], fmt = parts[1] === "sprint" ? srow : urow;
+    const page = Math.max(1, Math.min(10_000, Number(url.searchParams.get("page")) || 1));
+    const slice = list.slice((page - 1) * PAGE, page * PAGE);
+    return { status: 200, body: { page, pages: Math.max(1, Math.ceil(list.length / PAGE)), total: list.length, players: slice.map((p) => fmt(p, c)) } };
+  }
+  // A player's best Sprint or Ultra run, to watch: /api/run/sprint/<name>
+  if (parts[1] === "run" && (parts[2] === "sprint" || parts[2] === "ultra") && parts[3]) {
+    const p = c.byName.get(decodeURIComponent(parts[3]).toLowerCase());
+    const rec = p && p[parts[2]];
+    if (!rec || !rec.run) return { status: 404, body: { error: "No run." } };
+    return { status: 200, body: { name: p.name, mode: parts[2], best: rec.best, at: rec.at, seed: rec.run.seed, moves: rec.run.moves } };
   }
   if (parts[1] === "search") {
     const q = String(url.searchParams.get("q") || "").trim().toLowerCase().slice(0, 32);

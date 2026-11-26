@@ -46,7 +46,7 @@ import { SPRINT_ACTIONS, getSprintKeys, subscribeSprintKeys, setSprintKey, reset
 import {
   SIZE as S_SIZE, GOAL as S_GOAL, NAMES as S_NAMES, newSprint, newSprintSeed, shapeOf as sShapeOf, spawn as sSpawn, cellsOf as sCellsOf,
   turn as sTurn, canPlace as sCanPlace, place as sPlace, at as sAt,
-  isJunk as sIsJunk, junkLevel as sJunkLevel, noteClear as sNoteClear, spikeDue as sSpikeDue, receiveJunk as sReceiveJunk, SPIKE_MS as S_SPIKE_MS, ULTRA_MS as S_ULTRA_MS, comboMult as sComboMult,
+  recordMove as sRecordMove, isJunk as sIsJunk, junkLevel as sJunkLevel, noteClear as sNoteClear, spikeDue as sSpikeDue, receiveJunk as sReceiveJunk, SPIKE_MS as S_SPIKE_MS, ULTRA_MS as S_ULTRA_MS, comboMult as sComboMult,
 } from "../shared/sprint.js";
 
 /* ============================================================
@@ -3824,6 +3824,7 @@ function MarathonGame({ theme, onExit }) {
     if (s.score > localBest.get()) localBest.set(s.score);
     setBest((b) => Math.max(b, s.score));
     if (game.official) net.marathonEnd(game.seed, encodeMoves(movesRef.current));
+    if (movesRef.current.length) replays.save({ kind: "marathon", seed: game.seed, moves: movesRef.current.slice(), date: Date.now(), name: net.profile?.name || "YOU", result: { score: s.score, lines: s.lines } });
     setTimeout(() => setShowEnd(true), reason === "forfeit" ? 0 : 1100);
   };
 
@@ -4173,10 +4174,12 @@ function SprintControlsSection() {
 /** A copy of a Sprint game to change (the bag's random source is shared: it only moves forward). */
 const cloneSprint = (st) => ({ ...st, board: st.board.map((row) => row.slice()), hand: st.hand.slice(), bag: st.bag.slice() });
 // A piece is always in play: the first of your two, in the middle, from the start.
-const freshSprint = (ultra = false) => {
-  const st = newSprint(newSprintSeed(), ultra ? Infinity : S_GOAL);
-  return { st, act: sSpawn(st, 0), startAt: 0, endAt: 0, result: null, newBest: false, vanish: null, pop: null };
+// A run: its seed (from the server when you're signed in, so it can be ranked) and every placement, timed.
+const freshSprint = (ultra = false, seed = newSprintSeed(), official = false) => {
+  const st = newSprint(seed, ultra ? Infinity : S_GOAL);
+  return { st, seed, official, moves: [], act: sSpawn(st, 0), startAt: 0, endAt: 0, result: null, newBest: false, vanish: null, pop: null };
 };
+const canRank = () => net.status === "online" && net.auth === "authed" && !!net.profile?.emailVerified;
 
 /** SPRINT (40 lines, fastest time) and ULTRA (2 minutes, highest score): same board, same controls. */
 function SprintGame({ onExit, ultra = false }) {
@@ -4201,7 +4204,17 @@ function SprintGame({ onExit, ultra = false }) {
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  const retry = useCallback(() => { commit(freshSprint(ultra)); sfx.pick(); }, [commit, ultra]);
+  const mode = ultra ? "ultra" : "sprint";
+  const [ranked, setRanked] = useState(null); // the server's answer about the last run
+  const askSeed = useCallback(() => { if (canRank()) net.soloStart(mode); }, [mode]);
+  // A seed from the server replaces the local one, as long as the run hasn't started.
+  useEffect(() => net.on("soloSeed", (m) => {
+    const c = live.current;
+    if (m.mode === mode && !c.startAt && !c.result) commit(freshSprint(ultra, m.seed, true));
+  }), [mode, ultra, commit]);
+  useEffect(() => net.on("soloResult", (m) => setRanked(m)), []);
+  useEffect(() => { askSeed(); }, [askSeed]);
+  const retry = useCallback(() => { setRanked(null); commit(freshSprint(ultra)); askSeed(); sfx.pick(); }, [commit, ultra, askSeed]);
   const finish = useCallback((cur, result) => {
     const endAt = ultra && result === "time" ? cur.startAt + S_ULTRA_MS : performance.now();
     let newBest = false;
@@ -4213,8 +4226,15 @@ function SprintGame({ onExit, ultra = false }) {
     // Ultra: the score counts when time runs out or the board fills, not on a forfeit.
     if (ultra && result !== "forfeit" && cur.st.score > ultraBest.get()) { ultraBest.set(cur.st.score); setBest(cur.st.score); newBest = true; }
     if (result === "forfeit") sfx.forfeit(); else sfx.levelUp();
+    // A finished run is kept as a replay here, and sent to be ranked if it can be.
+    const counts = ultra ? result !== "forfeit" : result === "done";
+    if (counts && cur.moves.length) {
+      replays.save({ kind: mode, seed: cur.seed, moves: cur.moves, date: Date.now(), name: net.profile?.name || "YOU",
+        result: ultra ? { score: cur.st.score, lines: cur.st.lines } : { ms: Math.round(endAt - cur.startAt), pieces: cur.st.pieces } });
+      if (cur.official) net.soloEnd(mode, cur.seed, cur.moves);
+    }
     commit({ ...cur, endAt, result, newBest, act: null });
-  }, [commit, ultra]);
+  }, [commit, ultra, mode]);
   // Ultra: two minutes, then it's over.
   useEffect(() => {
     if (!ultra || !r.startAt || r.endAt) return undefined;
@@ -4241,6 +4261,7 @@ function SprintGame({ onExit, ultra = false }) {
     if (!sCanPlace(cur.st, cur.act)) { sfx.illegal(); return; }
     const st = cloneSprint(cur.st);
     const slot = cur.act.slot;
+    cur = { ...cur, moves: [...cur.moves, sRecordMove(cur.act, performance.now() - cur.startAt)] };
     sPlace(st, cur.act);
     const L = st.last;
     sfx.lockIn("place");
@@ -4439,6 +4460,15 @@ function SprintGame({ onExit, ultra = false }) {
               <span className="tb-t" style={{ color: UI.dim }}>
                 {st.lines} lines · {st.pieces} pieces · {pps.toFixed(2)} PPS · best {best ? (ultra ? best.toLocaleString("en-US") : fmtClock(best)) : "—"}
               </span>
+              {/* Whether the run went on T-Terminal. */}
+              {(ultra ? r.result !== "forfeit" : r.result === "done") && (
+                <span className="tb-t" style={{ color: ranked?.saved ? UI.good : ranked?.error ? UI.bad : UI.dim }}>
+                  {!r.official ? "sign in to rank your runs on T-Terminal"
+                    : !ranked ? "checking…"
+                    : ranked.error ? ranked.error
+                    : ranked.newBest ? "new personal best on T-Terminal" : "checked · saved to your record"}
+                </span>
+              )}
               <div className="flex" style={{ gap: 2 * P }}>
                 <button onClick={onExit} className="tb-t px-4" style={{ height: 38, ...sk(UI.line), color: UI.dim }}>MENU</button>
                 <button onClick={retry} className="tb-t px-4" style={{ height: 38, ...skFill(UI.text), color: UI.text }}>RETRY ({keyOf("retry")})</button>
@@ -4614,10 +4644,10 @@ function BlitzGame({ onExit }) {
           <span style={{ color: spiking ? GOLD : UI.dim }}>{spiking ? `SPIKE ${st.spike}` : `SENT ${g.sent[who]}`}</span>
         </div>
         {/* Your two pieces over the board, the one in play lit up. */}
-        <div className="flex" style={{ gap: 3 * P, width: boardW + 2 * cell + 4 * P }}>
+        <div className="flex justify-center" style={{ gap: 3 * P, width: boardW + 2 * cell + 4 * P }}>
           {st.hand.map((id, i) => (
-            <div key={i} role="img" aria-label={`${who} piece ${i + 1}: ${blitzName(id)}`} className="flex-1 flex items-center justify-center"
-              style={{ height: Math.round(cell * 1.4), ...glass(mine && a && a.slot === i ? UI.text : UI.line), opacity: mine && a && a.slot === i ? 1 : 0.7 }}>
+            <div key={i} role="img" aria-label={`${who} piece ${i + 1}: ${blitzName(id)}`} className="flex items-center justify-center"
+              style={{ width: Math.round(cell * 2.6), height: Math.round(cell * 1.15), ...glass(mine && a && a.slot === i ? UI.text : UI.line), opacity: mine && a && a.slot === i ? 1 : 0.7 }}>
               <SPiece id={id} cell={sIsJunk(id) ? Math.max(P, Math.floor(half / 2 / P) * P) : half} gap={P} />
             </div>
           ))}
@@ -5645,9 +5675,13 @@ function replaySides(rec) {
   return { me, them, meName: rec.you ? "YOU" : rec.players.A.name, themName: rec.players[them].name };
 }
 
+const REPLAY_TABS = [["all", "ALL"], ["match", "1V1"], ["sprint", "SPRINT"], ["ultra", "ULTRA"], ["marathon", "MARATHON"]];
 function ReplayList({ onOpen, onBack }) {
   const P = usePx();
-  const list = useReplayList();
+  const all = useReplayList();
+  const [tab, setTab] = useState(() => store.get("tb:replayTab") || "all");
+  const pick = (k) => { setTab(k); store.set("tb:replayTab", k); };
+  const list = all.filter((r) => tab === "all" || (tab === "match" ? !r.kind : r.kind === tab));
   const [code, setCode] = useState("");
   const [err, setErr] = useState(null);
   const doImport = () => {
@@ -5667,9 +5701,28 @@ function ReplayList({ onOpen, onBack }) {
           <button type="submit" disabled={!code.trim()} className="tb-t px-3 disabled:opacity-40" style={{ height: 40, ...glass(UI.line), color: UI.dim }}>OPEN</button>
         </form>
         {err && <div className="tb-t mb-1" style={{ color: UI.bad }}>{err}</div>}
+        {/* What to show. */}
+        <div className="flex flex-wrap gap-1.5 mt-2 shrink-0">
+          {REPLAY_TABS.map(([k, label]) => (
+            <button key={k} onClick={() => pick(k)} aria-pressed={tab === k} className="tb-t px-2"
+              style={{ height: 30, ...(tab === k ? skFill(GOLD) : glass(UI.line)), color: tab === k ? UI.text : UI.dim }}>{label}</button>
+          ))}
+        </div>
         <div className="flex-1 min-h-0 overflow-y-auto mt-2 flex flex-col gap-2 pr-1">
-          {!list.length && <div className="tb-t text-center py-10" style={{ color: UI.dim }}>No replays yet. Every game you finish is saved here.</div>}
+          {!list.length && <div className="tb-t text-center py-10" style={{ color: UI.dim }}>No replays here yet. Every game you finish is saved here.</div>}
           {list.map((rec) => {
+            if (rec.kind) {
+              const main = rec.kind === "sprint" ? fmtClock(rec.result?.ms || 0) : (rec.result?.score || 0).toLocaleString("en-US");
+              return (
+                <button key={rec.id} onClick={() => onOpen(rec.id)} className="w-full text-left flex items-center gap-3 px-3 py-2" style={{ ...glass(UI.line) }}>
+                  <div className="flex-1 min-w-0">
+                    <div className="tb-t truncate">{rec.kind.toUpperCase()}</div>
+                    <div className="tb-t truncate" style={{ color: UI.dim }}>{rec.moves.length} pieces · {fmtDate(rec.date)}</div>
+                  </div>
+                  <div className="tb-t tb-b tabular-nums shrink-0" style={{ color: "var(--tb-you)" }}>{main}</div>
+                </button>
+              );
+            }
             const { me, them, meName, themName } = replaySides(rec);
             const my = rec.result?.[me.toLowerCase()] ?? 0, their = rec.result?.[them.toLowerCase()] ?? 0;
             const ink = my > their ? "var(--tb-you)" : my < their ? "var(--tb-rival)" : UI.dim;
@@ -5690,6 +5743,104 @@ function ReplayList({ onOpen, onBack }) {
 }
 
 const SPEEDS = [0.5, 1, 2, 4];
+
+/**
+ * A solo replay (Sprint, Ultra, Marathon): the run rebuilt from its seed,
+ * placement by placement. Sprint and Ultra play back at their real speed
+ * (every placement's time was recorded); Marathon at a steady pace.
+ */
+function soloFrames(rec) {
+  if (rec.kind === "marathon") {
+    const st = newMarathon(rec.seed), out = [{ t: 0, board: st.board.map((r) => r.slice()), score: 0, lines: 0 }];
+    rec.moves.forEach((m, i) => {
+      if (!mPlace(st, m[0], m[1], m[2], m[3] ?? 0)) return;
+      out.push({ t: (i + 1) * 450, board: st.board.map((r) => r.slice()), score: st.score, lines: st.lines, cells: st.last.cells });
+    });
+    return out;
+  }
+  const st = newSprint(rec.seed, rec.kind === "ultra" ? Infinity : S_GOAL);
+  const snap = (t, cells) => ({ t, board: st.board.map((r) => r.slice()), hand: st.hand.slice(), queue: st.queue.slice(0, 5), score: st.score, lines: st.lines, pieces: st.pieces, cells });
+  const out = [snap(0)];
+  for (const [t, slot, rot, r, c] of rec.moves) {
+    const s = sShapeOf(st.hand[slot], rot);
+    if (!sPlace(st, { slot, id: st.hand[slot], rot, cr: r + s.h / 2, cc: c + s.w / 2 })) break;
+    out.push(snap(t, st.last.cells));
+  }
+  return out;
+}
+
+function SoloReplayViewer({ rec, onBack }) {
+  const P = usePx();
+  const frames = useMemo(() => soloFrames(rec), [rec]);
+  const end = frames[frames.length - 1].t;
+  const [time, setTime] = useState(0);
+  const [playing, setPlaying] = useState(true);
+  const [speed, setSpeed] = useState(1);
+  const live = useRef({ time: 0 });
+  useEffect(() => {
+    if (!playing) return undefined;
+    let raf, last = performance.now();
+    const loop = (now) => {
+      raf = requestAnimationFrame(loop);
+      const t = Math.min(end, live.current.time + (now - last) * speed);
+      last = now; live.current.time = t; setTime(t);
+      if (t >= end) setPlaying(false);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [playing, speed, end]);
+  const seek = (t) => { live.current.time = t; setTime(t); };
+  let i = 0; while (i + 1 < frames.length && frames[i + 1].t <= time) i++;
+  const f = frames[i];
+  const marathon = rec.kind === "marathon";
+  const N = marathon ? M_SIZE : S_SIZE;
+  const cell = 9 * P, gap = P;
+  const ink = (v) => (marathon ? M_INK[v] : S_INK_ALL[v]);
+  const just = new Set((f.cells || []).map(([r, c]) => r * N + c));
+  return (
+    <div className="tb-screen tb-safe w-full flex flex-col items-center font-mono" style={{ color: UI.text }}>
+      <div className="flex flex-col items-center" style={{ gap: 3 * P, paddingTop: 6 * P }}>
+        <div className="flex flex-col tb-t" style={{ width: Math.max(N * (cell + gap) + 40 * P, 320), gap: P }}>
+          <button onClick={onBack} className="flex items-center gap-1 py-1 self-start" style={{ color: UI.dim }}><ChevronLeft size={13} /> REPLAYS</button>
+          <span className="text-center" style={{ color: UI.text }}>{rec.kind.toUpperCase()}{rec.name ? ` · ${rec.name}` : ""}</span>
+          <span className="text-center" style={{ color: UI.dim }}>{fmtDate(rec.date)}</span>
+        </div>
+        <span className="tb-t tb-b tabular-nums" style={{ color: "var(--tb-you)" }}>
+          {marathon ? `${f.score.toLocaleString("en-US")}` : fmtClock(rec.kind === "ultra" ? Math.max(0, S_ULTRA_MS - time) : time)}
+        </span>
+        <div className="flex items-start" style={{ gap: 4 * P }}>
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${N}, ${cell}px)`, gap }}>
+            {f.board.map((row, r) => row.map((v, c) => (
+              <div key={r * N + c} style={{ width: cell, height: cell, position: "relative", clipPath: CLIP1, ...(v === null ? GLASS : null), outline: just.has(r * N + c) ? `${P}px solid ${UI.text}` : "none" }}>
+                {v !== null && <Ink size={cell} color={ink(v)} />}
+              </div>
+            )))}
+          </div>
+          {!marathon && (
+            <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
+              {f.hand.map((id, k) => <div key={k} className="flex items-center justify-center" style={{ width: 30 * P, height: 14 * P, ...glass(UI.line) }}><SPiece id={id} cell={3 * P} gap={P} /></div>)}
+              {f.queue.map((id, k) => <Ink key={k} size={6 * P} color={S_INK_ALL[id]} />)}
+            </div>
+          )}
+        </div>
+        <div className="flex tb-t" style={{ gap: 8 * P }}>
+          {rec.kind === "ultra" && <span>SCORE <span className="tb-b">{f.score.toLocaleString("en-US")}</span></span>}
+          <span>LINES <span className="tb-b">{f.lines}</span></span>
+          {!marathon && <span>PIECES <span className="tb-b">{f.pieces}</span></span>}
+        </div>
+        <PixelSlider min={0} max={Math.max(1, Math.ceil(end / 100))} value={Math.round(time / 100)} onChange={(v) => { setPlaying(false); seek(v * 100); }} label="Replay position" style={{ width: N * (cell + gap) + 40 * P }} />
+        <div className="flex items-center" style={{ gap: 2 * P }}>
+          <button onClick={() => { if (time >= end) seek(0); setPlaying(!playing); }} className="tb-t px-3" style={{ height: 32, ...glass(UI.line), color: UI.text }}>{playing ? "PAUSE" : "PLAY"}</button>
+          <button onClick={() => seek(0)} className="tb-t px-3" style={{ height: 32, ...glass(UI.line), color: UI.text }}>RESTART</button>
+          {SPEEDS.map((s) => (
+            <button key={s} onClick={() => setSpeed(s)} className="tb-t px-2" aria-pressed={speed === s} style={{ height: 32, ...(speed === s ? skFill(UI.text) : glass(UI.line)), color: UI.text }}>{s}×</button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 function ReplayViewer({ id, theme, colors, onBack }) {
   const P = usePx();
@@ -6241,7 +6392,9 @@ export default function TurfBlocks() {
   else if (screen === "REPLAYS")
     view = <ReplayList onOpen={(id) => { setReplayId(id); setScreen("REPLAY"); }} onBack={() => setScreen("MENU")} />;
   else if (screen === "REPLAY")
-    view = <ReplayViewer id={replayId} theme={theme} colors={colors} onBack={() => setScreen("REPLAYS")} />;
+    view = replays.get(replayId)?.kind
+      ? <SoloReplayViewer rec={replays.get(replayId)} onBack={() => setScreen("REPLAYS")} />
+      : <ReplayViewer id={replayId} theme={theme} colors={colors} onBack={() => setScreen("REPLAYS")} />;
   else if (screen === "UNRANKED")
     view = (
       <Unranked status={status} profile={profile} loadout={loadout} colors={colors}
