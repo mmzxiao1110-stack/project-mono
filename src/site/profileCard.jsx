@@ -17,7 +17,7 @@ const rgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
 const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
 
 /** The card's sky: a low-resolution canvas, dithered, scaled up crisp. */
-export function CardSky({ card, pixel = 6, world = null, at = null }) {
+export function CardSky({ card, pixel = 8, world = null, at = null }) {
   const ref = useRef(null), box = useRef(null);
   const c = cleanCard(card);
   // Square pixels: as many as fit at `pixel` CSS pixels each. With `world`
@@ -40,7 +40,9 @@ export function CardSky({ card, pixel = 6, world = null, at = null }) {
   useEffect(() => {
     const cv = ref.current; if (!cv) return undefined;
     const ctx = cv.getContext("2d"), img = ctx.createImageData(w, h), d = img.data;
-    const [g0, g1, g2, g3] = SKIES[c.sky].map(rgb), ink = rgb(CARD_INKS[c.accent]);
+    const [g0, g1, g2] = SKIES[c.sky].map(rgb), ink = rgb(CARD_INKS[c.accent]);
+    // The bands: from the sky's deep to its panel colour to a tint of its light.
+    const BANDS = [g0, lerp(g0, g1, 0.35), lerp(g0, g1, 0.7), g1, lerp(g1, g2, 0.2), lerp(g1, g2, 0.38)];
     let seed = 7; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
     const stars = Array.from({ length: Math.round(w * h / 90) }, () => ({ x: Math.floor(rnd() * w), y: Math.floor(rnd() * h * 0.8), p: rnd() * 6 }));
     const bubbles = Array.from({ length: Math.round(w * h / 200) + 4 }, () => ({ x: rnd() * w, y: rnd() * h, v: 2 + rnd() * 4, r: rnd() < 0.3 ? 2 : 1 }));
@@ -54,34 +56,31 @@ export function CardSky({ card, pixel = 6, world = null, at = null }) {
       const s = now / 1000;
       for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
         const o = (y * w + x) * 4, th = BAYER[(y & 3) * 4 + (x & 3)];
-        // Deep at the top to lighter at the bottom, with a glow of the sky's colours.
-        let col = lerp(g0, g1, Math.min(1, y / h * 1.1));
-        const gx = (x - w * 0.78) / w, gy = (y - h * 0.15) / h, glow = Math.max(0, 0.55 - Math.sqrt(gx * gx * 1.6 + gy * gy * 4));
-        const lx = (x - w * 0.15) / w, ly = (y - h * 0.95) / h, glow2 = Math.max(0, 0.5 - Math.sqrt(lx * lx * 1.6 + ly * ly * 3));
-        if (glow > th * 0.6) col = lerp(col, g2, 0.35);
-        if (glow2 > th * 0.6) col = lerp(col, g3, 0.3);
+        // A pixel-art gradient: a few flat bands, top left to bottom right,
+        // dithered into each other only along the seams.
+        const t = Math.min(0.999, (y / h) * 0.7 + (x / w) * 0.3);
+        const f = t * (BANDS.length - 1), i0 = Math.floor(f);
+        let col = BANDS[f - i0 > th ? Math.min(BANDS.length - 1, i0 + 1) : i0];
         if (c.pattern === "waves") {
-          for (let k = 0; k < 3; k++) {
-            const yy = h * (0.45 + k * 0.17) + Math.sin(x * 0.11 + s * (0.8 + k * 0.3) + k) * 2.2;
-            const dist = Math.abs(y - yy);
-            if (dist < 1.2 && th < 0.75) col = lerp(col, ink, 0.45 - k * 0.1);
-            else if (dist < 2.6 && th < 0.25) col = lerp(col, ink, 0.25);
+          for (let k = 0; k < 2; k++) {
+            const yy = h * (0.5 + k * 0.22) + Math.sin(x * 0.12 + s * (0.8 + k * 0.3) + k) * 2;
+            if (Math.abs(y - yy) < 0.8 && th < 0.6) col = lerp(col, ink, 0.3 - k * 0.08);
           }
         } else if (c.pattern === "grid") {
-          const hz = h * 0.55;
+          const hz = h * 0.6;
           if (y > hz) {
             const depth = (y - hz) / (h - hz);
             const row = Math.abs(((Math.log(depth + 0.05) * 6 - s * 1.2) % 1 + 1) % 1) < 0.12;
             const colx = Math.abs((((x - w / 2) / (0.2 + depth * 1.8)) % 9 + 9) % 9) < 0.9;
-            if ((row || colx) && th < 0.4 + depth * 0.5) col = lerp(col, ink, 0.6);
-          } else if (Math.abs(y - hz) < 0.6) col = lerp(col, ink, 0.8);
+            if ((row || colx) && th < 0.3 + depth * 0.4) col = lerp(col, ink, 0.35);
+          }
         }
         d[o] = col[0]; d[o + 1] = col[1]; d[o + 2] = col[2]; d[o + 3] = 255;
       }
       if (c.pattern === "stars" || c.pattern === "grid") for (const st of stars) {
         const tw = 0.5 + 0.5 * Math.sin(s * 2.2 + st.p);
         if (c.pattern === "grid" && st.y > h * 0.5) continue;
-        set(st.x, st.y, ink, 0.2 + tw * 0.45);
+        set(st.x, st.y, ink, 0.12 + tw * 0.3);
       }
       if (c.pattern === "bubbles") for (const b of bubbles) {
         const y = Math.round(((b.y - s * b.v) % h + h) % h), x = Math.round(b.x + Math.sin(s * 1.5 + b.y) * 1.2);
@@ -146,15 +145,14 @@ function Tag({ n, ink }) {
 const Mini = ({ card, world, at, label, big, lead, tag, sub, size = 1, style, boxRef }) => {
   const ink = CARD_INKS[card.accent];
   return (
-    <div ref={boxRef} className="relative" style={{ clipPath: STEP(1), ...style }}>
+    <div ref={boxRef} className="relative" style={{ ...style, filter: `drop-shadow(${px(2)} ${px(2)} 0 rgba(0,0,0,.45))` }}>
+      <div className="relative" style={{ clipPath: STEP(1) }}>
       {world && at && <CardSky card={card} world={world} at={at} />}
       <div className="relative flex flex-col items-center text-center" style={{
         padding: `${px(3 + 2 * size)} ${px(3)}`, gap: px(1 + size), minWidth: 0,
-        background: `color-mix(in srgb, ${ink} 10%, rgba(255,255,255,.07))`,
-        boxShadow: `inset ${px(1)} ${px(1)} 0 rgba(255,255,255,.3), inset ${px(-1)} ${px(-1)} 0 rgba(0,0,0,.25), inset ${px(2)} ${px(2)} 0 rgba(255,255,255,.07)`,
+        // A pixel border: lit top and left, in shadow bottom and right.
+        boxShadow: `inset 0 0 0 ${px(1)} color-mix(in srgb, ${ink} 70%, white), inset ${px(2)} ${px(2)} 0 color-mix(in srgb, ${ink} 30%, transparent), inset ${px(-2)} ${px(-2)} 0 rgba(0,0,0,.3)`,
       }}>
-        <span aria-hidden="true" className="absolute" style={{ left: px(3), top: px(3), width: px(3), height: px(1), background: "rgba(255,255,255,.5)" }} />
-        <span aria-hidden="true" className="absolute" style={{ left: px(3), top: px(4), width: px(1), height: px(2), background: "rgba(255,255,255,.35)" }} />
         <span className="tb-t" style={{ color: "rgba(255,255,255,.65)", letterSpacing: px(1) }}>{label}</span>
         <div className="flex items-center justify-center flex-wrap" style={{ gap: px(2) }}>
           {lead}
@@ -162,6 +160,7 @@ const Mini = ({ card, world, at, label, big, lead, tag, sub, size = 1, style, bo
           <Tag n={tag} ink={ink} />
         </div>
         {sub && <span className="tb-t" style={{ color: "rgba(255,255,255,.75)" }}>{sub}</span>}
+      </div>
       </div>
     </div>
   );
@@ -216,7 +215,7 @@ export function ProfileCard({ p, compact = false, href = null, onEdit = null }) 
   const bRank = bz && bz.games >= PLACEMENT_GAMES ? RANKS[rankIndexFor(bz.rating)] : null;
   const cRank = p.rank ? RANKS.find((r) => r.name === p.rank) : null;
   const k = compact ? 0.8 : 1;
-  const av = Math.round(48 * k);
+  const av = Math.round(64 * k);
   const SIDE = 3, BOTTOM = 4; // how far (in pixels of --p) the side cards and the picture hang out: a little
   // Where the card and each mini-card sit, so they can all show the same sky.
   const root = useRef(null), body = useRef(null), m0 = useRef(null), m1 = useRef(null), m2 = useRef(null);
@@ -234,16 +233,17 @@ export function ProfileCard({ p, compact = false, href = null, onEdit = null }) 
     return () => { ro?.disconnect(); cancelAnimationFrame(raf); };
   }, []);
   return (
-    <div ref={root} className="relative w-full font-mono tb-pcard" style={{ padding: `0 ${px(SIDE)} ${px(BOTTOM)}` }}>
+    <div className="w-full font-mono">
+    <div ref={root} className="relative w-full tb-pcard" style={{ padding: `0 ${px(SIDE)} ${px(BOTTOM)}` }}>
       <style>{`.tb-pcard .tb-pencil { opacity: 0; transition: opacity .15s steps(3); } .tb-pcard:hover .tb-pencil, .tb-pcard:focus-within .tb-pencil { opacity: 1; } @media (hover: none) { .tb-pcard .tb-pencil { opacity: .8; } }`}</style>
       {/* The card itself, its sky behind everything. */}
       <div ref={body} className="absolute overflow-hidden" style={{ left: px(SIDE), right: px(SIDE), top: 0, bottom: px(BOTTOM), clipPath: STEP(1) }}>
         {geo && <CardSky card={card} world={geo.world} at={geo.body} />}
       </div>
       <div className="relative" style={{ padding: `${px(6)} ${px(6)} 0` }}>
-        <div className="flex items-center" style={{ gap: px(5) }}>
-          {/* The picture: left, centred, hanging just over the left edge. */}
-          <div style={{ marginLeft: px(-6 - SIDE), boxShadow: `${px(2)} ${px(2)} 0 rgba(0,0,0,.35)`, flexShrink: 0 }}><Avatar name={p.name} size={px(av)} /></div>
+        <div className="flex items-start" style={{ gap: px(5) }}>
+          {/* The picture: big, on the left, set a little lower, hanging just over the left edge. */}
+          <div style={{ marginLeft: px(-6 - SIDE), marginTop: px(6), boxShadow: `${px(2)} ${px(2)} 0 rgba(0,0,0,.35)`, flexShrink: 0 }}><Avatar name={p.name} size={px(av)} /></div>
           <div className="flex flex-col min-w-0" style={{ gap: px(2), flex: "1 1 auto" }}>
             <span className="truncate" style={{ ...BIG, fontSize: px(compact ? 15 : 22), textShadow: `${px(1)} ${px(1)} 0 rgba(0,0,0,.55)` }}>{p.name}</span>
             <span className="tb-t flex items-center" style={{ gap: px(2), color: "rgba(255,255,255,.7)" }}>
@@ -257,14 +257,14 @@ export function ProfileCard({ p, compact = false, href = null, onEdit = null }) 
           </div>
         </div>
         {/* The three modes: Blitz biggest in the middle, Sprint and Ultra lower, over the bottom corners. */}
-        <div className="grid items-end" style={{ margin: `${px(8)} ${px(-6 - SIDE)} ${px(-BOTTOM)}`, gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr)", gap: px(compact ? 5 : 8) }}>
+        <div className="grid items-end" style={{ margin: `${px(6)} ${px(-6 - SIDE)} ${px(-BOTTOM)}`, gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr)", gap: px(compact ? 5 : 8) }}>
           <Mini boxRef={m0} card={card} world={geo?.world} at={geo?.minis[0]} label="SPRINT · 40L" style={{ marginBottom: 0 }}
             big={p.sprint ? clock(p.sprint.best) : "—"} tag={p.sprint?.position} sub={p.sprint?.at ? timeAgo(p.sprint.at).toUpperCase() : "no run yet"} />
-          <Mini boxRef={m1} card={card} world={geo?.world} at={geo?.minis[1]} label="BLITZ" size={compact ? 1 : 2} style={{ marginBottom: px(BOTTOM + 4) }}
+          <Mini boxRef={m1} card={card} world={geo?.world} at={geo?.minis[1]} label="BLITZ" size={compact ? 1 : 2} style={{ marginBottom: px(BOTTOM - 2) }}
             lead={bz ? <RankIcon rank={bRank} size={px(compact ? 14 : 22)} /> : null}
             big={bz ? bz.rating : "—"} tag={bz?.position}
             sub={bz ? (bz.pps != null ? `${bz.apm?.toFixed(1)} APM · ${bz.pps.toFixed(2)} PPS · ${bz.vs?.toFixed(1)} VS` : `${bz.games} games`) : "unplayed"} />
-          <Mini boxRef={m2} card={card} world={geo?.world} at={geo?.minis[2]} label="ULTRA · 2 MIN" style={{ marginBottom: px(2) }}
+          <Mini boxRef={m2} card={card} world={geo?.world} at={geo?.minis[2]} label="ULTRA · 2 MIN" style={{ marginBottom: px(1) }}
             big={p.ultra ? p.ultra.best.toLocaleString("en-US") : "—"} tag={p.ultra?.position} sub={p.ultra?.at ? timeAgo(p.ultra.at).toUpperCase() : "no run yet"} />
         </div>
       </div>
@@ -277,6 +277,7 @@ export function ProfileCard({ p, compact = false, href = null, onEdit = null }) 
         </button>
       )}
       {editing && onEdit && <CardOptions card={card} onChange={onEdit} onClose={() => setEditing(false)} />}
+    </div>
       {href && (
         <a href={href} target="_blank" rel="noopener" className="tb-t flex items-center justify-center no-underline"
           style={{ marginTop: px(5), gap: px(2), color: "#fff", letterSpacing: px(1) }}>↗ VIEW FULL PROFILE</a>
