@@ -46,7 +46,7 @@ import {
   loadTheme, saveTheme, applyPreset, editTheme, themeVars,
 } from "./theme.js";
 import { ACTIONS, getKeys, subscribeKeys, setKey, resetKeys, actionFor, keyLabel, canBind } from "./keys.js";
-import { ZG_ACTIONS, HANDLING, zgSubscribe, getZgKeys, getZgHandling, setZgKey, setZgHandling, resetZg, zgActionFor } from "./zgKeys.js";
+import { ZG_ACTIONS, HANDLING, zgSubscribe, getZgKeys, getZgHandling, setZgKey, setZgHandling, resetZg, zgActionFor, getZgMinor, setZgMinor } from "./zgKeys.js";
 import {
   W as Z_W, TOP as Z_TOP, VISIBLE as Z_VISIBLE, NEXT as Z_NEXT, GOAL as Z_GOAL, NAMES as Z_NAMES, newGame as zNewGame, shapeCells as zShapeCells,
   cellsOf as zCellsOf, dropped as zDropped, shift as zShift, down as zDown, rotate as zRotate, hold as zHold, hardDrop as zHardDrop,
@@ -4802,6 +4802,7 @@ function ZgControlsSection() {
   const P = usePx();
   const keys = useSyncExternalStore(zgSubscribe, getZgKeys);
   const hd = useSyncExternalStore(zgSubscribe, getZgHandling);
+  const minor = useSyncExternalStore(zgSubscribe, getZgMinor);
   const [listening, setListening] = useState(null);
   useEffect(() => {
     if (!listening) return undefined;
@@ -4831,6 +4832,10 @@ function ZgControlsSection() {
         })}
       </div>
       <div className="flex flex-col" style={{ gap: 2 * P, marginTop: 2 * P }}>
+        <div className="flex items-center justify-between tb-t">
+          <span>MINOR KEY <span style={{ color: UI.dim }}>· every chord and arpeggio in D minor</span></span>
+          <Toggle on={minor} onClick={() => { setZgMinor(!minor); setTimeout(() => sfx.zgKeyPreview(), 30); }} />
+        </div>
         {HANDLING.map((h) => (
           <div key={h.id} className="flex flex-col" style={{ gap: P }}>
             <div className="flex items-center justify-between tb-t">
@@ -4889,9 +4894,9 @@ function ZeroGGame({ onExit }) {
     if (result === "done") {
       const ms = Math.round(r.endAt - r.startAt);
       if (!zgBest.get() || ms < zgBest.get()) { zgBest.set(ms); setBest(ms); r.newBest = true; }
-      sfx.levelUp();
+      sfx.zgFinish();
     } else if (result === "forfeit") sfx.forfeit();
-    else sfx.lose();
+    else sfx.zgTopOut();
     bump();
     setTimeout(() => wipe(() => { if (run.current.result) setShowEnd(true); }), result === "forfeit" ? 0 : 700);
   }, [bump, wipe]);
@@ -4903,11 +4908,11 @@ function ZeroGGame({ onExit }) {
     if (!st.cur) return;
     start();
     const L = zHardDrop(st);
-    sfx.zgDrop();
+    sfx.zgDrop(L.piece.x + 1);
+    if (L.lines || L.spin) sfx.zgClear({ lines: L.lines, spin: L.spin, piece: L.piece.id, b2b: L.b2b, allClear: L.allClear });
     if (L.lines) {
       const at = st.pieces;
       r.flash = { rows: L.rows, key: at };
-      sfx.zgClear({ lines: L.lines, spin: L.spin, b2b: L.b2b, allClear: L.allClear });
       if (L.combo >= 1) sfx.zgCombo(L.combo);
       r.pop = { name: L.name, piece: L.piece.id, combo: L.combo, b2b: L.b2b, allClear: L.allClear, key: at };
       setTimeout(() => { const c = run.current; if (c.flash && c.flash.key === at) { c.flash = null; bump(); } }, 200);
@@ -5006,7 +5011,7 @@ function ZeroGGame({ onExit }) {
     return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); window.removeEventListener("blur", blur); };
   }, [press, release, opts]);
   // For the playtest bot (and anyone curious): the run, read-only.
-  useEffect(() => { window.__zg = run; return () => { if (window.__zg === run) delete window.__zg; }; }, []);
+  useEffect(() => { window.__zg = run; window.__zgSfx = sfx; window.__setMinor = setZgMinor; return () => { if (window.__zg === run) { delete window.__zg; delete window.__zgSfx; } }; }, []);
 
   const st = r.st;
   const ms = r.startAt ? (r.endAt || r.now) - r.startAt : 0;
@@ -5029,9 +5034,9 @@ function ZeroGGame({ onExit }) {
   // The field: 10 wide, the 20 visible rows plus 2 buffer rows above them, as big as the screen allows.
   const g = P;
   const side = 2 * P; // the small gap between the board and the panels beside it
-  const availH = stage.h - (TITLE_H + 6) * P - 8 * P;
+  const availH = stage.h - 24 * P; // the whole height (one row more is kept free above the board for the floating piece)
   const fitW = (stage.w - 24 * P - 9 * g) / 19; // the board plus both side columns must fit across
-  const cell = Math.max(4 * P, Math.min(40 * P, Math.floor(Math.min((availH - (ZG_SHOW - 1) * g) / ZG_SHOW, fitW) / P) * P));
+  const cell = Math.max(4 * P, Math.min(40 * P, Math.floor(Math.min((availH - ZG_SHOW * g) / (ZG_SHOW + 1), fitW) / P) * P));
   // Text and buttons grow with the board.
   const zoom = Math.max(1, cell / (8 * P));
   const font = Math.round(8 * P * Math.min(zoom, 1.6));
@@ -5058,9 +5063,8 @@ function ZeroGGame({ onExit }) {
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono select-none" style={{ color: UI.text }}>
       <div ref={stageRef} className="relative flex-1 min-h-0 flex flex-col items-center w-full mx-auto px-3" style={{ maxWidth: 1600 }}>
-        <div style={{ flex: 1, minHeight: 2 * P }} />
-        <GameTitle mode="ZERO-G" />
-        <div style={{ flex: 1, minHeight: 2 * P }} />
+        {/* No title here: just the game, in the middle of the screen. */}
+        <div style={{ flex: 1, minHeight: cell + 2 * P }} />
         <div className="flex items-start">
           {/* Left: hold, flush against the board, then the stats and the last clear. */}
           <div className="flex flex-col items-end text-right tb-t" style={{ fontSize: font, lineHeight: 1.25, width: colW, gap: 4 * P, marginTop: sideTop, height: sideH, marginRight: side }}>
@@ -5143,7 +5147,7 @@ function ZeroGGame({ onExit }) {
             </div>
           </div>
         </div>
-        <div style={{ flex: 2, minHeight: 4 * P }} />
+        <div style={{ flex: 1, minHeight: 2 * P }} />
       </div>
       {opts && <Popup title="HANDLING" onClose={() => setOpts(false)} maxW={520}><ZgControlsSection /></Popup>}
     </div>

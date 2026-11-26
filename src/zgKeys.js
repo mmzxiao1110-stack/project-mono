@@ -63,4 +63,9 @@ export function setZgKey(id, key) {
 }
 export function setZgHandling(id, v) { handling = { ...handling, [id]: v }; save(); }
 export function resetZg() { keys = defKeys(); handling = defHandling(); save(); }
+// The key ZERO-G's sounds play in: D major, or D minor with this on.
+const MKEY = "tb:zgMinor";
+let minor = (() => { try { return localStorage.getItem(MKEY) === "1"; } catch { return false; } })();
+export const getZgMinor = () => minor;
+export function setZgMinor(on) { minor = !!on; try { localStorage.setItem(MKEY, minor ? "1" : "0"); } catch { /* private mode */ } subs.forEach((f) => f()); }
 export const zgActionFor = (key) => { const k = norm(key); return ZG_ACTIONS.find((a) => keys[a.id] === k)?.id || null; };

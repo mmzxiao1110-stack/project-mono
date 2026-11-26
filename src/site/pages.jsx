@@ -78,6 +78,8 @@ const NEWS = [
     "Nothing falls on its own, and only where your piece will land is drawn. Soft drop is instant and doesn't lock: hold it to keep the piece on the floor while you slide and turn (that's how S, Z and other spins go in). Hard drop locks it. Rows clear at once, with a short flash.",
     "Every piece can spin: T-spins (and minis) by the corners, the rest when they're turned into a spot they can't move out of. Back-to-back and combos are shown as you play, and every clear in a row plays the next note up a D major scale.",
     "Handling settings: DAS, ARR and DCD, and every key can be rebound. In Settings or the slider button in the game.",
+    "Its own sound: harp and high piano in rolled chords, fast arpeggios and glissandos. Every spin plays its piece's chord (T-spin minis spark, triples go all out), combos climb a melody over I–V–vi–IV, and your hard drops play notes by column. A MINOR KEY switch in its settings turns all of it to D minor.",
+    "No logo in this mode: the board sits in the middle of the screen, as big as it fits.",
   ] },
   { v: "v0.38.0", date: "NOV 2026", title: "RED SQUARES, NO JUNK FOR SINGLES", items: [
     "Blitz: every line your opponent clears lights one of your empty squares dark red, zigzagging down from the top left. Placing a piece clears your red; if it covers your whole board it flashes for a second and you lose. No more idling.",
