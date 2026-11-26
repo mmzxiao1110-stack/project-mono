@@ -54,7 +54,10 @@ function ladder() {
   // Blitz: by Blitz rating, anyone who has played a Blitz match.
   const blitz = listed.filter((p) => p.blitz?.games > 0 && p.blitz.rating).sort((a, b) => b.blitz.rating.r - a.blitz.rating.r);
   const bpos = new Map(blitz.map((p, i) => [p.playerId, i + 1]));
-  cache = { at: Date.now(), listed, ladder: ladderList, pos, byName, marathon, mpos, sprint, spos, ultra, upos, blitz, bpos };
+  // TOWER: by TOWER rating, anyone who has played a TOWER match.
+  const tower = listed.filter((p) => p.tower?.games > 0 && p.tower.rating).sort((a, b) => b.tower.rating.r - a.tower.rating.r);
+  const tpos = new Map(tower.map((p, i) => [p.playerId, i + 1]));
+  cache = { at: Date.now(), listed, ladder: ladderList, pos, byName, marathon, mpos, sprint, spos, ultra, upos, blitz, bpos, tower, tpos };
   return cache;
 }
 
@@ -73,6 +76,7 @@ function row(p, c) {
 }
 
 const brow = (p, c) => ({ name: p.name, position: c.bpos.get(p.playerId), best: Math.round(p.blitz.rating.r), games: p.blitz.games, wins: p.blitz.wins || 0 });
+const trow = (p, c) => ({ name: p.name, position: c.tpos.get(p.playerId), best: Math.round(p.tower.rating.r), games: p.tower.games, wins: p.tower.wins || 0, ...towerRates(p.tower) });
 const srow = (p, c) => ({ name: p.name, position: c.spos.get(p.playerId), best: p.sprint.best, pieces: p.sprint.pieces, at: p.sprint.at || null });
 const urow = (p, c) => ({ name: p.name, position: c.upos.get(p.playerId), best: p.ultra.best, lines: p.ultra.lines, at: p.ultra.at || null });
 
@@ -102,7 +106,7 @@ function card(p, c) {
     played: Math.round((st.seconds || 0) + (p.blitz?.ms || 0) / 1000 + (p.tower?.ms || 0) / 1000),
     card: cleanCard(p.card),
     marathon: p.marathon?.best ? { best: p.marathon.best, lines: p.marathon.lines, games: p.marathon.games, at: p.marathon.at, position: c.mpos.get(p.playerId) || null } : null,
-    tower: p.tower?.games ? { rating: Math.round(p.tower.rating.r), rd: Math.round(p.tower.rating.rd), games: p.tower.games, wins: p.tower.wins || 0, best: p.tower.best || 0, ...towerRates(p.tower) } : null,
+    tower: p.tower?.games ? { rating: Math.round(p.tower.rating.r), rd: Math.round(p.tower.rating.rd), games: p.tower.games, wins: p.tower.wins || 0, best: p.tower.best || 0, position: c.tpos.get(p.playerId) || null, ...towerRates(p.tower) } : null,
     blitz: p.blitz?.games ? { rating: Math.round(p.blitz.rating.r), rd: Math.round(p.blitz.rating.rd), games: p.blitz.games, wins: p.blitz.wins || 0, position: c.bpos.get(p.playerId) || null, best: p.blitz.best || 0, ...blitzRates(p.blitz) } : null,
     sprint: p.sprint?.best ? { best: p.sprint.best, pieces: p.sprint.pieces, games: p.sprint.games, at: p.sprint.at, position: c.spos.get(p.playerId) || null } : null,
     ultra: p.ultra?.best ? { best: p.ultra.best, lines: p.ultra.lines, games: p.ultra.games, at: p.ultra.at, position: c.upos.get(p.playerId) || null } : null,
@@ -138,6 +142,7 @@ export function apiRoute(method, url, ip) {
       spread, top: c.ladder.slice(0, 5).map((p) => row(p, c)),
       marathon: c.marathon.slice(0, 5).map((p) => mrow(p, c)),
       blitz: c.blitz.slice(0, 5).map((p) => brow(p, c)),
+      tower: c.tower.slice(0, 5).map((p) => trow(p, c)),
       sprint: c.sprint.slice(0, 5).map((p) => srow(p, c)),
       ultra: c.ultra.slice(0, 5).map((p) => urow(p, c)),
     } };
@@ -152,8 +157,8 @@ export function apiRoute(method, url, ip) {
     const slice = c.marathon.slice((page - 1) * PAGE, page * PAGE);
     return { status: 200, body: { page, pages: Math.max(1, Math.ceil(c.marathon.length / PAGE)), total: c.marathon.length, players: slice.map((p) => mrow(p, c)) } };
   }
-  if (parts[1] === "sprint" || parts[1] === "ultra" || parts[1] === "blitz") {
-    const list = c[parts[1]], fmt = parts[1] === "sprint" ? srow : parts[1] === "ultra" ? urow : brow;
+  if (parts[1] === "sprint" || parts[1] === "ultra" || parts[1] === "blitz" || parts[1] === "tower") {
+    const list = c[parts[1]], fmt = { sprint: srow, ultra: urow, blitz: brow, tower: trow }[parts[1]];
     const page = Math.max(1, Math.min(10_000, Number(url.searchParams.get("page")) || 1));
     const slice = list.slice((page - 1) * PAGE, page * PAGE);
     return { status: 200, body: { page, pages: Math.max(1, Math.ceil(list.length / PAGE)), total: list.length, players: slice.map((p) => fmt(p, c)) } };

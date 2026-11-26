@@ -339,3 +339,38 @@ export function syncTo(seed, fix, goal = Infinity) {
     pieces: fix.pieces, lines: fix.lines, combo: fix.combo, b2b: fix.b2b, incoming: (fix.list || []).map((g) => ({ ...g })), over: false });
   return st;
 }
+
+/* ------------------------------------------------------------------
+   Moves as sent over the network (TOWER) and kept in replays: every
+   change a player makes, timed in ms from GO.
+     [t, "l"] [t, "r"]   one column left / right
+     [t, "d"]            soft drop: straight to the floor (no lock)
+     [t, "c"] [t, "w"] [t, "f"]   turn clockwise / counter-clockwise / 180
+     [t, "h"]            hold (swap with the held piece)
+     [t, "H", seen]      hard drop; `seen`: garbage messages received so far
+   Replaying the same moves on the same seed gives the same game, so the
+   server checks every piece by playing it, and the other player (and a
+   replay) sees it exactly as it was played.
+   ------------------------------------------------------------------ */
+export const OPS = "lrdcwfhH";
+/** Applies one move to `st`. True if it changed anything (a hard drop always does); `st.last` after "H". */
+export function applyOp(st, op) {
+  if (!st.cur || !Array.isArray(op)) return false;
+  switch (op[1]) {
+    case "l": return shift(st, -1);
+    case "r": return shift(st, 1);
+    case "d": { let moved = false; while (down(st)) moved = true; return moved; }
+    case "c": return rotate(st, 1);
+    case "w": return rotate(st, -1);
+    case "f": return rotate(st, 2);
+    case "h": return hold(st);
+    case "H": return !!hardDrop(st);
+    default: return false;
+  }
+}
+/** A move from the network, checked: [t, code] or [t, "H", seen]. */
+export function cleanOp(op) {
+  if (!Array.isArray(op) || !Number.isFinite(op[0]) || typeof op[1] !== "string" || op[1].length !== 1 || !OPS.includes(op[1])) return null;
+  const t = Math.max(0, Math.round(op[0]));
+  return op[1] === "H" ? [t, "H", Number.isInteger(op[2]) && op[2] >= 0 ? op[2] : 0] : [t, op[1]];
+}

@@ -50,7 +50,7 @@ import { ZG_ACTIONS, HANDLING, zgSubscribe, getZgKeys, getZgHandling, setZgKey, 
 import {
   W as Z_W, TOP as Z_TOP, VISIBLE as Z_VISIBLE, NEXT as Z_NEXT, GOAL as Z_GOAL, NAMES as Z_NAMES, newGame as zNewGame, shapeCells as zShapeCells,
   cellsOf as zCellsOf, dropped as zDropped, shift as zShift, down as zDown, rotate as zRotate, hold as zHold, hardDrop as zHardDrop,
-  ULTRA_MS as Z_ULTRA_MS, scoreOf as zScoreOf, towerLock as zTowerLock, incomingRows as zIncoming, applyLock as zApplyLock, syncTo as zSyncTo, GARBAGE as Z_GARBAGE,
+  ULTRA_MS as Z_ULTRA_MS, scoreOf as zScoreOf, towerLock as zTowerLock, incomingRows as zIncoming, applyLock as zApplyLock, syncTo as zSyncTo, GARBAGE as Z_GARBAGE, applyOp as zApplyOp,
 } from "../shared/zerog.js";
 import { botLock as zBotLock, zgBotPps } from "../shared/zgbot.js";
 import { SPRINT_ACTIONS, getSprintKeys, subscribeSprintKeys, setSprintKey, resetSprintKeys, sprintActionFor, mouseName, mouseLabel } from "./sprintKeys.js";
@@ -4893,6 +4893,8 @@ function ZgClock({ run, style, left = 0 }) {
  */
 function ZgField({ L, st, stats, pop, bottom, incoming = 0, flash = null, overlay = null, buttons = null, name = null, nameInk = "var(--tb-you)", holdKey = null }) {
   const P = usePx();
+  // BOARD SHADE: how dark the board is behind the pieces; at most a very dark grey, never pure black.
+  const shade = useSyncExternalStore(zgSubscribe, getZgHandling).shade ?? 30;
   const { cell, g, side, font, pad, boxW, colW, sideTop, sideH, boardW, boardH, top0 } = L;
   const land = st.cur ? zDropped(st.board, st.cur) : null;
   const landed = !!land && land.y === st.cur.y;
@@ -4924,11 +4926,14 @@ function ZgField({ L, st, stats, pop, bottom, incoming = 0, flash = null, overla
       {/* The board, the line of light under it, and (in a versus game) whose it is. */}
       <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
         <div className="relative" style={{ width: boardW, height: boardH }}>
-          <div style={{ display: "grid", gridTemplateColumns: `repeat(${Z_W}, ${cell}px)`, gap: g }}>
+          <div className="absolute pointer-events-none" style={{ left: 0, right: 0, bottom: 0, height: Z_VISIBLE * (cell + g) - g, background: `rgba(13, 13, 17, ${shade / 100})` }} />
+          <div className="relative" style={{ display: "grid", gridTemplateColumns: `repeat(${Z_W}, ${cell}px)`, gap: g }}>
             {Array.from({ length: ZG_SHOW }, (_, i) => top0 + i).map((y) => st.board[y].map((v, x) => {
               const k = y * Z_W + x, mark = at.has(k), buffer = y < Z_TOP;
               return (
-                <div key={k} style={{ position: "relative", width: cell, height: cell, ...(v === null && !buffer ? GLASS : null) }}>
+                <div key={k} style={{ position: "relative", width: cell, height: cell }}>
+                  {/* An empty square's glass fades as the board gets darker (BOARD SHADE), down to a faint grid. */}
+                  {v === null && !buffer && <div className="absolute inset-0" style={{ ...GLASS, opacity: 1 - 0.9 * (shade / 100) }} />}
                   {v !== null && <Ink size={cell} color={zInk(v)} />}
                   {v === null && mark && <div className="absolute inset-0" style={{ opacity: landed ? 1 : 0.4 }}><Ink size={cell} color={S_INK[st.cur.id]} /></div>}
                 </div>
@@ -4980,8 +4985,9 @@ function freshZg(mode, seed = undefined, goAt = 0) {
   const st = zNewGame(seed, mode === "sprint" ? Z_GOAL : Infinity);
   st.incoming = [];
   const versus = mode === "tower" || mode === "towerbot";
-  const opp = mode === "towerbot" ? { st: Object.assign(zNewGame(st.seed, Infinity), { incoming: [] }), given: 0 } : mode === "tower" ? { view: null } : null;
-  return { mode, st, startAt: 0, endAt: 0, result: null, newBest: false, flash: null, pop: null, score: 0, holds: 0, seen: 0, sent: 0, given: 0, opp, goAt: versus ? goAt : 0, ratings: null };
+  // The other side, played out on a copy of the same game: the bot's moves, or the online opponent's (as they arrive, in time).
+  const opp = versus ? { st: Object.assign(zNewGame(st.seed, Infinity), { incoming: [] }), given: 0, sent: 0, q: [] } : null;
+  return { out: [], mode, st, startAt: 0, endAt: 0, result: null, newBest: false, flash: null, pop: null, score: 0, holds: 0, seen: 0, sent: 0, given: 0, opp, goAt: versus ? goAt : 0, ratings: null };
 }
 
 /** Shows a clear on the opponent's side: its name, combo and back-to-back, and the rows flashing. */
@@ -5047,22 +5053,28 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
   }, [bump, mode, online, versus]);
   const start = () => { const r = run.current; if (!r.startAt) r.startAt = r.goAt || performance.now(); };
   const waiting = useCallback(() => versus && performance.now() < run.current.goAt, [versus]);
+  // Online, every change you make is a move sent to the server (see shared/zerog.js), timed from GO.
+  const rec = useCallback((code, arg) => {
+    if (!online) return;
+    const r = run.current;
+    const t = Math.max(0, Math.round(performance.now() - r.goAt));
+    r.out.push(arg === undefined ? [t, code] : [t, code, arg]);
+  }, [online]);
+  const flush = useCallback(() => { const r = run.current; if (online && r.out.length) { net.send({ t: "towerOps", ops: r.out }); r.out = []; } }, [online]);
 
   const doHard = useCallback(() => {
     const r = run.current, st = r.st;
     if (!st.cur || waiting()) return;
     start();
     const before = st.combo; // clears in a row so far (-1: none)
-    // The lock as the server checks it: where it lands, how many holds, and whether it was turned into place.
-    const land = zDropped(st.board, st.cur);
-    const lock = { holds: r.holds, id: st.cur.id, rot: land.rot, x: land.x, y: land.y, spin: !!st.lastRot && land.y === st.cur.y, kick: st.lastKick || 0 };
+    rec("H", r.seen);
     const L = zHardDrop(st);
     r.holds = 0;
     if (mode === "ultra") r.score += zScoreOf(L);
     if (versus) {
       const atk = zTowerLock(st, L);
       r.sent += atk;
-      if (online) net.towerPlace({ ...lock, seen: r.seen });
+      if (online) flush(); // a lock goes out at once (garbage depends on it)
       else if (atk > 0) r.opp.st.incoming.push({ n: atk, hole: Math.floor(Math.random() * Z_W), i: r.opp.given++ });
     }
     sfx.zgDrop();
@@ -5084,19 +5096,19 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
       else finish(st.won ? "done" : versus ? "lost" : "stuck");
     }
     bump();
-  }, [bump, finish, mode, versus, online, waiting]);
+  }, [bump, finish, mode, versus, online, waiting, rec, flush]);
 
   const press = useCallback((a) => {
     if (a === "retry") { retry(); return; }
     const r = run.current, st = r.st, h = hold.current, now = performance.now();
     if (r.result) return;
-    if (a === "forfeit") { finish("forfeit"); return; }
+    if (a === "forfeit") { if (!online) finish("forfeit"); return; } // ranked: no forfeit key (leaving still counts as a loss)
     if (!st.cur || r.toppedOut) return;
     if (a === "left" || a === "right") {
       h[a] = true; h.dir = a === "left" ? -1 : 1; h.dasAt = now; h.step = 0;
       if (waiting()) return; // held through the countdown, it slides as soon as it's GO
       start();
-      if (zShift(st, h.dir)) { sfx.zgMove(); bump(); }
+      if (zShift(st, h.dir)) { rec(h.dir < 0 ? "l" : "r"); sfx.zgMove(); bump(); }
       return;
     }
     if (a === "soft") {
@@ -5106,7 +5118,7 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
       start();
       let moved = false;
       while (zDown(st)) moved = true;
-      if (moved) { sfx.zgLand(); bump(); }
+      if (moved) { rec("d"); sfx.zgLand(); bump(); }
       return;
     }
     if (a === "hard") { doHard(); return; }
@@ -5114,14 +5126,14 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
     if (a === "cw" || a === "ccw" || a === "r180") {
       start();
       const dir = a === "cw" ? 1 : a === "ccw" ? -1 : 2;
-      if (zRotate(st, dir)) { sfx.zgRotate(dir); h.dcd = now + getZgHandling().dcd; bump(); }
+      if (zRotate(st, dir)) { rec(dir === 1 ? "c" : dir === -1 ? "w" : "f"); sfx.zgRotate(dir); h.dcd = now + getZgHandling().dcd; bump(); }
       return;
     }
     if (a === "hold") {
       start();
-      if (zHold(st)) { r.holds++; sfx.zgHold(); h.dcd = now + getZgHandling().dcd; if (st.over && !online) finish(versus ? "lost" : "stuck"); bump(); }
+      if (zHold(st)) { r.holds++; rec("h"); sfx.zgHold(); h.dcd = now + getZgHandling().dcd; if (st.over && !online) finish(versus ? "lost" : "stuck"); bump(); }
     }
-  }, [retry, finish, doHard, bump, waiting, online, versus]);
+  }, [retry, finish, doHard, bump, waiting, online, versus, rec]);
 
   const release = useCallback((a) => {
     const h = hold.current;
@@ -5139,25 +5151,41 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
     const loop = () => {
       raf = requestAnimationFrame(loop);
       const r = run.current, st = r.st, h = hold.current;
+      // The online opponent's moves, played at the time they made them (a beat behind, so it's smooth).
+      if (online && r.opp?.q.length && !r.result) {
+        const o = r.opp, at = performance.now() - r.goAt - 120;
+        let any = false;
+        while (o.q.length && (o.q[0][0] <= at || o.q.length > 60)) {
+          const op = o.q.shift(), before = o.st.pieces;
+          if (!zApplyOp(o.st, op)) continue;
+          any = true;
+          if (op[1] === "H" && o.st.pieces > before) {
+            const L = o.st.last;
+            o.sent += zTowerLock(o.st, L, op[2]);
+            if (L.lines || L.spin) oppClear(o, L, o.st.pieces);
+          }
+        }
+        if (any) bump();
+      }
       if (!st.cur || r.result || r.toppedOut) return;
       const hd = getZgHandling(), now = performance.now();
       if (versus && now < r.goAt) return;
       if (versus && !r.startAt) { r.startAt = r.goAt; bump(); }
       let moved = false;
       if (h.dir && now - h.dasAt >= hd.das && now >= h.dcd) {
-        if (hd.arr <= 0) { while (zShift(st, h.dir)) moved = true; }
+        if (hd.arr <= 0) { while (zShift(st, h.dir)) { moved = true; rec(h.dir < 0 ? "l" : "r"); } }
         else {
           if (!h.step) h.step = h.dasAt + hd.das - hd.arr;
-          for (let i = 0; i < 10 && now - h.step >= hd.arr; i++) { h.step += hd.arr; if (zShift(st, h.dir)) moved = true; else { h.step = now; break; } }
+          for (let i = 0; i < 10 && now - h.step >= hd.arr; i++) { h.step += hd.arr; if (zShift(st, h.dir)) { moved = true; rec(h.dir < 0 ? "l" : "r"); } else { h.step = now; break; } }
         }
         if (moved) sfx.zgMove();
       }
-      if (h.soft) while (zDown(st)) moved = true;
+      if (h.soft) { let down = false; while (zDown(st)) down = true; if (down) { moved = true; rec("d"); } }
       if (moved) bump();
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [bump, versus]);
+  }, [bump, versus, online, rec]);
 
   // ULTRA: two minutes from the first move.
   useEffect(() => {
@@ -5192,17 +5220,12 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
     return () => clearTimeout(t);
   }, [mode, skill, finish, bump, r.goAt]);
 
-  // TOWER online: your piece as you move it, so your opponent sees it (at most 10 times a second: the server allows 20 messages a second in all).
+  // TOWER online: your moves go out in small batches (a lock goes at once). The server allows 20 messages a second.
   useEffect(() => {
     if (!online) return undefined;
-    let last = "";
-    const h = setInterval(() => {
-      const c = run.current.st.cur;
-      const key = c ? `${c.id},${c.rot},${c.x},${c.y},${run.current.st.hold}` : "";
-      if (key && key !== last) { last = key; net.send({ t: "towerCur", cur: c, hold: run.current.st.hold }); }
-    }, 100);
+    const h = setInterval(flush, 80);
     return () => clearInterval(h);
-  }, [online]);
+  }, [online, flush]);
 
   // TOWER online: garbage, the opponent's board, corrections, the result.
   useEffect(() => {
@@ -5210,26 +5233,21 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
     const offs = [
       net.on("towerStart", (m) => { if (m.resume) { run.current = { ...freshZg(mode, m.seed, performance.now()), startAt: performance.now() }; bump(); } }),
       net.on("towerGarbage", (m) => { const r = run.current; r.st.incoming.push({ n: m.n, hole: m.hole, i: m.i }); r.seen = Math.max(r.seen, m.i + 1); sfx.zgLand(); bump(); }),
+      net.on("towerOps", (m) => { const r = run.current; if (m.side !== net.tower?.you && r.opp) r.opp.q.push(...m.ops); }),
+      net.on("towerOppGarbage", (m) => { const o = run.current.opp; if (o) o.st.incoming.push({ n: m.n, hole: m.hole, i: m.i }); }),
+      // After a reconnect: both games as the server has them.
       net.on("towerBoard", (m) => {
-        const r = run.current, you = net.tower?.you;
-        if (m.side === you) {
-          if (m.fix) { r.st = zSyncTo(r.st.seed, m); r.holds = 0; r.toppedOut = false; bump(); }
-          return;
-        }
-        const prev = r.opp?.view || {};
-        const view = { board: m.board, incoming: m.incoming, lines: m.lines, sent: m.sent, pieces: m.pieces, hold: m.hold ?? null, queue: m.queue || [], cur: m.cur || null, pop: prev.pop, flash: prev.flash };
-        if (m.last && (m.last.lines || m.last.spin)) oppClear(view, m.last, m.pieces);
-        r.opp = { view };
-        bump();
-        setTimeout(bump, 220); setTimeout(bump, 1450); // let the flash and the clear's name fade
-      }),
-      net.on("towerCur", (m) => {
-        const r = run.current, v = r.opp?.view;
-        if (!v || m.side === net.tower?.you) return;
-        r.opp = { view: { ...v, cur: m.cur, hold: m.hold ?? v.hold } };
+        const r = run.current;
+        if (!m.fix) return;
+        if (m.side === net.tower?.you) { r.st = zSyncTo(r.st.seed, m); r.holds = 0; r.toppedOut = false; r.out = []; }
+        else if (r.opp) { r.opp.st = zSyncTo(r.st.seed, m); r.opp.q = []; r.opp.sent = m.sent || 0; }
         bump();
       }),
-      net.on("towerEnd", (m) => { const r = run.current; r.ratings = m.ratings ? m.ratings[m.you] : null; r.oppName = net.tower?.opponent?.name; r.sentBy = m.sent; r.toppedOut = false; r.result = null; finish(m.winner === m.you ? "won" : "lost"); }),
+      net.on("towerEnd", (m) => {
+        const r = run.current;
+        // The match, kept as a replay: both players' moves and the garbage, timed.
+        if (m.log?.length) replays.save({ kind: "tower", ranked: true, seed: m.seed, moves: m.log, names: m.names, you: m.you, winner: m.winner, sent: m.sent, ratings: m.ratings, date: Date.now() });
+        r.ratings = m.ratings ? m.ratings[m.you] : null; r.oppName = net.tower?.opponent?.name; r.sentBy = m.sent; r.toppedOut = false; r.result = null; finish(m.winner === m.you ? "won" : "lost"); }),
     ];
     return () => offs.forEach((f) => f());
   }, [online, mode, bump, finish]);
@@ -5305,10 +5323,10 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
   // The field: 10 wide, the 20 visible rows plus 2 buffer rows above them, as big as the screen allows.
   const g = P;
   const side = 2 * P; // the small gap between the board and the panels beside it
-  const availH = stage.h - 24 * P; // the whole height (one row more is kept free above the board for the floating piece)
+  const availH = stage.h - 24 * P - (versus ? 26 * P : 0); // a versus game has its small title on top // the whole height (one row more is kept free above the board for the floating piece)
   const fitW = (stage.w - 24 * P - 9 * g) / (versus ? 40 : 19); // the board, both side columns (and in a versus game the opponent's board) must fit across
   // In a versus game the two boards sit side by side, so each is a little smaller.
-  const cell = Math.max(4 * P, Math.min(40 * P, Math.floor(Math.min((availH - ZG_SHOW * g) / (ZG_SHOW + 1) * (versus ? 0.9 : 1), fitW) / P) * P));
+  const cell = Math.max(4 * P, Math.min(40 * P, Math.floor(Math.min((availH - ZG_SHOW * g) / (ZG_SHOW + 1) * (versus ? 0.82 : 1), fitW) / P) * P));
   // Text and buttons grow with the board.
   const zoom = Math.max(1, cell / (8 * P));
   const font = Math.round(8 * P * Math.min(zoom, 1.6));
@@ -5365,7 +5383,8 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
       )}
     </>
   );
-  const myButtons = (
+  // A ranked match has no buttons: no settings, no forfeit button (Escape still forfeits).
+  const myButtons = online ? null : (
     <>
       <Bubble w={btn} h={btn} label="Controls and handling" onClick={() => setOpts(true)}><Settings2 /></Bubble>
       {!online && <Bubble w={btn} h={btn} label={`Retry (${keyOf("retry")})`} onClick={retry}><RefreshCw /></Bubble>}
@@ -5380,7 +5399,13 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono select-none" style={{ color: UI.text }}>
       <div ref={stageRef} className="relative flex-1 min-h-0 flex flex-col items-center w-full mx-auto px-3" style={{ maxWidth: 1900 }}>
-        {/* No title here: just the game, in the middle of the screen. */}
+        {/* TOWER: a small title on top, "competitive" (or "vs bot") in grey under it. Sprint and Ultra: no title. */}
+        {versus && (
+          <div className="flex flex-col items-center shrink-0" style={{ paddingTop: 3 * P, gap: P }}>
+            <span style={{ fontFamily: '"Silkscreen", monospace', fontWeight: 700, fontSize: 12 * P, lineHeight: 1, letterSpacing: P, color: UI.text }}>TOWER</span>
+            <span className="tb-t" style={{ color: UI.dim, opacity: 0.7, letterSpacing: 2 * P }}>{online ? "COMPETITIVE" : "VS BOT"}</span>
+          </div>
+        )}
         <div style={{ flex: 1, minHeight: cell + 2 * P }} />
         <div className="flex items-start" style={{ gap: 10 * P }}>
           <ZgField L={L} st={st} stats={myStats} pop={r.pop} bottom={myBottom} incoming={versus ? zIncoming(st) : 0} flash={r.flash} overlay={myOverlay} buttons={myButtons}
@@ -5389,7 +5414,7 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
             <ZgField L={L} st={opp} nameInk="var(--tb-rival)" name={oppName} incoming={opp.incoming || 0} pop={opp.pop} flash={opp.flash}
               stats={[stat("SENT", opp.sent || 0, GOLD), stat("PIECES", opp.pieces || 0), stat("PPS", ppsOf(opp.pieces || 0)), stat("APM", apmOf(opp.sent || 0))]}
               bottom={<span className="tb-b tabular-nums">{opp.lines || 0} LINES</span>}
-              buttons={<div aria-hidden="true" className="flex flex-col" style={{ visibility: "hidden", gap: 3 * P }}>{myButtons}</div>} />
+              buttons={myButtons && <div aria-hidden="true" className="flex flex-col" style={{ visibility: "hidden", gap: 3 * P }}>{myButtons}</div>} />
           )}
         </div>
         <div style={{ flex: 1, minHeight: 2 * P }} />
@@ -6719,7 +6744,7 @@ function replaySides(rec) {
   return { me, them, meName: rec.you ? "YOU" : rec.players.A.name, themName: rec.players[them].name };
 }
 
-const REPLAY_TABS = [["all", "ALL"], ["match", "CONTROL"], ["blitz", "BLITZ"], ["sprint", "SPRINT"], ["ultra", "ULTRA"], ["marathon", "MARATHON"]];
+const REPLAY_TABS = [["all", "ALL"], ["tower", "TOWER"], ["match", "CONTROL"], ["blitz", "BLITZ"], ["sprint", "SPRINT"], ["ultra", "ULTRA"], ["marathon", "MARATHON"]];
 function ReplayList({ onOpen, onBack }) {
   const P = usePx();
   const all = useReplayList();
@@ -6755,6 +6780,19 @@ function ReplayList({ onOpen, onBack }) {
         <div className="flex-1 min-h-0 overflow-y-auto mt-2 flex flex-col gap-2 pr-1">
           {!list.length && <div className="tb-t text-center py-10" style={{ color: UI.dim }}>No replays here yet. Every game you finish is saved here.</div>}
           {list.map((rec) => {
+            if (rec.kind === "tower") {
+              const them = rec.you === "A" ? "B" : "A";
+              const won = rec.winner === rec.you;
+              return (
+                <button key={rec.id} onClick={() => onOpen(rec.id)} className="w-full text-left flex items-center gap-3 px-3 py-2" style={{ ...glass(UI.line) }}>
+                  <div className="flex-1 min-w-0">
+                    <div className="tb-t truncate">{rec.names?.[rec.you] || "YOU"} <span style={{ color: UI.dim }}>vs</span> {rec.names?.[them] || "?"}</div>
+                    <div className="tb-t truncate" style={{ color: UI.dim }}>TOWER · {rec.ranked ? "RANKED" : "MATCH"} · {rec.sent?.[rec.you] ?? 0}–{rec.sent?.[them] ?? 0} SENT · {fmtDate(rec.date)}</div>
+                  </div>
+                  <span className="tb-t tb-b" style={{ color: won ? GOLD : UI.bad }}>{won ? "WIN" : "LOSS"}</span>
+                </button>
+              );
+            }
             if (rec.kind === "blitz") {
               const them = rec.you === "A" ? "B" : "A";
               const won = rec.winner === rec.you;
@@ -7049,12 +7087,12 @@ function useTimedPlayback(end) {
 }
 
 /** The page every replay uses: a header, the boards as big as fit, the transport at the bottom. */
-function ReplayPage({ onBack, head, aside, stageRef, children, pb, rec, frames, ink, label }) {
+function ReplayPage({ onBack, head, aside, stageRef, children, pb, rec, frames, ink, label, endMs = 0 }) {
   const P = usePx();
   const compact = useCompact();
   const d = useBubble(compact);
   const { time, playing, setPlaying, speed, setSpeed, seek } = pb;
-  const end = frames[frames.length - 1].t;
+  const end = frames ? frames[frames.length - 1].t : endMs;
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono" style={{ color: UI.text }}>
       <div className="relative flex-1 min-h-0 flex flex-col w-full mx-auto px-3" style={{ maxWidth: 1500 }}>
@@ -7081,7 +7119,7 @@ function ReplayPage({ onBack, head, aside, stageRef, children, pb, rec, frames, 
                   style={{ height: d * P, ...(speed === sp ? skFill(UI.text) : glass(UI.line)), color: speed === sp ? UI.text : UI.dim }}>{sp}×</button>
               ))}
             </div>
-            <VideoButton rec={rec} frames={frames} onStart={() => setPlaying(false)} />
+            {frames && <VideoButton rec={rec} frames={frames} onStart={() => setPlaying(false)} />}
           </div>
           <div className="tb-t tabular-nums" style={{ color: UI.dim }}>{label}</div>
         </div>
@@ -7236,6 +7274,68 @@ function BlitzReplayViewer({ rec, colors, onBack }) {
       head={<><span style={{ color: colors.you }}>{rec.names?.[me] || "YOU"}</span> vs <span style={{ color: colors.rival }}>{rec.names?.[them] || "?"}</span> · {rec.ranked ? "BLITZ · RANKED" : "BLITZ"} · {fmtDate(rec.date)}</>}
       label={fmtClock(time)}>
       <div className="flex items-start" style={{ gap: 10 * P }}>{side(me)}{side(them)}</div>
+    </ReplayPage>
+  );
+}
+
+/** A TOWER match at time `T` (ms from GO): both games, replayed from the log of moves and garbage. */
+function towerAt(rec, T) {
+  const mk = () => Object.assign(zNewGame(rec.seed, Infinity), { incoming: [] });
+  const sim = { A: mk(), B: mk(), sent: { A: 0, B: 0 }, pop: { A: null, B: null }, flash: { A: null, B: null } };
+  for (const e of rec.moves) {
+    if (e[0] > T) break;
+    const [t, side, code, ...rest] = e;
+    if (code === "G") { sim[side].incoming.push({ n: rest[0], hole: rest[1], i: rest[2] }); continue; }
+    const st = sim[side], before = st.pieces;
+    if (!zApplyOp(st, [t, code, ...rest]) || code !== "H" || st.pieces === before) continue;
+    const L = st.last;
+    sim.sent[side] += zTowerLock(st, L, rest[0]);
+    if (L.lines || L.spin) {
+      sim.pop[side] = T - t < 1400 ? { name: L.name, piece: L.piece.id, combo: L.combo, b2b: L.b2b, allClear: L.allClear, key: `${side}${st.pieces}` } : null;
+      sim.flash[side] = L.rows.length && T - t < 200 ? { rows: L.rows, key: `${side}${st.pieces}` } : null;
+    }
+  }
+  return sim;
+}
+
+/** Sizes for a ZERO-G side from its square size (as the game measures them). */
+function zgLayout(cell, P) {
+  const g = P, zoom = Math.max(1, cell / (8 * P));
+  const pad = Math.round(4 * P * Math.min(zoom, 1.5));
+  const boxW = 4 * cell + 3 * g + 2 * pad;
+  const boardH = ZG_SHOW * cell + (ZG_SHOW - 1) * g;
+  return { cell, g, side: 2 * P, font: Math.round(8 * P * Math.min(zoom, 1.6)), pad, boxW, colW: Math.max(boxW, Math.round(46 * P * Math.min(zoom, 1.6))),
+    sideTop: 2 * (cell + g), sideH: boardH - 2 * (cell + g), boardW: Z_W * cell + (Z_W - 1) * g, boardH, top0: Z_TOP - 2 };
+}
+
+/** A TOWER replay: both sides exactly as they were played, with the transport under them. */
+function TowerReplayViewer({ rec, onBack }) {
+  const P = usePx();
+  const [stageRef, stage] = useSize();
+  const end = (rec.moves[rec.moves.length - 1]?.[0] || 0) + 1500;
+  const pb = useTimedPlayback(end);
+  const sim = useMemo(() => towerAt(rec, pb.time), [rec, pb.time]);
+  const cell = Math.max(3 * P, Math.min(30 * P, Math.floor(Math.min((stage.h - 30 * P) / (ZG_SHOW + 1), (stage.w - 30 * P) / 40) / P) * P));
+  const L = zgLayout(cell, P);
+  const stat = (label, value, ink = UI.text) => (
+    <div key={label} className="flex items-baseline justify-end" style={{ gap: 3 * P, whiteSpace: "nowrap" }}><span style={{ color: UI.dim }}>{label}</span><span className="tb-b tabular-nums" style={{ color: ink }}>{value}</span></div>
+  );
+  const sec = pb.time / 1000;
+  const side = (k) => {
+    const st = sim[k];
+    return (
+      <ZgField key={k} L={L} st={st} name={rec.names?.[k] || k} nameInk={k === rec.you ? "var(--tb-you)" : "var(--tb-rival)"}
+        incoming={zIncoming(st)} pop={sim.pop[k]} flash={sim.flash[k]}
+        stats={[stat("SENT", sim.sent[k], GOLD), stat("PIECES", st.pieces), stat("PPS", (sec > 0 ? st.pieces / sec : 0).toFixed(2)), stat("APM", (sec > 0 ? sim.sent[k] / (sec / 60) : 0).toFixed(1))]}
+        bottom={<span className="tb-b tabular-nums">{st.lines} LINES</span>} />
+    );
+  };
+  const them = rec.you === "A" ? "B" : "A";
+  return (
+    <ReplayPage onBack={onBack} stageRef={stageRef} pb={pb} rec={rec} frames={null} endMs={end} ink={MODE_INK.zerog}
+      head={`TOWER · ${rec.names?.[rec.you] || "YOU"} vs ${rec.names?.[them] || "?"} · ${rec.winner === rec.you ? "WIN" : "LOSS"}`}
+      label={`${fmtClock(pb.time)} / ${fmtClock(end)}`}>
+      <div className="flex items-start" style={{ gap: 10 * P }}>{side(rec.you || "A")}{side(them)}</div>
     </ReplayPage>
   );
 }
@@ -7846,7 +7946,9 @@ export default function TurfBlocks() {
   else if (screen === "REPLAYS")
     view = <ReplayList onOpen={(id) => { setReplayId(id); setScreen("REPLAY"); }} onBack={() => setScreen("MENU")} />;
   else if (screen === "REPLAY")
-    view = replays.get(replayId)?.kind === "blitz"
+    view = replays.get(replayId)?.kind === "tower"
+      ? <TowerReplayViewer rec={replays.get(replayId)} onBack={() => setScreen("REPLAYS")} />
+      : replays.get(replayId)?.kind === "blitz"
       ? <BlitzReplayViewer rec={replays.get(replayId)} colors={colors} onBack={() => setScreen("REPLAYS")} />
       : replays.get(replayId)?.kind
       ? <SoloReplayViewer rec={replays.get(replayId)} onBack={() => setScreen("REPLAYS")} />

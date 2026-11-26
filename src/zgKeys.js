@@ -6,6 +6,7 @@
  *        piece starts sliding on its own
  *   arr  auto repeat rate: ms between steps once it slides (0: straight to the wall)
  *   dcd  DAS cut delay: after a turn or a new piece, a held slide waits this long (ms)
+ *   shade  how dark the board is behind the pieces (0 clear, 100 nearly black)
  */
 const KEY = "tb:zgKeys1";
 const HKEY = "tb:zgHandling1";
@@ -26,6 +27,7 @@ export const ZG_ACTIONS = [
 export const HANDLING = [
   { id: "das", label: "DAS", unit: "ms", min: 0, max: 300, step: 1, def: 120, hint: "hold before sliding" },
   { id: "arr", label: "ARR", unit: "ms", min: 0, max: 80, step: 1, def: 0, hint: "between slide steps · 0 = instant" },
+  { id: "shade", label: "BOARD SHADE", unit: "%", min: 0, max: 100, step: 1, def: 30, hint: "darker behind the board" },
   { id: "dcd", label: "DCD", unit: "ms", min: 0, max: 100, step: 1, def: 0, hint: "slide pause after a turn" },
 ];
 

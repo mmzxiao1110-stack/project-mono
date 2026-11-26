@@ -326,7 +326,6 @@ class Net {
   /* ---------- Blitz 1v1 ---------- */
   blitzQueue() { this.blitz = null; this.send({ t: "blitzQueue" }); }
   towerQueue() { this.tower = null; this.send({ t: "towerQueue" }); }
-  towerPlace(m) { this.send({ t: "towerPlace", ...m }); }
   blitzCancel() { this.send({ t: "unqueue" }); }
   setCard(card) { this.send({ t: "setCard", card }); }
   blitzPlace(slot, rot, r, c) { this.send({ t: "blitzPlace", slot, rot, r, c }); }
@@ -509,8 +508,11 @@ class Net {
       case "towerBoard":
         this.emit("towerBoard", m);
         break;
-      case "towerCur":
-        this.emit("towerCur", m);
+      case "towerOps":
+        this.emit("towerOps", m);
+        break;
+      case "towerOppGarbage":
+        this.emit("towerOppGarbage", m);
         break;
       case "towerEnd":
         if (this.tower) this.tower = { ...this.tower, over: true };
