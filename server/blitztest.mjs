@@ -19,6 +19,7 @@ function client(name, skill) {
       me.sentSeen = m.sent;
       if (m.pieces === me.st.pieces && (JSON.stringify(m.board) !== JSON.stringify(me.st.board) || JSON.stringify(m.hand) !== JSON.stringify(me.st.hand))) { me.mismatches++; me.st.board = m.board; me.st.hand = m.hand; me.st.queue = m.queue; }
     }
+    if (m.t === "blitzState") (me.last ||= {})[m.side] = m;
     if (m.t === "blitzEnd") me.end = m;
     if (m.t === "error") me.errors.push(m.msg);
   });
@@ -52,4 +53,19 @@ ok(A.mismatches + Bc.mismatches === 0, `client and server boards always agreed (
 ok(A.junkIn + Bc.junkIn > 0, `junk received: ${A.name} ${A.junkIn}, ${Bc.name} ${Bc.junkIn}; sent ${JSON.stringify(A.end?.sent)}`);
 ok(!!A.end?.ratings, `ratings: ${JSON.stringify(A.end?.ratings)}`);
 ok(A.errors.length + Bc.errors.length === 0, `no server errors (${[...A.errors, ...Bc.errors].slice(0, 3).join(" | ")})`);
+// The replay: the log alone must rebuild both final boards exactly.
+const log = A.end?.log || [];
+const rs = { A: S.newSprint(A.end?.seed, Infinity), B: S.newSprint(A.end?.seed, Infinity) };
+let bad = 0, lastT = -1, ordered = true;
+for (const e of log) {
+  if (e[0] < lastT) ordered = false; lastT = e[0];
+  const st = rs[e[1]];
+  if (e[2] === -1) { S.receiveJunk(st, e[3]); continue; }
+  const sh = S.shapeOf(st.hand[e[2]], e[3]);
+  if (!S.place(st, { slot: e[2], id: st.hand[e[2]], rot: e[3], cr: e[4] + sh.h / 2, cc: e[5] + sh.w / 2 })) bad++;
+}
+ok(log.length > 0 && ordered && bad === 0, `replay log: ${log.length} events, in time order, every placement legal (${bad} bad)`);
+ok(["A", "B"].every((k) => JSON.stringify(rs[k].board) === JSON.stringify(A.last?.[k]?.board)), "replay rebuilds both final boards exactly");
+const pps = ["A", "B"].map((k) => { const ps = log.filter((e) => e[1] === k && e[2] !== -1); return ps.length / Math.max(1, ps[ps.length - 1]?.[0] / 1000); });
+ok(pps.every((x) => x > 0.3 && x < 10), `timings look real: ${pps.map((x) => x.toFixed(2)).join(" / ")} PPS`);
 process.exit();

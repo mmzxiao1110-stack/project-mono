@@ -3039,6 +3039,7 @@ function MiniBoard({ w, h, cells, size = 15, ink }) {
         const v = cells[`${r},${c}`];
         if (v === "A" || v === "B" || v === "S") return <Ink key={i} size={size} color={ink[v]} {...inkOf(v)} seed={i} />;
         if (v === "ok" || v === "no") return <Ink key={i} size={size} stroke="ghost" color={v === "ok" ? ink.A : UI.bad} seed={i} />;
+        if (v && ink[v]) return <Ink key={i} size={size} color={ink[v]} seed={i} />;
         return <Ink key={i} size={size} stroke="slot" color={UI.line} seed={i} />;
       })}
     </div>
@@ -3047,6 +3048,8 @@ function MiniBoard({ w, h, cells, size = 15, ink }) {
 
 function HowToModal({ colors, loadout, onClose }) {
   const [page, setPage] = useState(0);
+  const [mode, setModeNow] = useState(() => (store.get("tb:howMode") === "blitz" ? "blitz" : "control"));
+  const setMode = (m) => { setModeNow(m); setPage(0); store.set("tb:howMode", m); };
   const ink = { A: colors.you, B: colors.rival, S: colors.special };
 
   const pages = [
@@ -3118,18 +3121,86 @@ function HowToModal({ colors, loadout, onClose }) {
     },
   ];
 
-  const p = pages[page];
-  const last = page === pages.length - 1;
+
+  // Blitz: its own pages (the pieces are drawn in Blitz's colours).
+  const B = { I: 0, O: 1, T: 2, S: 3, Z: 4, J: 5, L: 6 };
+  const bInk = { I: S_INK[B.I], O: S_INK[B.O], T: S_INK[B.T], L: S_INK[B.L], J: S_INK[B.J] };
+  const blitzPages = [
+    {
+      title: "BLITZ: A RACE",
+      art: (
+        <div className="flex items-center justify-center gap-3">
+          <MiniBoard w={8} h={8} size={10} ink={bInk} cells={{ "7,0": "I", "7,1": "I", "7,2": "I", "7,3": "I", "6,0": "O", "6,1": "O", "5,0": "O", "5,1": "O", "7,6": "L", "7,7": "L", "6,7": "L", "5,7": "L" }} />
+          <span className="tb-t" style={{ color: UI.dim }}>vs</span>
+          <MiniBoard w={8} h={8} size={10} ink={bInk} cells={{ "7,0": "T", "7,1": "T", "7,2": "T", "6,1": "T", "7,4": "J", "7,5": "J", "6,5": "J", "6,4": "J" }} />
+        </div>
+      ),
+      body: "Two players, two 8×8 boards, the same pieces in the same order. Nobody takes turns: place as fast as you can. Fill a row or a column and it clears. When nothing in your hand fits anywhere, you lose.",
+    },
+    {
+      title: "YOUR TWO PIECES",
+      art: (
+        <div className="flex items-center justify-center gap-4">
+          <div style={{ padding: 6, ...glass(UI.text) }}><SPiece id={B.T} cell={8} gap={2} /></div>
+          <div style={{ padding: 6, ...glass(UI.line), opacity: 0.7 }}><SPiece id={B.S} cell={8} gap={2} /></div>
+          <div className="flex flex-col gap-1">{[B.I, B.O, B.L, B.Z, B.J].map((id, k) => <Ink key={k} size={10} color={S_INK[id]} />)}</div>
+        </div>
+      ),
+      body: "You hold two pieces and see the next five. The piece in play follows your mouse: click to place it, right click to swap to the other one, S / D / A to turn it left, right or halfway round. Every key can be changed in Settings.",
+    },
+    {
+      title: "SPIKES",
+      art: (
+        <div className="tb-t grid gap-x-5 gap-y-1" style={{ gridTemplateColumns: "auto auto" }}>
+          {[["1 line", "1  (2 in a combo)"], ["2 lines", "2  (3 in a combo)"], ["3 lines", "4"], ["4 lines", "6"], ["T piece, 4 lines", "8"], ["all clear", "12"]].map(([a, b]) => (
+            <React.Fragment key={a}><span style={{ color: UI.dim }}>{a}</span><span className="tb-b" style={{ color: GOLD }}>{b}</span></React.Fragment>
+          ))}
+        </div>
+      ),
+      body: "Every clear attacks. Clears less than half a second apart chain into one spike and their levels add up; a clear inside a spike is a combo, and small clears hit harder in a combo. When you stop clearing for half a second, the spike is sent.",
+    },
+    {
+      title: "JUNK",
+      art: (
+        <div className="flex items-end justify-center gap-4">
+          {[1, 3, 4, 8, 12].map((lv) => <div key={lv} className="flex flex-col items-center gap-1"><SPiece id={S_JUNK + lv} cell={8} gap={2} /><span className="tb-t" style={{ color: UI.dim }}>{lv}</span></div>)}
+        </div>
+      ),
+      body: "A spike lands in your opponent's forecast as one grey junk piece, sixth in line, and it grows with its level: one square, then a diagonal, a corner, a block, then ring after ring. They have to place it like any other piece. Send big ones; don't let them build.",
+    },
+    {
+      title: "RANKED AND PRACTICE",
+      art: (
+        <div className="flex items-center justify-center gap-4 tb-t">
+          <span className="tb-b" style={{ color: "#F29A4A" }}>BLITZ</span>
+          <span style={{ color: UI.dim }}>·</span>
+          <span className="tb-b" style={{ color: UI.text }}>VS BOT</span>
+        </div>
+      ),
+      body: "BLITZ is ranked 1v1 online, with its own rating on T-Terminal; the server checks every placement. VS BOT is the same game against a bot from skill 1 (a piece every two seconds) to 10 (two a second, and it hunts combos). Every match is saved in REPLAYS.",
+    },
+  ];
+  const list = mode === "blitz" ? blitzPages : pages;
+  const p = list[page];
+  const last = page === list.length - 1;
 
   const wide = useWidePanel();
   const progress = (
     <div className="flex gap-1 mb-4">
-      {pages.map((_, i) => (
+      {list.map((_, i) => (
         <div key={i} style={{
           flex: 1, height: 2, borderRadius: 2,
-          background: i <= page ? colors.you : UI.line,
+          background: i <= page ? (mode === "blitz" ? "#F29A4A" : colors.you) : UI.line,
           transition: "background 200ms",
         }} />
+      ))}
+    </div>
+  );
+  const tabs = (
+    <div className="flex gap-1.5">
+      {[["control", "CONTROL"], ["blitz", "BLITZ"]].map(([k, label]) => (
+        <button key={k} onClick={() => setMode(k)} aria-pressed={mode === k} className="tb-t px-3"
+          style={{ height: 30, ...(mode === k ? skFill(k === "blitz" ? "#F29A4A" : colors.you) : glass(UI.line)), color: mode === k ? UI.text : UI.dim }}>{label}</button>
       ))}
     </div>
   );
@@ -3164,6 +3235,7 @@ function HowToModal({ colors, loadout, onClose }) {
       {wide ? (
         // A computer: the picture on the left, the words and the buttons on the right.
         <div className="pt-4 pb-1">
+          <div className="mb-3">{tabs}</div>
           {progress}
           <div className="tb-cols grid gap-7 items-stretch" style={{ gridTemplateColumns: "1.1fr 1fr" }}>
             {art}
@@ -3176,10 +3248,11 @@ function HowToModal({ colors, loadout, onClose }) {
         </div>
       ) : (
         <div className="pt-4 pb-1">
+          <div className="mb-3">{tabs}</div>
           {progress}
           <div className="tb-t mb-4" style={{ color: UI.dim }}>{p.title}</div>
           <div className="mb-4">{art}</div>
-          <div className="tb-t mb-5" style={{ minHeight: 76 }}>{p.body}</div>
+          <div className="tb-t mb-5" style={{ minHeight: 96 }}>{p.body}</div>
           {buttons}
         </div>
       )}
@@ -3468,7 +3541,6 @@ function ModeCard({ big = false, ink, icon: Icon, title, sub, note, onClick, dis
         boxShadow: `inset 0 var(--p) 0 color-mix(in srgb, var(--tb-text) 30%, transparent), inset var(--p) 0 0 color-mix(in srgb, var(--tb-text) 14%, transparent)`,
         ...style,
       }}>
-      <span aria-hidden="true" className="tb-sheen absolute inset-y-0" style={{ width: 28, left: -40, background: "linear-gradient(90deg, transparent, rgba(255,255,255,.22), transparent)" }} />
       {big ? (
         <>
           <span className="flex justify-between items-start gap-2">
@@ -3750,6 +3822,7 @@ function MPiece({ id, rot = 0, cell, gap, ink, faint = false }) {
 function MarathonGame({ theme, onExit }) {
   useEffect(() => { sky.slow = true; return () => { sky.slow = false; }; }, []);
   const P = usePx();
+  const wipe = useContext(WipeCtx);
   const compact = useCompact();
   const railD = useBubble(compact);
   const [stageRef, stage] = useSize();
@@ -3830,7 +3903,7 @@ function MarathonGame({ theme, onExit }) {
     setBest((b) => Math.max(b, s.score));
     if (game.official) net.marathonEnd(game.seed, encodeMoves(movesRef.current));
     if (movesRef.current.length) replays.save({ kind: "marathon", seed: game.seed, moves: movesRef.current.slice(), date: Date.now(), name: net.profile?.name || "YOU", result: { score: s.score, lines: s.lines } });
-    setTimeout(() => setShowEnd(true), reason === "forfeit" ? 0 : 1100);
+    setTimeout(() => wipe(() => setShowEnd(true)), reason === "forfeit" ? 0 : 1100);
   };
 
   const place = (slot, r, c) => {
@@ -4200,6 +4273,9 @@ function SprintGame({ onExit, ultra = false }) {
   const record = ultra ? ultraBest : sprintBest;
   const [best, setBest] = useState(() => record.get());
   const [clock, setClock] = useState(0);
+  // A finished run: the wave, then the end screen (as after a Control match).
+  const wipe = useContext(WipeCtx);
+  const [showEnd, setShowEnd] = useState(false);
 
   // The clock: ticks every frame while a run is going.
   useEffect(() => {
@@ -4219,7 +4295,7 @@ function SprintGame({ onExit, ultra = false }) {
   }), [mode, ultra, commit]);
   useEffect(() => net.on("soloResult", (m) => setRanked(m)), []);
   useEffect(() => { askSeed(); }, [askSeed]);
-  const retry = useCallback(() => { setRanked(null); commit(freshSprint(ultra)); askSeed(); sfx.pick(); }, [commit, ultra, askSeed]);
+  const retry = useCallback(() => { setRanked(null); setShowEnd(false); commit(freshSprint(ultra)); askSeed(); sfx.pick(); }, [commit, ultra, askSeed]);
   const finish = useCallback((cur, result) => {
     const endAt = ultra && result === "time" ? cur.startAt + S_ULTRA_MS : performance.now();
     let newBest = false;
@@ -4240,6 +4316,11 @@ function SprintGame({ onExit, ultra = false }) {
     }
     commit({ ...cur, endAt, result, newBest, act: null });
   }, [commit, ultra, mode]);
+  useEffect(() => {
+    if (!r.result) return undefined;
+    const t = setTimeout(() => wipe(() => { if (live.current.result) setShowEnd(true); }), r.result === "forfeit" ? 0 : 600);
+    return () => clearTimeout(t);
+  }, [r.result, wipe]);
   // Ultra: two minutes, then it's over.
   useEffect(() => {
     if (!ultra || !r.startAt || r.endAt) return undefined;
@@ -4373,6 +4454,32 @@ function SprintGame({ onExit, ultra = false }) {
   };
   const sq = cell; // the forecast squares are full size
 
+  if (showEnd && r.result) {
+    const good = r.newBest || r.result === "done" || r.result === "time";
+    const bestText = best ? (ultra ? best.toLocaleString("en-US") : fmtClock(best)) : "—";
+    const counts = ultra ? r.result !== "forfeit" : r.result === "done";
+    return (
+      <EndScreen
+        verdict={r.newBest ? "NEW BEST" : r.result === "done" ? "FINISHED" : r.result === "time" ? "TIME UP" : r.result === "stuck" ? "NO ROOM" : "FORFEIT"}
+        ink={good ? GOLD : UI.bad} sound={good ? "win" : "lose"} compare={false}
+        note={`${st.lines} lines · ${st.pieces} pieces · ${pps.toFixed(2)} PPS`}
+        left={ultra ? { name: "SCORE", score: st.score.toLocaleString("en-US"), ink: "var(--tb-you)", won: r.newBest }
+          : { name: r.result === "done" ? "TIME" : "LINES", score: r.result === "done" ? fmtClock(r.endAt - r.startAt) : `${Math.min(st.lines, S_GOAL)}/${S_GOAL}`, ink: "var(--tb-you)", won: r.newBest }}
+        right={{ name: "BEST", score: bestText, ink: GOLD }}
+        actions={[{ label: "MENU", onClick: onExit }, { label: `RETRY (${keyOf("retry")})`, onClick: retry, main: true }]}>
+        {/* Whether the run went on T-Terminal. */}
+        {counts && (
+          <div className="tb-t tb-rise" style={{ color: ranked?.saved ? UI.good : ranked?.error ? UI.bad : UI.dim, animationDelay: "200ms" }}>
+            {!r.official ? "sign in to rank your runs on T-Terminal"
+              : !ranked ? "checking…"
+              : ranked.error ? ranked.error
+              : ranked.newBest ? "new personal best on T-Terminal" : "checked · saved to your record"}
+          </div>
+        )}
+      </EndScreen>
+    );
+  }
+
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono select-none" style={{ color: UI.text, cursor: "crosshair" }}>
       <div ref={stageRef} className="relative flex-1 min-h-0 flex flex-col items-center w-full mx-auto px-3" style={{ maxWidth: 1600 }}>
@@ -4450,37 +4557,6 @@ function SprintGame({ onExit, ultra = false }) {
             : <ForfeitButton disabled={!!r.result} onConfirm={() => finish(live.current, "forfeit")} />}
         </div>
         <div style={{ flex: 2, minHeight: 4 * P }} />
-        {r.result && (
-          <div className="absolute inset-0 flex items-center justify-center tb-fade" style={{ zIndex: 20, background: "repeating-conic-gradient(rgba(0,0,0,.5) 0 25%, rgba(0,0,0,.25) 0 50%) 0 0 / calc(var(--p) * 2) calc(var(--p) * 2)" }}>
-            <div className="tb-dive flex flex-col items-center" style={{ gap: 3 * P, padding: `${6 * P}px ${10 * P}px`, ...GLASS_PANE }}>
-              <PixelWord text={r.newBest ? "NEW BEST" : r.result === "done" ? "FINISHED" : r.result === "time" ? "TIME UP" : r.result === "stuck" ? "NO ROOM" : "FORFEIT"}
-                from="var(--tb-text)" to={r.newBest || r.result === "done" || r.result === "time" ? GOLD : UI.bad} />
-              {ultra ? (
-                <span className="tb-t tb-b tabular-nums" style={{ color: "var(--tb-you)", fontSize: "1.6em" }}>{st.score.toLocaleString("en-US")}</span>
-              ) : r.result === "done" ? (
-                <span className="tb-t tb-b tabular-nums" style={{ color: "var(--tb-you)", fontSize: "1.6em" }}>{fmtClock(r.endAt - r.startAt)}</span>
-              ) : (
-                <span className="tb-t" style={{ color: UI.dim }}>{st.lines} / {S_GOAL} lines</span>
-              )}
-              <span className="tb-t" style={{ color: UI.dim }}>
-                {st.lines} lines · {st.pieces} pieces · {pps.toFixed(2)} PPS · best {best ? (ultra ? best.toLocaleString("en-US") : fmtClock(best)) : "—"}
-              </span>
-              {/* Whether the run went on T-Terminal. */}
-              {(ultra ? r.result !== "forfeit" : r.result === "done") && (
-                <span className="tb-t" style={{ color: ranked?.saved ? UI.good : ranked?.error ? UI.bad : UI.dim }}>
-                  {!r.official ? "sign in to rank your runs on T-Terminal"
-                    : !ranked ? "checking…"
-                    : ranked.error ? ranked.error
-                    : ranked.newBest ? "new personal best on T-Terminal" : "checked · saved to your record"}
-                </span>
-              )}
-              <div className="flex" style={{ gap: 2 * P }}>
-                <button onClick={onExit} className="tb-t px-4" style={{ height: 38, ...sk(UI.line), color: UI.dim }}>MENU</button>
-                <button onClick={retry} className="tb-t px-4" style={{ height: 38, ...skFill(UI.text), color: UI.text }}>RETRY ({keyOf("retry")})</button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
@@ -4508,13 +4584,15 @@ function BlitzGame({ onExit, online = false, colors }) {
   useEffect(() => { sky.slow = true; return () => { sky.slow = false; }; }, []);
   const P = usePx();
   const railD = useBubble(false);
+  const wipe = useContext(WipeCtx);
   const [stageRef, stage] = useSize();
   const keys = useSyncExternalStore(subscribeSprintKeys, getSprintKeys);
   const [skill, setSkill] = useState(blitzSkill.get);
   // A game: both sides start from the same seed, so they get the same pieces.
+  // `log` is the match in time order, for the replay (see server/blitz.js).
   const fresh = (seed, startIn) => {
     const me = newSprint(seed, Infinity), bot = newSprint(seed, Infinity);
-    return { me, bot, act: sSpawn(me, 0), startAt: performance.now() + startIn, result: null, sent: { me: 0, bot: 0 }, flash: null, vanish: { me: null, bot: null }, ratings: null };
+    return { seed, me, bot, act: sSpawn(me, 0), startAt: performance.now() + startIn, result: null, reason: null, sent: { me: 0, bot: 0 }, flash: null, vanish: { me: null, bot: null }, ratings: null, log: [] };
   };
   // vs bot: waits on the skill picker. online: waits for a match.
   const [g, setG] = useState(null);
@@ -4522,6 +4600,7 @@ function BlitzGame({ onExit, online = false, colors }) {
   const commit = useCallback((next) => { live.current = next; setG(next); }, []);
   const [now, setNow] = useState(() => performance.now());
   const [chatM, setChatM] = useState(null);
+  const [showEnd, setShowEnd] = useState(false);
   const boardEl = useRef(null);
   const mouse = useRef(null);
   const toMouse = useCallback((a) => {
@@ -4531,15 +4610,17 @@ function BlitzGame({ onExit, online = false, colors }) {
     return sAt(a, (m.y - rect.top) / step, (m.x - rect.left) / step);
   }, []);
   const playing = (c) => c && !c.result && performance.now() >= c.startAt;
-  const startBot = useCallback(() => { blitzSkill.set(skill); commit(fresh(newSprintSeed(), BLITZ_COUNTDOWN * 1000)); }, [skill, commit]);
-  const findMatch = useCallback(() => { commit(null); net.blitzQueue(); }, [commit]);
+  const startBot = useCallback(() => { blitzSkill.set(skill); setShowEnd(false); commit(fresh(newSprintSeed(), BLITZ_COUNTDOWN * 1000)); }, [skill, commit]);
+  const findMatch = useCallback(() => { setShowEnd(false); commit(null); net.blitzQueue(); }, [commit]);
+  const oppName = online ? (chatM?.opponent?.name || "OPPONENT") : `BOT · SKILL ${blitzSkill.get()}`;
+  const myName = net.profile?.name || "YOU";
 
   // Online: the server's messages.
   useEffect(() => {
     if (!online) return undefined;
     net.blitzQueue(); // (the screen starts on "finding a match")
     const offs = [
-      net.on("blitzStart", (b) => { commit(fresh(b.seed, b.countdown)); setChatM(b); }),
+      net.on("blitzStart", (b) => { setShowEnd(false); commit(fresh(b.seed, b.countdown)); setChatM(b); }),
       net.on("blitz", (b) => setChatM(b)),
       net.on("blitzState", (m) => {
         const c = live.current; if (!c || !net.blitz) return;
@@ -4560,23 +4641,50 @@ function BlitzGame({ onExit, online = false, colors }) {
       }),
       net.on("blitzEnd", (m) => {
         const c = live.current; if (!c) return;
-        commit({ ...c, result: m.winner === m.you ? "win" : "lose", ratings: m.ratings ? m.ratings[m.you] : null, act: null });
-        if (m.winner === m.you) sfx.levelUp(); else sfx.forfeit();
+        const won = m.winner === m.you;
+        const other = m.you === "A" ? "B" : "A";
+        // The server's log is the whole match, both sides, timed: that's the replay.
+        if (Array.isArray(m.log) && m.log.length) {
+          replays.save({ kind: "blitz", seed: m.seed ?? c.seed, moves: m.log, you: m.you, names: { [m.you]: myName, [other]: c.oppName || "OPPONENT" },
+            winner: m.winner, ranked: !!m.ratings, date: Date.now(), name: myName, result: { won, sent: m.sent ? [m.sent[m.you], m.sent[other]] : [c.sent.me, c.sent.bot] } });
+        }
+        commit({ ...c, result: won ? "win" : "lose", reason: m.reason, ratings: m.ratings ? m.ratings[m.you] : null, act: null,
+          sent: m.sent ? { me: m.sent[m.you], bot: m.sent[other] } : c.sent });
       }),
     ];
     return () => { offs.forEach((f) => f()); net.blitzCancel(); };
-  }, [online, commit]);
+  }, [online, commit, myName]);
+  // The opponent's name, kept with the game for the replay.
+  useEffect(() => { if (g && online && chatM?.opponent?.name && g.oppName !== chatM.opponent.name) commit({ ...live.current, oppName: chatM.opponent.name }); }, [g, online, chatM, commit]);
+
+  // A finished game: the wave, then the end screen (as after a Control match).
+  // vs bot, the game is saved as a replay here.
+  const result = g?.result;
+  useEffect(() => {
+    if (!result) return undefined;
+    const c = live.current;
+    c.endedAt ??= performance.now();
+    if (!online && c.log.length && !c.saved) {
+      c.saved = true;
+      replays.save({ kind: "blitz", seed: c.seed, moves: c.log.slice(), you: "A", names: { A: myName, B: `BOT ${blitzSkill.get()}` },
+        winner: result === "win" ? "A" : "B", ranked: false, date: Date.now(), name: myName, result: { won: result === "win", sent: [c.sent.me, c.sent.bot] } });
+    }
+    const t = setTimeout(() => wipe(() => { if (live.current?.result) setShowEnd(true); }), c.reason === "forfeit" ? 0 : 700);
+    return () => clearTimeout(t);
+  }, [result, online, wipe, myName]);
 
   // A placement on either side: clears feed that side's spike; a dead board loses.
   const placeOn = useCallback((c, who, a) => {
     const st = cloneSt(c[who]);
+    const t = performance.now();
     if (!sPlace(st, a)) return null;
+    if (!online) { const mv = sRecordMove(a, t - c.startAt); c.log.push([mv[0], who === "me" ? "A" : "B", mv[1], mv[2], mv[3], mv[4]]); }
     const L = st.last;
-    sNoteClear(st, L.lines, performance.now(), L.allClear, L.id);
+    sNoteClear(st, L.lines, t, L.allClear, L.id);
     const vanish = L.lines ? { ...c.vanish, [who]: { cleared: L.cleared, key: `${who}${st.pieces}` } } : c.vanish;
     let next = { ...c, [who]: st, vanish };
     // Online, the server decides the result.
-    if (st.over && !online) next = { ...next, result: who === "me" ? "lose" : "win" };
+    if (st.over && !online) next = { ...next, result: who === "me" ? "lose" : "win", reason: "stuck" };
     return next;
   }, [online]);
 
@@ -4600,6 +4708,7 @@ function BlitzGame({ onExit, online = false, colors }) {
           if (level) {
             const target = { ...c[to], queue: c[to].queue.slice() };
             sReceiveJunk(target, level);
+            c.log.push([Math.max(0, Math.round(t - c.startAt)), to === "me" ? "A" : "B", -1, level]);
             c = { ...c, [from]: st, [to]: target, sent: { ...c.sent, [from]: c.sent[from] + 1 }, flash: { who: to, level, key: t } };
             changed = true;
             sfx.reveal({ lines: Math.min(4, level) });
@@ -4609,7 +4718,7 @@ function BlitzGame({ onExit, online = false, colors }) {
           const bot = { ...c.bot };
           const a = botMove(bot, blitzSkill.get());
           if (a) { const n = placeOn({ ...c, bot }, "bot", a); if (n) { c = n; changed = true; } }
-          else { c = { ...c, result: "win" }; changed = true; }
+          else { c = { ...c, result: "win", reason: "stuck" }; changed = true; }
           nextBot = t + botDelay(bot, blitzSkill.get());
         }
       }
@@ -4621,8 +4730,8 @@ function BlitzGame({ onExit, online = false, colors }) {
 
   const act = useCallback((a) => {
     const c = live.current;
-    if (a === "retry") { if (online) { if (!c || c.result) findMatch(); } else if (c) commit(fresh(newSprintSeed(), BLITZ_COUNTDOWN * 1000)); return; }
-    if (a === "forfeit") { if (c && !c.result) { if (online) net.forfeit(); else commit({ ...c, result: "lose" }); } return; }
+    if (a === "retry") { if (online) { if (!c || c.result) findMatch(); } else if (c) { setShowEnd(false); commit(fresh(newSprintSeed(), BLITZ_COUNTDOWN * 1000)); } return; }
+    if (a === "forfeit") { if (c && !c.result) { if (online) net.forfeit(); else commit({ ...c, result: "lose", reason: "forfeit" }); } return; }
     if (!playing(c) || !c.act) return;
     if (a === "swap") { commit({ ...c, act: toMouse(sSpawn(c.me, 1 - c.act.slot)) }); sfx.pick(); return; }
     if (a === "cw" || a === "ccw" || a === "r180") { const d = a === "cw" ? 1 : a === "ccw" ? -1 : 2; commit({ ...c, act: toMouse(sTurn(c.act, d)) }); sfx.rotate(d === -1 ? -1 : 1); return; }
@@ -4659,14 +4768,41 @@ function BlitzGame({ onExit, online = false, colors }) {
     return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerdown", onDown); window.removeEventListener("contextmenu", noMenu); };
   }, [act, toMouse, commit]);
 
-  // Sizes: two boards and their side strips across the screen.
+  const keyOf = (id) => bindLabel(keys[id]);
+
+  if (showEnd && g?.result) {
+    const won = g.result === "win";
+    const note = g.reason === "forfeit" ? (won ? "opponent forfeited" : "you forfeited")
+      : g.reason === "left" ? (won ? "opponent left" : "you left")
+      : won ? "their pieces ran out of room" : "your pieces ran out of room";
+    return (
+      <EndScreen verdict={won ? "VICTORY" : "DEFEAT"} ink={won ? colors.you : colors.rival}
+        note={`${note} · junk sent`} compare
+        left={{ name: "YOU", score: g.sent.me, ink: colors.you }}
+        right={{ name: oppName, score: g.sent.bot, ink: colors.rival }}
+        actions={[{ label: "MENU", onClick: onExit }, { label: `${online ? "NEW MATCH" : "REMATCH"} (${keyOf("retry")})`, onClick: () => act("retry"), main: true }]}>
+        <div className="tb-t tb-rise" style={{ color: UI.dim, animationDelay: "160ms" }}>
+          {g.me.pieces} pieces · {g.me.lines} lines · {(g.me.pieces / Math.max(1, ((g.endedAt || now) - g.startAt) / 1000)).toFixed(2)} PPS
+        </div>
+        {g.ratings && <RatingPanel from={g.ratings.before} to={g.ratings.after} rdFrom={g.ratings.rdBefore} rdTo={g.ratings.rdAfter} />}
+      </EndScreen>
+    );
+  }
+
+  // Sizes: each side is laid out like Sprint (a piece and the stats on the
+  // left, the board, a piece and the forecast on the right), side by side.
   const gap = P;
-  const cell = Math.max(4 * P, Math.min(16 * P, Math.floor(Math.min((stage.w - 40 * P) / (2 * S_SIZE + 6.5), (stage.h - (TITLE_H + 30) * P - 80) / (S_SIZE + 2.6)) / P) * P));
+  // The side columns never get narrower than their longest label.
+  const colOf = (c) => Math.max(Math.round(c * 2.3), 30 * P);
+  const sideOf = (c) => c * S_SIZE + gap * (S_SIZE - 1) + 2 * colOf(c) + 8 * P;
+  let cell = Math.max(4 * P, Math.min(14 * P, Math.floor(Math.min((stage.w - 40 * P) / (2 * (S_SIZE + 4.6) + 1.5), (stage.h - (TITLE_H + 34) * P - 70) / (S_SIZE + 2.4)) / P) * P));
+  while (cell > 4 * P && 2 * sideOf(cell) + 10 * P > stage.w - 8 * P) cell -= P;
   const boardW = cell * S_SIZE + gap * (S_SIZE - 1);
   const half = Math.max(P, Math.floor((cell + gap) / 2 / P) * P - P);
+  const colW = colOf(cell), boxH = Math.round(cell * 1.4);
+  const sideW = sideOf(cell);
   const inkOf = (id) => (sIsJunk(id) ? JUNK_INK : S_INK[id]);
-  const keyOf = (id) => bindLabel(keys[id]);
-  const oppName = online ? (chatM?.opponent?.name || "OPPONENT") : `BOT · SKILL ${blitzSkill.get()}`;
+  const elapsed = g && now > g.startAt ? (now - g.startAt) / 1000 : 0;
 
   const panel = (who) => {
     const st = g[who], mine = who === "me";
@@ -4675,22 +4811,36 @@ function BlitzGame({ onExit, online = false, colors }) {
     const on = new Set(cells.map(([r, c]) => r * S_SIZE + c));
     const legal = a ? sCanPlace(st, a) : false;
     const spiking = st.spike && now - st.lastClearAt <= S_SPIKE_MS + (mine ? 0 : 300);
+    const handBox = (i) => {
+      const id = st.hand[i], picked = mine && a && a.slot === i;
+      return (
+        <div role="img" aria-label={`${who} piece ${i + 1}: ${blitzName(id)}${picked ? " (in play)" : ""}`} className="flex items-center justify-center"
+          style={{ height: boxH, ...glass(picked ? UI.text : UI.line), opacity: picked || !mine ? 1 : 0.7 }}>
+          <SPiece id={id} cell={sIsJunk(id) ? Math.max(P, Math.floor(half / 2 / P) * P) : half} gap={P} />
+        </div>
+      );
+    };
+    const stat = (label, value, ink = UI.text) => (
+      <div className="flex flex-col" style={{ gap: P }}><span style={{ color: UI.dim }}>{label}</span><span className="tb-b tabular-nums" style={{ color: ink }}>{value}</span></div>
+    );
+    const sq = Math.round(cell * 0.8);
     return (
-      <div className="flex flex-col items-center" style={{ gap: 3 * P }}>
-        <div className="flex items-end justify-between tb-t" style={{ width: boardW + 2 * cell + 4 * P }}>
-          <span style={{ color: mine ? "var(--tb-you)" : "var(--tb-rival)" }}>{mine ? (net.profile?.name || "YOU") : oppName}</span>
-          <span style={{ color: spiking ? GOLD : UI.dim }}>{spiking ? `SPIKE ${st.spike}` : `SENT ${g.sent[who]}`}</span>
+      <div className="flex items-start" style={{ gap: 4 * P, width: sideW }}>
+        <div className="flex flex-col tb-t" style={{ width: colW, gap: 5 * P, marginTop: cell }}>
+          {handBox(0)}
+          <div className="flex flex-col" style={{ gap: 3 * P, marginTop: P * 2 }}>
+            {stat("SENT", g.sent[who], spiking ? GOLD : UI.text)}
+            {stat("PIECES", st.pieces)}
+            {stat("PPS", (elapsed > 0 ? st.pieces / elapsed : 0).toFixed(2))}
+            {stat("LINES", st.lines)}
+          </div>
         </div>
-        {/* The two pieces over the board, the one in play lit up. */}
-        <div className="flex justify-center" style={{ gap: 3 * P, width: boardW + 2 * cell + 4 * P }}>
-          {st.hand.map((id, i) => (
-            <div key={i} role="img" aria-label={`${who} piece ${i + 1}: ${blitzName(id)}`} className="flex items-center justify-center"
-              style={{ width: Math.round(cell * 2.6), height: Math.round(cell * 1.15), ...glass(mine && a && a.slot === i ? UI.text : UI.line), opacity: mine && a && a.slot === i ? 1 : 0.7 }}>
-              <SPiece id={id} cell={sIsJunk(id) ? Math.max(P, Math.floor(half / 2 / P) * P) : half} gap={P} />
-            </div>
-          ))}
-        </div>
-        <div className="flex items-start" style={{ gap: 4 * P }}>
+        <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
+          {/* Who this board is, and the spike building on it. */}
+          <div className="flex items-center justify-between tb-t" style={{ width: boardW, height: cell - 2 * P }}>
+            <span className="truncate" style={{ color: mine ? "var(--tb-you)" : "var(--tb-rival)" }}>{mine ? myName : oppName}</span>
+            {spiking ? <span className="tb-b" style={{ color: GOLD }}>SPIKE {st.spike}</span> : null}
+          </div>
           <div ref={mine ? boardEl : undefined} className="relative" style={{ width: boardW, height: boardW }}>
             <div style={{ display: "grid", gridTemplateColumns: `repeat(${S_SIZE}, ${cell}px)`, gap }}>
               {st.board.map((row, ri) => row.map((v, ci) => {
@@ -4711,11 +4861,14 @@ function BlitzGame({ onExit, online = false, colors }) {
               </div>
             )}
           </div>
-          {/* The forecast: colours; junk shows grey with its level. */}
-          <div className="flex flex-col items-center" style={{ gap: 2 * P, padding: `${2 * P}px`, width: cell + 4 * P, ...glass(UI.line) }}>
-            {st.queue.slice(0, 8).map((id, i) => (
-              <div key={i} role="img" aria-label={`${who} next ${i + 1}: ${blitzName(id)}`} className="relative flex items-center justify-center" style={{ opacity: i < 5 ? 1 - i * 0.08 : 0.9 }}>
-                <Ink size={Math.round(cell * 0.85)} color={inkOf(id)} />
+        </div>
+        <div className="flex flex-col items-start" style={{ width: colW, gap: 5 * P, marginTop: cell }}>
+          <div className="w-full">{handBox(1)}</div>
+          {/* The forecast: colours in a strip against the board; junk shows grey with its level. */}
+          <div aria-label={`${who} forecast`} className="flex flex-col items-center" style={{ gap: 2 * P, padding: 2 * P, ...glass(UI.line) }}>
+            {st.queue.slice(0, S_FORECAST + 1).map((id, i) => (
+              <div key={i} role="img" aria-label={`${who} next ${i + 1}: ${blitzName(id)}`} className="relative flex items-center justify-center" style={{ opacity: i ? Math.max(0.5, 0.9 - i * 0.08) : 1 }}>
+                <Ink size={sq} color={inkOf(id)} />
                 {sIsJunk(id) && <span className="absolute tb-t tb-b" style={{ color: UI.text }}>{sJunkLevel(id)}</span>}
               </div>
             ))}
@@ -4733,7 +4886,7 @@ function BlitzGame({ onExit, online = false, colors }) {
         <GameTitle mode={online ? "BLITZ" : "VS BOT"} />
         <div style={{ flex: 1, minHeight: 2 * P }} />
         {g ? (
-          <div className="flex items-start" style={{ gap: 14 * P }}>
+          <div className="flex items-start" style={{ gap: 10 * P }}>
             {panel("me")}
             {panel("bot")}
           </div>
@@ -4753,7 +4906,7 @@ function BlitzGame({ onExit, online = false, colors }) {
             <button onClick={startBot} className="tb-t px-6" style={{ height: 40, ...skFill("#F29A4A"), color: UI.text }}>START</button>
           </div>
         )}
-        <div className="flex items-center justify-end" style={{ width: "100%", maxWidth: 2 * (boardW + 2 * cell) + 40 * P, gap: 3 * P, marginTop: 3 * P }}>
+        <div className="flex items-center justify-end" style={{ width: "100%", maxWidth: 2 * sideW + 10 * P, gap: 3 * P, marginTop: 3 * P }}>
           {g && <Bubble w={railD} h={railD} label={`${online ? "New match" : "Retry"} (${keyOf("retry")})`} onClick={() => act("retry")}><RefreshCw /></Bubble>}
           {!g || g.result ? <Bubble w={railD} h={railD} label="Menu" onClick={onExit}><LogOut /></Bubble>
             : <ForfeitButton ranked={online} onConfirm={() => act("forfeit")} />}
@@ -4762,23 +4915,6 @@ function BlitzGame({ onExit, online = false, colors }) {
         {g && count > 0 && !g.result && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ zIndex: 10 }}>
             <div key={count} className="tb-dive"><PixelWord text={String(count)} from="var(--tb-text)" to="#F29A4A" scale={6} /></div>
-          </div>
-        )}
-        {g?.result && (
-          <div className="absolute inset-0 flex items-center justify-center tb-fade" style={{ zIndex: 20, background: "repeating-conic-gradient(rgba(0,0,0,.5) 0 25%, rgba(0,0,0,.25) 0 50%) 0 0 / calc(var(--p) * 2) calc(var(--p) * 2)" }}>
-            <div className="tb-dive flex flex-col items-center" style={{ gap: 3 * P, padding: `${6 * P}px ${10 * P}px`, ...GLASS_PANE }}>
-              <PixelWord text={g.result === "win" ? "YOU WIN" : "YOU LOSE"} from="var(--tb-text)" to={g.result === "win" ? GOLD : UI.bad} />
-              <span className="tb-t" style={{ color: UI.dim }}>junk sent {g.sent.me} · received {g.sent.bot} · {g.me.pieces} pieces</span>
-              {g.ratings && (
-                <span className="tb-t" style={{ color: g.ratings.after >= g.ratings.before ? UI.good : UI.bad }}>
-                  BLITZ {g.ratings.before} → {g.ratings.after} ({g.ratings.after - g.ratings.before >= 0 ? "+" : ""}{g.ratings.after - g.ratings.before})
-                </span>
-              )}
-              <div className="flex" style={{ gap: 2 * P }}>
-                <button onClick={onExit} className="tb-t px-4" style={{ height: 38, ...sk(UI.line), color: UI.dim }}>MENU</button>
-                <button onClick={() => act("retry")} className="tb-t px-4" style={{ height: 38, ...skFill(UI.text), color: UI.text }}>{online ? "NEW MATCH" : "REMATCH"} ({keyOf("retry")})</button>
-              </div>
-            </div>
           </div>
         )}
       </div>
@@ -5527,10 +5663,11 @@ function EndSide({ name, score, ink, won }) {
   );
 }
 
-function EndScreen({ verdict, ink, note, left, right, special = 0, children, actions }) {
+function EndScreen({ verdict, ink, note, left, right, special = 0, children, actions, sound = null, compare = true }) {
   const P = usePx();
   useEffect(() => {
-    const t = setTimeout(() => (verdict === "DRAW" || verdict === "GAME OVER" ? sfx.draw() : verdict === "DEFEAT" ? sfx.lose() : sfx.win()), 150);
+    const kind = sound || (verdict === "DRAW" || verdict === "GAME OVER" ? "draw" : verdict === "DEFEAT" ? "lose" : "win");
+    const t = setTimeout(() => (kind === "draw" ? sfx.draw() : kind === "lose" ? sfx.lose() : sfx.win()), 150);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -5551,9 +5688,9 @@ function EndScreen({ verdict, ink, note, left, right, special = 0, children, act
           </div>
           <PixelRule />
           <div className="flex items-stretch w-full" style={{ gap: 3 * P }}>
-            <EndSide {...left} won={left.score > right.score} />
-            <div className="flex items-center tb-t" style={{ color: UI.dim }}>vs</div>
-            <EndSide {...right} won={right.score > left.score} />
+            <EndSide {...left} won={compare ? left.score > right.score : !!left.won} />
+            <div className="flex items-center tb-t" style={{ color: UI.dim }}>{compare ? "vs" : "·"}</div>
+            <EndSide {...right} won={compare ? right.score > left.score : !!right.won} />
           </div>
           {(note || special > 0) && (
             <div className="tb-t tb-rise" style={{ color: GOLD, animationDelay: "120ms" }}>
@@ -5737,7 +5874,7 @@ function replaySides(rec) {
   return { me, them, meName: rec.you ? "YOU" : rec.players.A.name, themName: rec.players[them].name };
 }
 
-const REPLAY_TABS = [["all", "ALL"], ["match", "1V1"], ["sprint", "SPRINT"], ["ultra", "ULTRA"], ["marathon", "MARATHON"]];
+const REPLAY_TABS = [["all", "ALL"], ["match", "CONTROL"], ["blitz", "BLITZ"], ["sprint", "SPRINT"], ["ultra", "ULTRA"], ["marathon", "MARATHON"]];
 function ReplayList({ onOpen, onBack }) {
   const P = usePx();
   const all = useReplayList();
@@ -5773,6 +5910,19 @@ function ReplayList({ onOpen, onBack }) {
         <div className="flex-1 min-h-0 overflow-y-auto mt-2 flex flex-col gap-2 pr-1">
           {!list.length && <div className="tb-t text-center py-10" style={{ color: UI.dim }}>No replays here yet. Every game you finish is saved here.</div>}
           {list.map((rec) => {
+            if (rec.kind === "blitz") {
+              const them = rec.you === "A" ? "B" : "A";
+              const won = rec.winner === rec.you;
+              return (
+                <button key={rec.id} onClick={() => onOpen(rec.id)} className="w-full text-left flex items-center gap-3 px-3 py-2" style={{ ...glass(UI.line) }}>
+                  <div className="flex-1 min-w-0">
+                    <div className="tb-t truncate">{rec.names?.[rec.you] || "YOU"} <span style={{ color: UI.dim }}>vs</span> {rec.names?.[them] || "?"}</div>
+                    <div className="tb-t truncate" style={{ color: UI.dim }}>{rec.ranked ? "BLITZ · RANKED" : rec.names?.[them]?.startsWith("BOT") ? "BLITZ · VS BOT" : "BLITZ"} · {fmtDate(rec.date)}</div>
+                  </div>
+                  <div className="tb-t tb-b shrink-0" style={{ color: won ? "var(--tb-you)" : "var(--tb-rival)" }}>{won ? "WIN" : "LOSS"}</div>
+                </button>
+              );
+            }
             if (rec.kind) {
               const main = rec.kind === "sprint" ? fmtClock(rec.result?.ms || 0) : (rec.result?.score || 0).toLocaleString("en-US");
               return (
@@ -5903,6 +6053,125 @@ function SoloReplayViewer({ rec, onBack }) {
   );
 }
 
+/**
+ * A Blitz replay: both boards rebuilt from the seed and the match log, in
+ * real time. The log has every placement and every junk landing with its
+ * time, so nothing is re-simulated: what you see is what happened.
+ */
+function blitzFrames(rec) {
+  const st = { A: newSprint(rec.seed, Infinity), B: newSprint(rec.seed, Infinity) };
+  const sent = { A: 0, B: 0 };
+  const snap = (t, side, cells, junk) => ({
+    t, side, cells, junk, sent: { ...sent },
+    A: { board: st.A.board.map((r) => r.slice()), hand: st.A.hand.slice(), queue: st.A.queue.slice(0, S_FORECAST + 1), pieces: st.A.pieces, lines: st.A.lines },
+    B: { board: st.B.board.map((r) => r.slice()), hand: st.B.hand.slice(), queue: st.B.queue.slice(0, S_FORECAST + 1), pieces: st.B.pieces, lines: st.B.lines },
+  });
+  const out = [snap(0)];
+  for (const e of rec.moves) {
+    const [t, side, slot] = e;
+    const s = st[side];
+    if (!s) break;
+    if (slot === -1) {
+      sReceiveJunk(s, e[3]);
+      sent[side === "A" ? "B" : "A"]++;
+      out.push(snap(t, side, null, e[3]));
+      continue;
+    }
+    const [, , , rot, r, c] = e;
+    const sh = sShapeOf(s.hand[slot], rot);
+    if (!sPlace(s, { slot, id: s.hand[slot], rot, cr: r + sh.h / 2, cc: c + sh.w / 2 })) break;
+    out.push(snap(t, side, s.last.cells));
+  }
+  return out;
+}
+
+function BlitzReplayViewer({ rec, colors, onBack }) {
+  const P = usePx();
+  const frames = useMemo(() => blitzFrames(rec), [rec]);
+  const end = frames[frames.length - 1].t;
+  const [time, setTime] = useState(0);
+  const [playing, setPlaying] = useState(true);
+  const [speed, setSpeed] = useState(1);
+  const live = useRef({ time: 0 });
+  useEffect(() => {
+    if (!playing) return undefined;
+    let raf, last = performance.now();
+    const loop = (now) => {
+      raf = requestAnimationFrame(loop);
+      const t = Math.min(end, live.current.time + (now - last) * speed);
+      last = now; live.current.time = t; setTime(t);
+      if (t >= end) setPlaying(false);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [playing, speed, end]);
+  const seek = (t) => { live.current.time = t; setTime(t); };
+  let i = 0; while (i + 1 < frames.length && frames[i + 1].t <= time) i++;
+  const f = frames[i];
+  const me = rec.you || "A", them = me === "A" ? "B" : "A";
+  // As big as the window allows: two boards and their strips across, the controls under them.
+  const [vw, vh] = [typeof window === "undefined" ? 800 : window.innerWidth, typeof window === "undefined" ? 600 : window.innerHeight];
+  const cell = Math.max(6, Math.min(16, Math.floor(Math.min((vw - 40) / P / 25, (vh - 70 * P - 120) / P / 9.5)))) * P, gap = P;
+  const inkOf = (id) => (sIsJunk(id) ? JUNK_INK : S_INK[id]);
+  // The last placement on each side, outlined; junk that just landed, flagged.
+  const lastOf = (side) => { for (let k = i; k > 0; k--) if (frames[k].side === side && frames[k].cells) return frames[k]; return null; };
+  const side = (s) => {
+    const b = f[s], lp = lastOf(s);
+    const just = new Set(lp && time - lp.t < 400 ? lp.cells.map(([r, c]) => r * S_SIZE + c) : []);
+    const junkNow = f.side === s && f.junk && time - f.t < 700;
+    const secs = Math.max(0.001, time / 1000);
+    return (
+      <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
+        <div className="flex items-center justify-between tb-t" style={{ width: S_SIZE * (cell + gap) + Math.round(cell * 2.2) + 3 * P }}>
+          <span className="truncate" style={{ color: s === me ? colors.you : colors.rival }}>{rec.names?.[s] || s}{rec.winner === s ? " ★" : ""}</span>
+          {junkNow && <span className="tb-b" style={{ color: UI.bad }}>+ JUNK {f.junk}</span>}
+        </div>
+        <div className="flex items-start" style={{ gap: 3 * P }}>
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${S_SIZE}, ${cell}px)`, gap }}>
+            {b.board.map((row, r) => row.map((v, c) => (
+              <div key={r * S_SIZE + c} style={{ width: cell, height: cell, position: "relative", clipPath: CLIP1, ...(v === null ? GLASS : null), outline: just.has(r * S_SIZE + c) ? `${P}px solid ${UI.text}` : "none" }}>
+                {v !== null && <Ink size={cell} color={inkOf(v)} />}
+              </div>
+            )))}
+          </div>
+          <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
+            {b.hand.map((id, k) => <div key={k} className="flex items-center justify-center" style={{ width: Math.round(cell * 2.2), height: Math.round(cell * 1.3), ...glass(UI.line) }}><SPiece id={id} cell={Math.max(P, Math.floor(cell / (sIsJunk(id) ? 4 : 2.4) / P) * P)} gap={P} /></div>)}
+            {b.queue.map((id, k) => (
+              <div key={k} className="relative flex items-center justify-center"><Ink size={Math.round(cell * 0.7)} color={inkOf(id)} />{sIsJunk(id) && <span className="absolute tb-t" style={{ color: UI.text }}>{sJunkLevel(id)}</span>}</div>
+            ))}
+          </div>
+        </div>
+        <div className="flex tb-t" style={{ gap: 5 * P, color: UI.dim }}>
+          <span>SENT <span className="tb-b" style={{ color: UI.text }}>{f.sent[s]}</span></span>
+          <span>PIECES <span className="tb-b" style={{ color: UI.text }}>{b.pieces}</span></span>
+          <span>PPS <span className="tb-b" style={{ color: UI.text }}>{(b.pieces / secs).toFixed(2)}</span></span>
+        </div>
+      </div>
+    );
+  };
+  const W = 2 * (S_SIZE * (cell + gap) + Math.round(cell * 2.2) + 3 * P) + 10 * P;
+  return (
+    <div className="tb-screen tb-safe w-full flex flex-col items-center font-mono" style={{ color: UI.text }}>
+      <div className="flex flex-col items-center" style={{ gap: 3 * P, paddingTop: 6 * P }}>
+        <div className="flex flex-col tb-t" style={{ width: W, gap: P }}>
+          <button onClick={onBack} className="flex items-center gap-1 py-1 self-start" style={{ color: UI.dim }}><ChevronLeft size={13} /> REPLAYS</button>
+          <span className="text-center">{rec.ranked ? "BLITZ · RANKED" : "BLITZ"}</span>
+          <span className="text-center" style={{ color: UI.dim }}>{fmtDate(rec.date)}</span>
+        </div>
+        <span className="tb-t tb-b tabular-nums" style={{ color: "#F29A4A" }}>{fmtClock(time)}</span>
+        <div className="flex items-start" style={{ gap: 10 * P }}>{side(me)}{side(them)}</div>
+        <PixelSlider min={0} max={Math.max(1, Math.ceil(end / 100))} value={Math.round(time / 100)} onChange={(v) => { setPlaying(false); seek(v * 100); }} label="Replay position" style={{ width: W }} />
+        <div className="flex items-center" style={{ gap: 2 * P }}>
+          <button onClick={() => { if (time >= end) seek(0); setPlaying(!playing); }} className="tb-t px-3" style={{ height: 32, ...glass(UI.line), color: UI.text }}>{playing ? "PAUSE" : "PLAY"}</button>
+          <button onClick={() => seek(0)} className="tb-t px-3" style={{ height: 32, ...glass(UI.line), color: UI.text }}>RESTART</button>
+          {SPEEDS.map((sp) => (
+            <button key={sp} onClick={() => setSpeed(sp)} className="tb-t px-2" aria-pressed={speed === sp} style={{ height: 32, ...(speed === sp ? skFill(UI.text) : glass(UI.line)), color: UI.text }}>{sp}×</button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function ReplayViewer({ id, theme, colors, onBack }) {
   const P = usePx();
@@ -6088,16 +6357,17 @@ function PrivateResult({ over, colors, onQueue, onMenu }) {
   );
 }
 
-function RankedResult({ over, colors, onQueue, onMenu }) {
+/**
+ * The rating after a rated match: the rank, the number counting from old to
+ * new, the change, progress to the next rank, and a banner on a promotion.
+ */
+function RatingPanel({ from, to, rdFrom, rdTo }) {
   const P = usePx();
-  const { won, drew, forfeit, reason, myScore, oppScore, special, opponent, rating } = over;
-  const trFrom = Math.round(rating.before.r);
-  const trTo = Math.round(rating.after.r);
+  const trFrom = Math.round(from), trTo = Math.round(to);
   const delta = trTo - trFrom;
   const riFrom = rankIndexFor(trFrom);
   const riTo = rankIndexFor(trTo);
   const rank = RANKS[riTo];
-  const verdictInk = drew ? UI.text : won ? colors.you : colors.rival;
   const deltaInk = delta >= 0 ? UI.good : UI.bad;
 
   // The rating counts from old to new once the screen has settled.
@@ -6115,22 +6385,10 @@ function RankedResult({ over, colors, onQueue, onMenu }) {
     return () => { clearTimeout(delay); cancelAnimationFrame(raf); };
   }, [trFrom, trTo]);
 
-  const note = forfeit ? "opponent forfeited" : reason === "forfeit" ? "you forfeited"
-    : reason === "locked" ? "board locked — no legal moves left"
-    : reason === "overtime" ? (drew ? "still tied at the centre" : "decided in overtime") : null;
   const progress = rankProgress(shown);
   const BAR = 40; // pixels
-
   return (
-    <EndScreen
-      verdict={drew ? "DRAW" : won ? "VICTORY" : "DEFEAT"} ink={verdictInk} note={note} special={special}
-      left={{ name: "YOU", score: myScore, ink: colors.you }}
-      right={{ name: opponent.name, score: oppScore, ink: colors.rival }}
-      actions={[
-        { label: "MENU", onClick: onMenu },
-        { label: "QUEUE AGAIN", onClick: onQueue, main: true },
-      ]}
-    >
+    <>
       <div className="w-full tb-rise" style={{ padding: 4 * P, ...GLASS, clipPath: CLIP, animationDelay: "200ms" }}>
         <div className="flex items-center" style={{ gap: 4 * P }}>
           <div className="flex flex-col items-center shrink-0" style={{ gap: 2 * P }}>
@@ -6150,7 +6408,7 @@ function RankedResult({ over, colors, onQueue, onMenu }) {
                 background: rank.color, boxShadow: `inset 0 ${P}px 0 rgba(255,255,255,.3)`,
               }} />
             </div>
-            <div className="tb-t" style={{ color: UI.dim }}>±{Math.round(rating.after.rd)} <span style={{ opacity: 0.6 }}>from ±{Math.round(rating.before.rd)}</span></div>
+            {rdTo != null && <div className="tb-t" style={{ color: UI.dim }}>±{Math.round(rdTo)} {rdFrom != null && <span style={{ opacity: 0.6 }}>from ±{Math.round(rdFrom)}</span>}</div>}
           </div>
         </div>
       </div>
@@ -6159,6 +6417,27 @@ function RankedResult({ over, colors, onQueue, onMenu }) {
           {riTo > riFrom ? `PROMOTED TO ${rank.name}` : `DEMOTED TO ${rank.name}`}
         </div>
       )}
+    </>
+  );
+}
+
+function RankedResult({ over, colors, onQueue, onMenu }) {
+  const { won, drew, forfeit, reason, myScore, oppScore, special, opponent, rating } = over;
+  const verdictInk = drew ? UI.text : won ? colors.you : colors.rival;
+  const note = forfeit ? "opponent forfeited" : reason === "forfeit" ? "you forfeited"
+    : reason === "locked" ? "board locked — no legal moves left"
+    : reason === "overtime" ? (drew ? "still tied at the centre" : "decided in overtime") : null;
+  return (
+    <EndScreen
+      verdict={drew ? "DRAW" : won ? "VICTORY" : "DEFEAT"} ink={verdictInk} note={note} special={special}
+      left={{ name: "YOU", score: myScore, ink: colors.you }}
+      right={{ name: opponent.name, score: oppScore, ink: colors.rival }}
+      actions={[
+        { label: "MENU", onClick: onMenu },
+        { label: "QUEUE AGAIN", onClick: onQueue, main: true },
+      ]}
+    >
+      <RatingPanel from={rating.before.r} to={rating.after.r} rdFrom={rating.before.rd} rdTo={rating.after.rd} />
     </EndScreen>
   );
 }
@@ -6455,7 +6734,9 @@ export default function TurfBlocks() {
   else if (screen === "REPLAYS")
     view = <ReplayList onOpen={(id) => { setReplayId(id); setScreen("REPLAY"); }} onBack={() => setScreen("MENU")} />;
   else if (screen === "REPLAY")
-    view = replays.get(replayId)?.kind
+    view = replays.get(replayId)?.kind === "blitz"
+      ? <BlitzReplayViewer rec={replays.get(replayId)} colors={colors} onBack={() => setScreen("REPLAYS")} />
+      : replays.get(replayId)?.kind
       ? <SoloReplayViewer rec={replays.get(replayId)} onBack={() => setScreen("REPLAYS")} />
       : <ReplayViewer id={replayId} theme={theme} colors={colors} onBack={() => setScreen("REPLAYS")} />;
   else if (screen === "UNRANKED")

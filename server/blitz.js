@@ -8,7 +8,10 @@
  *   blitzStart { id, you, seed, opponent: { name, rating }, countdown }
  *   blitzState { side, board, hand, queue, pieces, lines, spike, sent }
  *   blitzJunk  { level, at }   junk you received, inserted when you had placed `at` pieces
- *   blitzEnd   { winner, reason, ratings? }
+ *   blitzEnd   { winner, reason, ratings?, sent, seed, log }
+ *              log: the match in time order, for the replay. [t, side, slot, rot, r, c]
+ *              is a placement, [t, side, -1, level] junk landing in side's queue
+ *              (t: ms since the countdown ended).
  *   chat       (as in a Control match)
  */
 import { randomBytes } from "node:crypto";
@@ -19,6 +22,7 @@ import { unref } from "./timers.js";
 
 export const COUNTDOWN_MS = 3000;
 const GRACE_MS = 15000;
+const LOG_MAX = 8000;
 
 export class BlitzMatch {
   constructor(seats, onEnd, { rated = true } = {}) {
@@ -31,7 +35,9 @@ export class BlitzMatch {
     this.onEnd = onEnd;
     this.over = false;
     this.grace = {};
+    this.log = [];
   }
+  note(entry) { if (this.log.length < LOG_MAX) this.log.push([Math.max(0, Date.now() - this.startsAt), ...entry]); }
   other(side) { return side === "A" ? "B" : "A"; }
   send(side, msg) { const s = this.seats[side].socket; if (s && s.readyState === 1) s.send(JSON.stringify(msg)); }
   rating(side) { return this.seats[side].profile.blitz?.rating || null; }
@@ -58,6 +64,7 @@ export class BlitzMatch {
       if (!level) continue;
       const to = this.other(side);
       receiveJunk(this.st[to], level);
+      this.note([to, -1, level]);
       this.sent[side]++;
       this.send(to, { t: "blitzJunk", level, at: this.st[to].pieces });
       this.broadcast(to);
@@ -75,6 +82,7 @@ export class BlitzMatch {
       this.send(side, this.view(side)); // out of step: here's the real board
       return null;
     }
+    this.note([side, slot, rot, r, c]);
     const L = st.last;
     if (L.lines) noteClear(st, L.lines, Date.now(), L.allClear, L.id);
     this.broadcast(side);
@@ -109,10 +117,10 @@ export class BlitzMatch {
         const before = Math.round((side === "A" ? ra : rb).r);
         p.blitz = { ...b, rating: next[side], games: (b.games || 0) + 1, wins: (b.wins || 0) + (side === winner ? 1 : 0), at: Date.now() };
         saveProfile(p);
-        ratings[side] = { before, after: Math.round(next[side].r) };
+        ratings[side] = { before, after: Math.round(next[side].r), rdBefore: Math.round((side === "A" ? ra : rb).rd), rdAfter: Math.round(next[side].rd) };
       }
     }
-    for (const side of ["A", "B"]) this.send(side, { t: "blitzEnd", id: this.id, winner, you: side, reason, ratings, sent: this.sent });
+    for (const side of ["A", "B"]) this.send(side, { t: "blitzEnd", id: this.id, winner, you: side, reason, ratings, sent: this.sent, seed: this.seed, log: this.log });
     this.onEnd(this);
   }
   onDisconnect(side) {

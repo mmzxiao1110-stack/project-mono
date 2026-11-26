@@ -73,6 +73,12 @@ export function About() {
    NEWS — sea green
    ============================================================ */
 const NEWS = [
+  { v: "v0.33.0", date: "NOV 2026", title: "BLITZ REPLAYS, NEW END SCREENS", items: [
+    "Blitz and VS BOT matches are saved in REPLAYS with both boards and the real time of every piece and every junk drop.",
+    "Blitz boards are laid out like Sprint: a piece and your stats on the left, a piece and the forecast on the right, for both players.",
+    "Sprint, Ultra, Marathon, Blitz and VS BOT now end with the same wave and result screen as a Control match; Blitz shows your rating change.",
+    "How to Play has a Blitz section: spikes, the attack table and junk.",
+  ] },
   { v: "v0.13.0", date: "NOV 2026", title: "CALMER PLAY SCREEN, ONE ACCOUNT PAGE", items: [
     "PLAY: offline modes on the left, online on the right, clear glass cards, no more falling specks.",
     "Your account page now holds your ranked stats and your Marathon best.",
