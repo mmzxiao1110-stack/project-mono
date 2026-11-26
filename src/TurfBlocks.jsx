@@ -3167,7 +3167,7 @@ function HowToModal({ colors, loadout, onClose }) {
       title: "SPIKES",
       art: (
         <div className="tb-t grid gap-x-4 gap-y-1" style={{ gridTemplateColumns: "auto auto auto auto" }}>
-          {[["1 line", "0 · combo 1"], ["4 lines", "10"], ["2 lines", "2 · combo 3"], ["T, 4 lines", "12"], ["3 lines", "4"], ["5 lines", "14"], ["all clear", "12"]].map(([a, b]) => (
+          {[["1 line", "0 · combo 1"], ["T S Z O · 4", "10"], ["2 lines", "2 · combo 3"], ["I J L · 4", "8"], ["3 lines", "4"], ["5 lines", "15"], ["all clear", "20"]].map(([a, b]) => (
             <React.Fragment key={a}><span style={{ color: UI.dim }}>{a}</span><span className="tb-b" style={{ color: GOLD }}>{b}</span></React.Fragment>
           ))}
         </div>
@@ -3209,7 +3209,7 @@ function HowToModal({ colors, loadout, onClose }) {
         <span className="tb-t tb-b" style={{ color: GOLD }}>→ ×</span>
       </div>
     ),
-    body: "Clear with piece after piece and it's a combo: every clear adds to one spike, and the first piece that clears nothing sends it. Inside a combo a single adds 1 and a double 3. Big clears are the heavy hitters, combo or not: four lines send 10, a T that clears four sends 12, five lines send 14.",
+    body: "Clear with piece after piece and it's a combo: every clear adds to one spike, and the first piece that clears nothing sends it. Inside a combo a single adds 1 and a double 3. Big clears are the heavy hitters, combo or not: four lines send 10 with a T, S, Z or O and 8 with an I, J or L; five lines send 15; an all clear 20.",
   }, {
     title: "DEFENCE",
     art: (

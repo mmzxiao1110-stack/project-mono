@@ -260,12 +260,12 @@ function junkShape(id, rot) {
  *   1 line   0 to start a combo, 1 inside one
  *   2 lines  2 to start, 3 inside one
  *   3 lines  4
- *   4 lines  10, or 12 if a T made them · 5 lines 14 · each line more +4
- *   an ALL CLEAR 12 (whatever the lines)
+ *   4 lines  10 with T, S, Z or O · 8 with I, J or L · 5 lines 15 · each line more +4
+ *   an ALL CLEAR 20 (whatever the lines)
  * Big clears (4+) are worth the same inside a combo or not.
  */
 export const SPIKE_MS = 0; // (no longer timed: kept so older imports still load)
-export const ALL_CLEAR_LEVELS = 12;
+export const ALL_CLEAR_LEVELS = 20;
 export const T_ID = 2;
 export function attackLevel(lines, { allClear = false, piece = -1, combo = false } = {}) {
   if (!lines) return 0;
@@ -274,8 +274,9 @@ export function attackLevel(lines, { allClear = false, piece = -1, combo = false
   if (lines === 2) return combo ? 3 : 2;
   if (lines === 3) return 4;
   // Big clears pay much more: they take a whole setup to build.
-  if (lines === 4) return piece === T_ID ? 12 : 10;
-  return 14 + 4 * (lines - 5);
+  // 4 lines: 10 for T, S, Z and O, 8 for I, J and L. 5 lines: 15.
+  if (lines === 4) return [0, 5, 6].includes(piece) ? 8 : 10;
+  return 15 + 4 * (lines - 5);
 }
 /** After a placement that cleared: add it to the spike. (place() has already counted st.combo.) */
 export function noteClear(st, lines, _now, allClear = false, piece = -1) {
