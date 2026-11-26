@@ -5032,12 +5032,16 @@ function ZeroGGame({ onExit }) {
 
   // The field: 10 wide, the 20 visible rows plus the 2 spawn rows above them.
   const g = P;
-  const availH = stage.h - (TITLE_H + 12) * P - 120; // the title, the clock above the board and the lines under it
-  const cell = Math.max(4 * P, Math.min(9 * P, Math.floor((availH - (ZG_SHOW - 1) * g) / ZG_SHOW / P) * P));
+  const clockH = 10 * P, countH = 10 * P; // the clock above the board, the line count under it
+  const availH = stage.h - (TITLE_H + 12) * P - clockH - countH - 12 * P;
+  const fitW = (stage.w - 24 * P - 9 * g) / 18.5; // the board plus both side columns must fit across
+  const cell = Math.max(4 * P, Math.min(16 * P, Math.floor(Math.min((availH - (ZG_SHOW - 1) * g) / ZG_SHOW, fitW) / P) * P));
   const boardW = Z_W * cell + (Z_W - 1) * g;
   const boardH = ZG_SHOW * cell + (ZG_SHOW - 1) * g;
   const small = Math.max(2 * P, Math.floor(cell * 0.6 / P) * P);
   const colW = Math.max(small * 4 + 8 * P, Math.round(cell * 4.2), 40 * P);
+  const sideTop = clockH + 2 * P + 2 * (cell + g); // the side columns start level with the field's top row
+  const sideH = boardH - 2 * (cell + g);
   const top0 = Z_TOP - 2;
   const curCells = st.cur ? zCellsOf(st.cur) : [];
   const ghost = st.cur ? zCellsOf(zDropped(st.board, st.cur)) : [];
@@ -5056,22 +5060,22 @@ function ZeroGGame({ onExit }) {
         <div style={{ flex: 1, minHeight: 2 * P }} />
         <GameTitle mode="ZERO-G" />
         <div style={{ flex: 1, minHeight: 2 * P }} />
-        <div className="flex items-start" style={{ gap: 5 * P }}>
-          {/* Left: hold, then the stats and the last clear. */}
-          <div className="flex flex-col items-start tb-t" style={{ width: colW, gap: 4 * P, marginTop: 2 * cell }}>
+        <div className="flex items-start">
+          {/* Left: hold, flush against the board, then the stats and the last clear. */}
+          <div className="flex flex-col items-start tb-t" style={{ width: colW, gap: 4 * P, marginTop: sideTop }}>
             <div className="flex flex-col items-center w-full" style={{ gap: 2 * P, padding: 3 * P, ...glass(UI.line) }}>
               <span style={{ color: UI.dim }}>HOLD ({keyOf("hold")})</span>
               <div className="flex items-center justify-center" style={{ height: small * 2 + P + 2 * P }}>
                 {st.hold !== null && <ZPiece id={st.hold} cell={small} gap={P} dim={st.held} />}
               </div>
             </div>
-            <div className="flex flex-col w-full" style={{ gap: 3 * P, marginTop: 2 * P }}>
+            <div className="flex flex-col w-full" style={{ gap: 3 * P, marginTop: 2 * P, paddingLeft: 3 * P }}>
               {stat("PIECES", st.pieces)}
               {stat("PPS", pps.toFixed(2))}
               {stat("BEST", best ? fmtClock(best) : "—", GOLD)}
             </div>
             {/* The last clear: its name, the combo, back-to-back. */}
-            <div className="flex flex-col items-start" style={{ gap: P, minHeight: 14 * P, marginTop: 2 * P }}>
+            <div className="flex flex-col items-start" style={{ gap: P, minHeight: 14 * P, marginTop: 2 * P, paddingLeft: 3 * P }}>
               {pop && (
                 <div key={pop.key} className="flex flex-col items-start tb-rise" style={{ gap: P }}>
                   {pop.b2b > 0 && <span className="tb-b" style={{ color: GOLD }}>B2B ×{pop.b2b}</span>}
@@ -5082,9 +5086,9 @@ function ZeroGGame({ onExit }) {
               )}
             </div>
           </div>
-          {/* The board, the clock above it, the lines under it. */}
+          {/* The board, the clock above it, the line count under it. */}
           <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
-            <ZgClock run={run} style={{ fontSize: "1.4em", color: "var(--tb-you)" }} />
+            <div className="flex items-center" style={{ height: clockH }}><ZgClock run={run} style={{ fontSize: "1.4em", color: "var(--tb-you)" }} /></div>
             <div className="relative" style={{ width: boardW, height: boardH, padding: 0 }}>
               <div style={{ display: "grid", gridTemplateColumns: `repeat(${Z_W}, ${cell}px)`, gap: g }}>
                 {Array.from({ length: ZG_SHOW }, (_, i) => top0 + i).map((y) => st.board[y].map((v, x) => {
@@ -5110,13 +5114,12 @@ function ZeroGGame({ onExit }) {
                 </div>
               )}
             </div>
-            <div className="flex flex-col items-center tb-t" style={{ gap: P, marginTop: P }}>
-              <span style={{ color: UI.dim }}>LINES</span>
+            <div className="flex items-center tb-t" style={{ height: countH }}>
               <span className="tb-b tabular-nums">{Math.min(st.lines, Z_GOAL)} / {Z_GOAL}</span>
             </div>
           </div>
-          {/* Right: the next five. */}
-          <div className="flex flex-col items-start tb-t" style={{ width: colW, marginTop: 2 * cell }}>
+          {/* Right: the next five, flush against the board; the buttons in a column at its bottom. */}
+          <div className="flex flex-col items-start tb-t" style={{ width: colW, marginTop: sideTop, height: sideH }}>
             <div aria-label="Next pieces" className="flex flex-col items-center w-full" style={{ gap: 3 * P, padding: 3 * P, ...glass(UI.line) }}>
               <span style={{ color: UI.dim }}>NEXT</span>
               {st.queue.slice(0, Z_NEXT).map((id, i) => (
@@ -5125,14 +5128,14 @@ function ZeroGGame({ onExit }) {
                 </div>
               ))}
             </div>
+            <div className="flex flex-col items-start" style={{ marginTop: "auto", gap: 3 * P }}>
+              <Bubble w={railD} h={railD} label="Controls and handling" onClick={() => setOpts(true)}><Settings2 /></Bubble>
+              <Bubble w={railD} h={railD} label={`Retry (${keyOf("retry")})`} onClick={retry}><RefreshCw /></Bubble>
+              {r.result
+                ? <Bubble w={railD} h={railD} label="Menu" onClick={onExit}><LogOut /></Bubble>
+                : <ForfeitButton onConfirm={() => finish("forfeit")} />}
+            </div>
           </div>
-        </div>
-        <div className="flex items-center justify-end" style={{ width: boardW + 2 * colW + 10 * P, gap: 3 * P, marginTop: P }}>
-          <Bubble w={railD} h={railD} label="Controls and handling" onClick={() => setOpts(true)}><Settings2 /></Bubble>
-          <Bubble w={railD} h={railD} label={`Retry (${keyOf("retry")})`} onClick={retry}><RefreshCw /></Bubble>
-          {r.result
-            ? <Bubble w={railD} h={railD} label="Menu" onClick={onExit}><LogOut /></Bubble>
-            : <ForfeitButton onConfirm={() => finish("forfeit")} />}
         </div>
         <div style={{ flex: 2, minHeight: 4 * P }} />
       </div>
