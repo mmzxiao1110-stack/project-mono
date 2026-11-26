@@ -5045,7 +5045,7 @@ function ZeroGGame({ onExit }) {
   const sideTop = 2 * (cell + g); // the side columns start level with the field's top row
   const sideH = boardH - sideTop;
   const top0 = Z_TOP - 2;
-  // Only where the piece will land is drawn: faint while the piece is up in the air, solid once it rests there (soft drop).
+  // The piece where it floats, and its ghost where it will land (solid once the piece rests there).
   const land = st.cur ? zDropped(st.board, st.cur) : null;
   const landed = !!land && land.y === st.cur.y;
   const at = new Set(land ? zCellsOf(land).map(([x, y]) => y * Z_W + x) : []);
@@ -5106,6 +5106,10 @@ function ZeroGGame({ onExit }) {
                   );
                 }))}
               </div>
+              {/* The piece itself, wherever it floats (above the board too, without taking room from it). */}
+              {st.cur && !landed && zCellsOf(st.cur).map(([x, y]) => (
+                <div key={`p${x},${y}`} className="absolute pointer-events-none" style={{ left: x * (cell + g), top: (y - top0) * (cell + g) }}><Ink size={cell} color={S_INK[st.cur.id]} /></div>
+              ))}
               {/* A clear: the rows flash and fade in under a fifth of a second. */}
               {r.flash && [...flashRows].filter((y) => y >= top0).map((y) => (
                 <div key={`${r.flash.key}-${y}`} className="absolute pointer-events-none tb-zgflash" style={{ left: 0, width: boardW, top: (y - top0) * (cell + g), height: cell }} />
