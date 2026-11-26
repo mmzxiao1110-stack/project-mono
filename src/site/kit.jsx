@@ -60,44 +60,22 @@ export const glassFill = (color = "var(--tb-you)") => ({
   boxShadow: `inset 0 ${PX} 0 color-mix(in srgb, ${color} 60%, white), inset 0 calc(var(--p) * -1) 0 color-mix(in srgb, ${color} 55%, black)`,
 });
 
-/* A 5×7 pixel alphabet for titles, drawn with two-pixel strokes like the logo. */
-const FONT = {
-  A: ["01110", "10001", "10001", "11111", "10001", "10001", "10001"], B: ["11110", "10001", "10001", "11110", "10001", "10001", "11110"],
-  C: ["01111", "10000", "10000", "10000", "10000", "10000", "01111"], D: ["11110", "10001", "10001", "10001", "10001", "10001", "11110"],
-  E: ["11111", "10000", "10000", "11110", "10000", "10000", "11111"], F: ["11111", "10000", "10000", "11110", "10000", "10000", "10000"],
-  G: ["01111", "10000", "10000", "10011", "10001", "10001", "01111"], H: ["10001", "10001", "10001", "11111", "10001", "10001", "10001"],
-  I: ["11111", "00100", "00100", "00100", "00100", "00100", "11111"], J: ["00111", "00001", "00001", "00001", "10001", "10001", "01110"],
-  K: ["10001", "10010", "10100", "11000", "10100", "10010", "10001"], L: ["10000", "10000", "10000", "10000", "10000", "10000", "11111"],
-  M: ["10001", "11011", "10101", "10101", "10001", "10001", "10001"], N: ["10001", "11001", "10101", "10011", "10001", "10001", "10001"],
-  O: ["01110", "10001", "10001", "10001", "10001", "10001", "01110"], P: ["11110", "10001", "10001", "11110", "10000", "10000", "10000"],
-  Q: ["01110", "10001", "10001", "10001", "10101", "10010", "01101"], R: ["11110", "10001", "10001", "11110", "10100", "10010", "10001"],
-  S: ["01111", "10000", "10000", "01110", "00001", "00001", "11110"], T: ["11111", "00100", "00100", "00100", "00100", "00100", "00100"],
-  U: ["10001", "10001", "10001", "10001", "10001", "10001", "01110"], V: ["10001", "10001", "10001", "10001", "10001", "01010", "00100"],
-  W: ["10001", "10001", "10001", "10101", "10101", "11011", "10001"], X: ["10001", "10001", "01010", "00100", "01010", "10001", "10001"],
-  Y: ["10001", "10001", "01010", "00100", "00100", "00100", "00100"], Z: ["11111", "00001", "00010", "00100", "01000", "10000", "11111"],
-  "-": ["00000", "00000", "00000", "11111", "00000", "00000", "00000"], " ": ["00000", "00000", "00000", "00000", "00000", "00000", "00000"],
-};
-
 /** A word in big pixel letters: every font pixel is a 2×2 block, shaded from `from` to `to`. */
 export function PixelWord({ text, from = "var(--tb-you)", to = "var(--tb-rival)", scale = 2, className = "" }) {
-  const chars = String(text).toUpperCase().split("").map((ch) => FONT[ch] || FONT[" "]);
-  const cw = 5 * scale, ch = 7 * scale, gap = scale + 1;
-  const W = chars.length * cw + (chars.length - 1) * gap;
-  const runs = [];
-  chars.forEach((g, i) => g.forEach((row, y) => [...row].forEach((bit, x) => {
-    if (bit === "1") runs.push([i * (cw + gap) + x * scale, y * scale]);
-  })));
-  const BANDS = 5;
+  // Titles are the game's own font, bold capitals, shaded top to bottom from
+  // one colour to the other. Silkscreen's capitals are 5 of its 8 em-pixels
+  // tall, so this is as tall as the old 7-row pixel letters at this scale.
+  const size = (7 * scale * 8) / 5;
   return (
-    <svg role="img" aria-label={text} className={className} viewBox={`0 0 ${W + 1} ${ch + 1}`}
-      style={{ width: `calc(var(--p) * ${W + 1})`, height: `calc(var(--p) * ${ch + 1})`, display: "block", shapeRendering: "crispEdges", maxWidth: "100%" }}>
-      {runs.map(([x, y], i) => <rect key={`s${i}`} x={x + 1} y={y + 1} width={scale} height={scale} fill="rgba(0,0,0,.5)" />)}
-      {runs.map(([x, y], i) => {
-        const band = Math.min(BANDS - 1, Math.floor((y / ch) * BANDS));
-        return <rect key={i} x={x} y={y} width={scale} height={scale} style={{ fill: `color-mix(in srgb, ${from} ${100 - band * 22}%, ${to})` }} />;
-      })}
-      {runs.filter(([, y]) => y === 0).map(([x], i) => <rect key={`h${i}`} x={x} y={0} width={scale} height={1} fill="rgba(255,255,255,.7)" />)}
-    </svg>
+    <span role="img" aria-label={String(text)} className={`tb-title ${className}`}
+      style={{
+        fontFamily: '"Silkscreen", ui-monospace, monospace', fontWeight: 700, textTransform: "uppercase", whiteSpace: "nowrap",
+        fontSize: `calc(var(--p) * ${size})`, lineHeight: 1, letterSpacing: `calc(var(--p) * ${Math.max(1, scale / 2)})`,
+        display: "inline-block", paddingRight: "calc(var(--p) * 1)",
+        background: `linear-gradient(180deg, color-mix(in srgb, white 35%, ${from}) 0%, ${from} 30%, ${to} 100%)`,
+        WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent",
+        filter: `drop-shadow(var(--p) var(--p) 0 rgba(0,0,0,.5))`,
+      }}>{text}</span>
   );
 }
 

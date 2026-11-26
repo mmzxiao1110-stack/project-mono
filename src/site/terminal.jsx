@@ -14,6 +14,7 @@ import { SiteShell, PixelWord, Panel, glass, glassFill } from "./kit.jsx";
 import { RANKS, PLACEMENT_GAMES } from "../../shared/glicko.js";
 import { VERSION_LABEL } from "../version.js";
 import { apiGet, rankColor, timeAgo, playtime } from "./api.js";
+import { ProfileCard } from "./profileCard.jsx";
 
 const px = (n) => `calc(var(--p) * ${n})`;
 
@@ -286,9 +287,15 @@ export function PlayerRecord({ p, onOpen }) {
         {cell("PEAK", p.peakTr != null ? `${p.peakTr}${p.peakRank ? ` ${p.peakRank}` : ""}` : "—")}
       </div>
       {p.blitz && (
-        <div className="grid grid-cols-2" style={{ gap: px(2) }}>
-          {cell("BLITZ RATING", `${p.blitz.rating}${p.blitz.position ? ` · #${p.blitz.position}` : ""}`, "#F29A4A")}
+        <div className="grid grid-cols-4" style={{ gap: px(2) }}>
+          {cell("BLITZ GLICKO", `${p.blitz.rating}${p.blitz.rd != null ? ` ±${p.blitz.rd}` : ""}`, "var(--tb-special)")}
+          {cell("BLITZ #", p.blitz.position ? `#${p.blitz.position}` : "—")}
           {cell("BLITZ W / G", `${p.blitz.wins}/${p.blitz.games}`)}
+          {cell("WIN RATE", `${p.blitz.games ? Math.round((100 * p.blitz.wins) / p.blitz.games) : 0}%`)}
+          {cell("PPS", p.blitz.pps != null ? p.blitz.pps.toFixed(2) : "—")}
+          {cell("APM", p.blitz.apm != null ? p.blitz.apm.toFixed(1) : "—")}
+          {cell("VS", p.blitz.vs != null ? p.blitz.vs.toFixed(1) : "—")}
+          {cell("BEST ATTACK", p.blitz.best ? `${p.blitz.best} lv` : "—")}
         </div>
       )}
       {(p.sprint || p.ultra) && (
@@ -338,6 +345,7 @@ function Player({ name }) {
       <SearchBox />
       <Panel color={st.data?.rank ? rankColor(st.data.rank) : undefined}>
         <Status st={st} />
+        {st.data && <ProfileCard p={st.data} />}
         {st.data && <PlayerRecord p={st.data} />}
       </Panel>
     </div>

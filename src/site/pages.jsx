@@ -73,6 +73,14 @@ export function About() {
    NEWS — sea green
    ============================================================ */
 const NEWS = [
+  { v: "v0.35.0", date: "NOV 2026", title: "RANKED LOBBIES, MATCH INTROS, PROFILE CARDS", items: [
+    "BLITZ and CONTROL each have their own lobby: your rank, your Glicko, who's playing and searching, and one big PLAY. Keep searching while you change settings or themes.",
+    "A match found: a sonar ping, the tide, you and your opponent either side of a wave (click them to see their profile), then 3-2-1.",
+    "Every game mode starts on the tide and counts down 3-2-1; Sprint and Ultra clocks start at GO.",
+    "Profile cards in your own colours, with Blitz PPS, APM and VS. Full stats on T-Terminal.",
+    "New mode colours; unranked play is gone (private rooms stay). Titles are now bold type.",
+    "Replays: big boards and the controls at the bottom, the same for every mode.",
+  ] },
   { v: "v0.34.0", date: "NOV 2026", title: "REPLAYS YOU CAN HEAR AND SAVE", items: [
     "Replays play the game's sounds, and the menu music fades out while you watch.",
     "SAVE VIDEO: Sprint, Ultra, Marathon and Blitz replays can be saved as a video with sound.",

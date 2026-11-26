@@ -577,6 +577,16 @@ export const sfx = {
     });
   },
 
+  /** A match is found: a sonar ping, and its echo coming back off the deep. */
+  sonar() {
+    play("sonar", 900, (c, t) => {
+      tone(c, t, { wave: "sine", f: 1320, to: 1250, glide: 0.4, vol: 0.2, a: 0.004, d: 1.4, wet: 0.85 });
+      tone(c, t, { wave: "sine", f: 2640, vol: 0.04, a: 0.004, d: 0.5, wet: 0.7 });
+      tone(c, t + 0.55, { wave: "sine", f: 1320, to: 1260, glide: 0.4, vol: 0.06, a: 0.01, d: 1.1, wet: 0.95 });
+      fizz(c, t + 0.1, 5, 0.5, { lo: 500, hi: 1300, vol: 0.03, spread: 0.9 });
+    });
+  },
+
   /** The tide washing over the screen. */
   wipe() {
     play("wipe", 800, (c, t) => {
