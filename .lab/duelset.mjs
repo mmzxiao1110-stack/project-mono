@@ -1,7 +1,7 @@
 // Setup pro vs combo pro, several Blitz games at exactly the same speed.
 //   node .lab/duelset.mjs out.json games pps seedBase
 import fs from "node:fs";
-import { newSprint, place, noteClear, spikeOnMiss, receiveJunk, recordMove, redFull, RED_FLASH_MS, attackLevel } from "../shared/sprint.js";
+import { newSprint, place, noteClear, spikeOnMiss, receiveJunk, recordMove, redFull, RED_FLASH_MS, attackLevel, NAMES, isJunk } from "../shared/sprint.js";
 import { botMoveOP } from "../shared/blitzbot.js";
 import { setupMove, setRules, FREE, setBigBonus } from "./setupbot.mjs";
 import { placesOf, apply } from "./blitzlab.mjs";
@@ -23,7 +23,7 @@ function game(seed, aKind, bKind, maxMs = 240000) {
   const kinds = { A: aKind, B: bKind };
   const st = { A: newSprint(seed, Infinity), B: newSprint(seed, Infinity) };
   const next = { A: DELAY, B: DELAY + 50 }, log = [];
-  const S = { A: { sent: 0, lv: 0, lines: 0, big: 0, maxCombo: 0 }, B: { sent: 0, lv: 0, lines: 0, big: 0, maxCombo: 0 } };
+  const S = { A: { sent: 0, lv: 0, lines: 0, big: 0, maxCombo: 0, clears: {} }, B: { sent: 0, lv: 0, lines: 0, big: 0, maxCombo: 0, clears: {} } };
   const red = { A: 0, B: 0 }, flash = { A: 0, B: 0 };
   const end = (winner, t, reason) => ({ winner, t, reason, log, S, st, kinds });
   for (let t = 0; t < maxMs; t += 10) {
@@ -41,7 +41,8 @@ function game(seed, aKind, bKind, maxMs = 240000) {
       red[s] = 0; flash[s] = 0;
       if (L.lines) {
         noteClear(st[s], L.lines, t, L.allClear, L.id);
-        S[s].lines += L.lines; if (L.lines >= 4) S[s].big++; S[s].maxCombo = Math.max(S[s].maxCombo, st[s].combo);
+        S[s].lines += L.lines; if (L.lines >= 4) S[s].big++;
+        { const k = `${isJunk(a.id) ? "junk" : NAMES[a.id]}|${L.lines}`; S[s].clears[k] = (S[s].clears[k] || 0) + 1; } S[s].maxCombo = Math.max(S[s].maxCombo, st[s].combo);
         red[o] += L.lines; if (!flash[o] && redFull(st[o].board, red[o])) flash[o] = t + RED_FLASH_MS;
       } else {
         const l = spikeOnMiss(st[s]);
@@ -54,7 +55,7 @@ function game(seed, aKind, bKind, maxMs = 240000) {
   return end(null, maxMs, "time");
 }
 
-const N = Number(games), rows = [], recs = [];
+const N = Number(games), rows = [], recs = [], clears = { setup: {}, combo: {} };
 const tot = { setup: { wins: 0, lv: 0, sent: 0, lines: 0, score: 0, big: 0, ms: 0, maxCombo: 0 }, combo: { wins: 0, lv: 0, sent: 0, lines: 0, score: 0, big: 0, ms: 0, maxCombo: 0 } };
 for (let g = 0; g < N; g++) {
   const swap = g % 2 === 1, aKind = swap ? "combo" : "setup", bKind = swap ? "setup" : "combo";
@@ -63,6 +64,7 @@ for (let g = 0; g < N; g++) {
     const k = r.kinds[s], T = tot[k];
     T.lv += r.S[s].lv; T.sent += r.S[s].sent; T.lines += r.S[s].lines; T.score += r.st[s].score; T.big += r.S[s].big; T.ms += r.t; T.maxCombo = Math.max(T.maxCombo, r.S[s].maxCombo);
     if (r.winner === s) T.wins++;
+    for (const [key, n] of Object.entries(r.S[s].clears)) clears[k][key] = (clears[k][key] || 0) + n;
   }
   const kSide = (k) => (r.kinds.A === k ? "A" : "B");
   rows.push(`| ${g + 1} | ${(r.t / 1000).toFixed(0)} s | ${r.winner ? PROS[r.kinds[r.winner]].name : "—"} (${r.reason}) | ${r.S[kSide("setup")].lv} / ${r.S[kSide("combo")].lv} | ${r.st[kSide("setup")].score.toLocaleString("en-US")} / ${r.st[kSide("combo")].score.toLocaleString("en-US")} | ${r.S[kSide("setup")].big} / ${r.S[kSide("combo")].big} |`);
@@ -83,6 +85,7 @@ md += `| Ultra score per minute | ${Math.round(perMin("setup", "score")).toLocal
 md += `| Big clears (4+ lines), total | ${tot.setup.big} | ${tot.combo.big} |\n`;
 md += `| Longest combo | ${tot.setup.maxCombo} | ${tot.combo.maxCombo} |\n\n`;
 md += `| Game | Length | Winner | Junk levels (setup / combo) | Ultra score (setup / combo) | Big clears (setup / combo) |\n| --- | --- | --- | --- | --- | --- |\n${rows.join("\n")}\n`;
+fs.writeFileSync(out.replace(".json", ".clears.json"), JSON.stringify(clears));
 fs.writeFileSync(out, JSON.stringify(recs));
 fs.writeFileSync(out.replace(".json", ".md"), md);
 console.log(md);
