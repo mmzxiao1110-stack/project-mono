@@ -270,7 +270,7 @@ export const T_ID = 2;
 export function attackLevel(lines, { allClear = false, piece = -1, combo = false } = {}) {
   if (!lines) return 0;
   if (allClear) return ALL_CLEAR_LEVELS;
-  if (lines === 1) return combo ? 2 : 1;
+  if (lines === 1) return 0; // a single sends nothing (it still lights the opponent's red squares)
   if (lines === 2) return combo ? 3 : 2;
   if (lines === 3) return 4;
   if (lines === 4) return piece === T_ID ? 8 : 6;
@@ -283,6 +283,29 @@ export function noteClear(st, lines, now, allClear = false, piece = -1) {
   st.spike = combo ? st.spike + add : add;
   st.lastClearAt = now;
 }
+/* ---------- Blitz: red squares (no idling) ----------
+ * Every line you clear lights one of your opponent's empty squares dark red
+ * (one per line, combos don't multiply it). Red fills from the top left in a
+ * zigzag (left to right, then right to left, …) down to the bottom left,
+ * skipping filled squares. Placing a piece clears all your red. If red ever
+ * covers every empty square, it flashes for RED_FLASH_MS and you lose — unless
+ * you place a piece in time.
+ */
+export const RED_FLASH_MS = 1000;
+export const ZIGZAG = Array.from({ length: SIZE }, (_, r) => Array.from({ length: SIZE }, (_, i) => [r, r % 2 ? SIZE - 1 - i : i])).flat();
+/** Which empty squares are red with `count` lit: a Set of r * SIZE + c. */
+export function redCells(board, count) {
+  const out = new Set();
+  if (count <= 0) return out;
+  for (const [r, c] of ZIGZAG) { if (board[r][c] !== null) continue; out.add(r * SIZE + c); if (out.size >= count) break; }
+  return out;
+}
+/** Is every empty square red? */
+export function redFull(board, count) {
+  let empty = 0; for (const row of board) for (const v of row) if (v === null) empty++;
+  return empty > 0 && count >= empty;
+}
+
 /** The junk level to send now (and resets the spike), or 0. */
 export function spikeDue(st, now) {
   if (!st.spike || now - st.lastClearAt <= SPIKE_MS) return 0;

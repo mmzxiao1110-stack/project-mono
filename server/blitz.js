@@ -6,16 +6,19 @@
  *
  * To clients:
  *   blitzStart { id, you, seed, opponent: { name, rating }, countdown }
- *   blitzState { side, board, hand, queue, pieces, lines, spike, sent }
+ *   blitzState { side, board, hand, queue, pieces, lines, spike, sent, red, flash }
+ *              red: how many of side's empty squares are lit red; flash: red covers
+ *              them all and side loses unless they place within RED_FLASH_MS
  *   blitzJunk  { level, at }   junk you received, inserted when you had placed `at` pieces
  *   blitzEnd   { winner, reason, ratings?, sent, seed, log }
  *              log: the match in time order, for the replay. [t, side, slot, rot, r, c]
- *              is a placement, [t, side, -1, level] junk landing in side's queue
+ *              is a placement, [t, side, -1, level] junk landing in side's queue,
+ *              [t, side, -3] side lost to a full red board
  *              (t: ms since the countdown ended).
  *   chat       (as in a Control match)
  */
 import { randomBytes } from "node:crypto";
-import { newSprint, newSprintSeed, place, shapeOf, noteClear, spikeDue, receiveJunk, HAND } from "../shared/sprint.js";
+import { newSprint, newSprintSeed, place, shapeOf, noteClear, spikeDue, receiveJunk, redFull, RED_FLASH_MS, HAND } from "../shared/sprint.js";
 import { glickoUpdate } from "../shared/glicko.js";
 import { saveProfile } from "./store.js";
 import { unref } from "./timers.js";
@@ -52,6 +55,8 @@ export class BlitzMatch {
     this.over = false;
     this.grace = {};
     this.log = [];
+    this.red = { A: 0, B: 0 };
+    this.flash = { A: 0, B: 0 }; // when a full red board runs out, or 0
     this.tally = { A: { sentLv: 0, junkLv: 0 }, B: { sentLv: 0, junkLv: 0 } };
   }
   note(entry) { if (this.log.length < LOG_MAX) this.log.push([Math.max(0, Date.now() - this.startsAt), ...entry]); }
@@ -70,12 +75,19 @@ export class BlitzMatch {
   }
   view(side) {
     const st = this.st[side];
-    return { t: "blitzState", side, board: st.board, hand: st.hand, queue: st.queue.slice(0, 8), pieces: st.pieces, lines: st.lines, spike: st.spike || 0, sent: this.sent[side] };
+    return { t: "blitzState", side, board: st.board, hand: st.hand, queue: st.queue.slice(0, 8), pieces: st.pieces, lines: st.lines, spike: st.spike || 0, sent: this.sent[side], red: this.red[side], flash: !!this.flash[side] };
   }
   broadcast(side) { const v = this.view(side); this.send("A", v); this.send("B", v); }
   tick() {
     if (this.over) return;
     const now = Date.now();
+    // A full red board that ran out without a placement: that player loses.
+    for (const side of ["A", "B"]) {
+      if (this.flash[side] && now >= this.flash[side]) {
+        if (redFull(this.st[side].board, this.red[side])) { this.note([side, -3]); this.end(side, "red"); return; }
+        this.flash[side] = 0;
+      }
+    }
     for (const side of ["A", "B"]) {
       const level = spikeDue(this.st[side], now);
       if (!level) continue;
@@ -105,6 +117,14 @@ export class BlitzMatch {
     if (placing >= 100) this.tally[side].junkLv += placing - 100;
     const L = st.last;
     if (L.lines) noteClear(st, L.lines, Date.now(), L.allClear, L.id);
+    // Placing clears your red; your lines light the opponent's.
+    this.red[side] = 0; this.flash[side] = 0;
+    if (L.lines) {
+      const o = this.other(side);
+      this.red[o] += L.lines;
+      if (!this.flash[o] && redFull(this.st[o].board, this.red[o])) this.flash[o] = Date.now() + RED_FLASH_MS;
+      this.broadcast(o);
+    }
     this.broadcast(side);
     if (st.over) this.end(side, "stuck");
     return null;

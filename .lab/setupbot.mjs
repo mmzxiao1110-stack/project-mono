@@ -11,6 +11,8 @@ const popc = (x) => { let c = 0; while (x) { x &= x - 1; c++; } return c; };
 const toBits = (st) => st.board.map((row) => row.reduce((m, v, j) => (v !== null ? m | (1 << j) : m), 0));
 // I O T S Z J L
 export const MIN_BIG = [4, 4, 4, 5, 5, 5, 5];
+let BIG_BONUS = 0;
+export const setBigBonus = (v) => { BIG_BONUS = v; };
 export const RELAXED = [4, 4, 4, 4, 4, 4, 4];
 let MIN = MIN_BIG;
 export const setRules = (r) => { MIN = r; };
@@ -57,8 +59,10 @@ export function setupMove(st, { depth = 3, width = 30, stats } = {}) {
         const a = apply(n.b, p); if (!a || !allowed(id, a, n.combo)) continue;
         const combo = a.n ? n.combo + 1 : 0;
         const pts = a.n ? Math.round((linePoints(a.n) + (a.empty ? ALL_CLEAR : 0)) * comboMult(combo)) : 0;
+        // Big setups pay much more than their points: (lines - 3)^2 x BIG_BONUS for 4+ lines.
+        const big = a.n >= 4 ? (a.n - 3) * (a.n - 3) * BIG_BONUS : 0;
         const h2 = n.hand.slice(); h2[s] = n.q[0];
-        next.push({ b: a.b, hand: h2, q: n.q.slice(1), combo, score: n.score + pts * Math.pow(0.9, d), first: n.first || { s, p } });
+        next.push({ b: a.b, hand: h2, q: n.q.slice(1), combo, score: n.score + (pts + big) * Math.pow(0.9, d), first: n.first || { s, p } });
       }
     }
     if (!next.length) break;
