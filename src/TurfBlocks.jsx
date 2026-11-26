@@ -5038,8 +5038,10 @@ function ZeroGGame({ onExit }) {
   const cell = Math.max(4 * P, Math.min(16 * P, Math.floor(Math.min((availH - (ZG_SHOW - 1) * g) / ZG_SHOW, fitW) / P) * P));
   const boardW = Z_W * cell + (Z_W - 1) * g;
   const boardH = ZG_SHOW * cell + (ZG_SHOW - 1) * g;
-  const small = Math.max(2 * P, Math.floor(cell * 0.6 / P) * P);
-  const colW = Math.max(small * 4 + 8 * P, Math.round(cell * 4.2), 46 * P);
+  // Hold and next show pieces at board size, in boxes just wide enough for an I with some padding.
+  const pad = 4 * P;
+  const boxW = 4 * cell + 3 * g + 2 * pad;
+  const colW = Math.max(boxW, 46 * P);
   const sideTop = 3 * (cell + g); // the side columns start level with the field's top row
   const sideH = boardH - sideTop;
   const top0 = Z_TOP - 3;
@@ -5050,7 +5052,7 @@ function ZeroGGame({ onExit }) {
   for (const [x, y] of curCells) at.set(y * Z_W + x, "cur");
   const flashRows = new Set(r.flash ? r.flash.rows : []);
   const stat = (label, value, ink = UI.text) => (
-    <div className="flex flex-col" style={{ gap: P }}><span style={{ color: UI.dim }}>{label}</span><span className="tb-b tabular-nums" style={{ color: ink }}>{value}</span></div>
+    <div className="flex flex-col items-end" style={{ gap: P }}><span style={{ color: UI.dim }}>{label}</span><span className="tb-b tabular-nums" style={{ color: ink }}>{value}</span></div>
   );
   const pop = r.pop;
 
@@ -5062,22 +5064,22 @@ function ZeroGGame({ onExit }) {
         <div style={{ flex: 1, minHeight: 2 * P }} />
         <div className="flex items-start">
           {/* Left: hold, flush against the board, then the stats and the last clear. */}
-          <div className="flex flex-col items-start tb-t" style={{ width: colW, gap: 4 * P, marginTop: sideTop, height: sideH, marginRight: side }}>
-            <div className="flex flex-col items-center w-full" style={{ gap: 2 * P, padding: 3 * P, ...glass(UI.line) }}>
+          <div className="flex flex-col items-end text-right tb-t" style={{ width: colW, gap: 4 * P, marginTop: sideTop, height: sideH, marginRight: side }}>
+            <div className="flex flex-col items-center" style={{ width: boxW, gap: 2 * P, padding: pad, ...glass(UI.line) }}>
               <span style={{ color: UI.dim }}>HOLD ({keyOf("hold")})</span>
-              <div className="flex items-center justify-center" style={{ height: small * 2 + P + 2 * P }}>
-                {st.hold !== null && <ZPiece id={st.hold} cell={small} gap={P} dim={st.held} />}
+              <div className="flex items-center justify-center" style={{ height: 2 * cell + g }}>
+                {st.hold !== null && <ZPiece id={st.hold} cell={cell} gap={g} dim={st.held} />}
               </div>
             </div>
-            <div className="flex flex-col w-full" style={{ gap: 3 * P, marginTop: 2 * P, paddingLeft: 3 * P }}>
+            <div className="flex flex-col items-end" style={{ gap: 3 * P, marginTop: 2 * P }}>
               {stat("PIECES", st.pieces)}
               {stat("PPS", pps.toFixed(2))}
               {stat("BEST", best ? fmtClock(best) : "—", GOLD)}
             </div>
             {/* The last clear: its name, the combo, back-to-back. */}
-            <div className="flex flex-col items-start" style={{ gap: P, minHeight: 14 * P, marginTop: 2 * P, paddingLeft: 3 * P }}>
+            <div className="flex flex-col items-end" style={{ gap: P, minHeight: 14 * P, marginTop: 2 * P }}>
               {pop && (
-                <div key={pop.key} className="flex flex-col items-start tb-rise" style={{ gap: P }}>
+                <div key={pop.key} className="flex flex-col items-end tb-rise" style={{ gap: P }}>
                   {pop.b2b > 0 && <span className="tb-b" style={{ color: GOLD }}>B2B ×{pop.b2b}</span>}
                   {pop.name && <span className="tb-b" style={{ color: pop.name.startsWith("T-SPIN") ? S_INK[2] : pop.name === "QUAD" ? S_INK[0] : UI.text, fontSize: "1.2em" }}>{pop.name}</span>}
                   {pop.combo >= 1 && <span className="tb-b" style={{ color: "var(--tb-you)" }}>{pop.combo} COMBO</span>}
@@ -5086,7 +5088,7 @@ function ZeroGGame({ onExit }) {
               )}
             </div>
             {/* The clock and the lines, level with the board's floor. */}
-            <div className="flex flex-col items-start" style={{ marginTop: "auto", gap: P, paddingLeft: 3 * P }}>
+            <div className="flex flex-col items-end" style={{ marginTop: "auto", gap: P }}>
               <span className="tb-b tabular-nums">{Math.min(st.lines, Z_GOAL)} / {Z_GOAL}</span>
               <ZgClock run={run} style={{ fontSize: "1.1em", color: "var(--tb-you)" }} />
             </div>
@@ -5122,11 +5124,11 @@ function ZeroGGame({ onExit }) {
           </div>
           {/* Right: the next five, flush against the board; the buttons in a column at its bottom. */}
           <div className="flex flex-col items-start tb-t" style={{ width: colW, marginTop: sideTop, height: sideH, marginLeft: side }}>
-            <div aria-label="Next pieces" className="flex flex-col items-center w-full" style={{ gap: 3 * P, padding: 3 * P, ...glass(UI.line) }}>
+            <div aria-label="Next pieces" className="flex flex-col items-center" style={{ width: boxW, gap: 2 * P, padding: pad, ...glass(UI.line) }}>
               <span style={{ color: UI.dim }}>NEXT</span>
               {st.queue.slice(0, Z_NEXT).map((id, i) => (
-                <div key={i} role="img" aria-label={`Next ${i + 1}: ${Z_NAMES[id]}`} className="flex items-center justify-center" style={{ height: small * 2 + P, opacity: i ? 0.8 : 1 }}>
-                  <ZPiece id={id} cell={small} gap={P} />
+                <div key={i} role="img" aria-label={`Next ${i + 1}: ${Z_NAMES[id]}`} className="flex items-center justify-center" style={{ height: 2 * cell + g, opacity: i ? 0.8 : 1 }}>
+                  <ZPiece id={id} cell={cell} gap={g} />
                 </div>
               ))}
             </div>
