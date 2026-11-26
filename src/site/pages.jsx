@@ -79,6 +79,8 @@ const NEWS = [
     "You see your opponent's whole side, exactly like yours: hold, next five, their piece moving, their ghost, their stats and clears. Your moves (every shift, turn, hold and drop, timed) are what's sent, so the server plays every piece itself and your opponent's screen replays it exactly as you played it.",
     "Every TOWER match is saved as a replay (REPLAYS, TOWER tab), and there's a TOWER leaderboard on T-Terminal.",
     "BOARD SHADE in ZERO-G's settings: how dark the board is behind the pieces, up to a very dark grey.",
+    "Near the top: when your stack is within 5 rows of the top, the board's top corners pulse dark red and a low stab sounds until you dig out.",
+    "Two new block styles in Theme → Blocks, for every mode: RETRO (chunky old-console bevels) and SAND (a grainy, chalky texture).",
     "TOWER VS BOT: the same against the ZERO-G bot, skill 1–10.",
     "ZERO-G ULTRA: 2 minutes, highest score. Spins and quads pay the most, back-to-back ×1.5, combos add up.",
     "The PLAY menu has three columns now: Blitz on the left, ZERO-G in the middle (TOWER, VS BOT, Sprint, Ultra), Control on the right.",

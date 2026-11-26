@@ -767,6 +767,29 @@ const inkOf = (owner) => (owner === "S" ? { stroke: "cross", dir: 1 } : { stroke
  * `size` is in screen px and should be a whole number of pixels (usePx).
  * `fluid` fills its box instead.
  */
+/**
+ * The SAND texture: 8×8 pixels of grain (light and dark specks, edges a touch
+ * darker), drawn once, laid over a square's colour and scaled up with hard
+ * pixel edges.
+ */
+const SAND_TEX = (() => {
+  if (typeof document === "undefined") return null;
+  try {
+    const n = 8, cv = document.createElement("canvas");
+    cv.width = cv.height = n;
+    const g = cv.getContext("2d");
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+      const edge = x === 0 || y === 0 ? 0.1 : x === n - 1 || y === n - 1 ? -0.16 : 0;
+      const v = (rnd() - 0.5) * 0.34 + edge;
+      g.fillStyle = v >= 0 ? `rgba(255,255,255,${v.toFixed(3)})` : `rgba(0,0,0,${(-v).toFixed(3)})`;
+      g.fillRect(x, y, 1, 1);
+    }
+    return cv.toDataURL();
+  } catch { return null; }
+})();
+
 function Ink({ size, color, stroke, fluid = false, className, style }) {
   const picked = useContext(InkStyle);
   const P = usePx();
@@ -819,6 +842,23 @@ function Ink({ size, color, stroke, fluid = false, className, style }) {
     look = { background: `${dither("rgba(0,0,0,.45)")}, ${rings(art >= 8 ? 3 : art >= 5 ? 2 : 1)}` };
   } else if (kind === "outline") {
     look = { boxShadow: `inset 0 0 0 ${PX} ${c.light}, inset 0 0 0 ${px(2)} ${c.dark}`, background: `color-mix(in srgb, ${color} 14%, transparent)` };
+  } else if (kind === "retro") {
+    // An old console's block: a hard near-black edge, a light top-left bevel, a dark bottom-right one,
+    // a bright corner glint, all in chunky pixels (an eighth of the square each).
+    const u = fluid ? "12.5%" : `${Math.max(P, Math.round(size / 8))}px`;
+    const in1 = `calc(100% - 2 * ${u})`, far = `calc(100% - 2 * ${u})`;
+    look = { background: [
+      layer("rgba(255,255,255,.85)", u, u, u, u),
+      layer(c.light, u, u, in1, u), layer(c.light, u, u, u, in1),
+      layer(c.dark, u, far, in1, u), layer(c.dark, far, u, u, in1),
+      layer(c.base, u, u, in1, in1),
+      "#101015",
+    ].join(", ") };
+  } else if (kind === "sand") {
+    // Chalk / sand: the colour under a grainy pixel noise, like a block in a voxel game.
+    look = SAND_TEX
+      ? { background: `url(${SAND_TEX}) 0 0 / 100% 100% no-repeat, ${c.base}`, imageRendering: "pixelated" }
+      : { background: c.base };
   } else if (kind === "flat") {
     look = { background: `${layer(c.base, 0, 0, `calc(100% - ${PX})`, `calc(100% - ${PX})`)}, ${c.dark}` };
   } else {
@@ -2545,7 +2585,7 @@ function ThemeModal({ theme, setTheme, onClose }) {
       {tab === "blocks" && (
         <div className="pb-2">
           <div className="tb-t mb-2" style={{ color: UI.dim }}>STROKE</div>
-          <div className={`grid grid-cols-3 gap-2 ${wide ? "mb-3" : "mb-5"}`}>
+          <div className={`grid grid-cols-5 gap-2 ${wide ? "mb-3" : "mb-5"}`}>
             {Object.entries(STROKES).map(([k, st]) => {
               const on = theme.stroke === k;
               return (
@@ -4885,6 +4925,12 @@ function ZgClock({ run, style, left = 0 }) {
   return <span ref={el} className="tb-t tb-b tabular-nums" style={style}>{fmtClock(left)}</span>;
 }
 
+/** Is the stack within 5 rows of the top of the field? */
+function zgDanger(board) {
+  for (let y = 0; y < Z_TOP + 5; y++) if (board[y].some((v) => v !== null)) return true;
+  return false;
+}
+
 /**
  * One side of a ZERO-G game, drawn the same way for you and your opponent:
  * hold and stats on the left, the board (piece, ghost, garbage bar, clear
@@ -4900,6 +4946,7 @@ function ZgField({ L, st, stats, pop, bottom, incoming = 0, flash = null, overla
   const landed = !!land && land.y === st.cur.y;
   const at = new Set(land ? zCellsOf(land).map(([x, y]) => y * Z_W + x) : []);
   const flashRows = flash ? flash.rows : [];
+  const danger = zgDanger(st.board);
   return (
     <div className="flex items-start">
       {/* Left: hold, then the stats, the last clear, and the clock at the bottom. */}
@@ -4951,6 +4998,11 @@ function ZgField({ L, st, stats, pop, bottom, incoming = 0, flash = null, overla
           {incoming > 0 && (
             <div className="absolute pointer-events-none" style={{ left: -side - P, width: side + P, bottom: 0, height: Math.min(Z_VISIBLE, incoming) * (cell + g) - g, background: "#E0506A", boxShadow: "0 0 8px rgba(224,80,106,.6)" }} />
           )}
+          {/* Within 5 rows of the top: the board's top corners pulse dark red. */}
+          {danger && ["left", "right"].map((k) => (
+            <div key={k} className="absolute pointer-events-none tb-zgdanger" style={{ top: 2 * (cell + g), [k]: 0, width: boardW * 0.45, height: boardH * 0.3,
+              background: `radial-gradient(ellipse at top ${k}, rgba(175,22,42,.95), rgba(130,14,32,.5) 42%, transparent 75%)` }} />
+          ))}
           {overlay}
         </div>
         <BoardLine width={boardW} />
@@ -5187,6 +5239,15 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
     return () => cancelAnimationFrame(raf);
   }, [bump, versus, online, rec]);
 
+  // Danger (your stack within 5 rows of the top): a low stab, over and over, until you dig out.
+  useEffect(() => {
+    const h = setInterval(() => {
+      const r = run.current;
+      if (!r.result && r.st.cur && r.startAt && zgDanger(r.st.board)) sfx.zgAlarm();
+    }, 650);
+    return () => clearInterval(h);
+  }, []);
+
   // ULTRA: two minutes from the first move.
   useEffect(() => {
     if (mode !== "ultra" || !r.startAt || r.result) return undefined;
@@ -5323,7 +5384,7 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
   // The field: 10 wide, the 20 visible rows plus 2 buffer rows above them, as big as the screen allows.
   const g = P;
   const side = 2 * P; // the small gap between the board and the panels beside it
-  const availH = stage.h - 24 * P - (versus ? 26 * P : 0); // a versus game has its small title on top // the whole height (one row more is kept free above the board for the floating piece)
+  const availH = stage.h - 24 * P - (versus ? 30 * P : 0); // a versus game has its small title on top // the whole height (one row more is kept free above the board for the floating piece)
   const fitW = (stage.w - 24 * P - 9 * g) / (versus ? 40 : 19); // the board, both side columns (and in a versus game the opponent's board) must fit across
   // In a versus game the two boards sit side by side, so each is a little smaller.
   const cell = Math.max(4 * P, Math.min(40 * P, Math.floor(Math.min((availH - ZG_SHOW * g) / (ZG_SHOW + 1) * (versus ? 0.82 : 1), fitW) / P) * P));
@@ -5399,10 +5460,10 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono select-none" style={{ color: UI.text }}>
       <div ref={stageRef} className="relative flex-1 min-h-0 flex flex-col items-center w-full mx-auto px-3" style={{ maxWidth: 1900 }}>
-        {/* TOWER: a small title on top, "competitive" (or "vs bot") in grey under it. Sprint and Ultra: no title. */}
+        {/* TOWER: a small TESELLA on top, "competitive" (or "vs bot") in grey under it. Sprint and Ultra: no title. */}
         {versus && (
-          <div className="flex flex-col items-center shrink-0" style={{ paddingTop: 3 * P, gap: P }}>
-            <span style={{ fontFamily: '"Silkscreen", monospace', fontWeight: 700, fontSize: 12 * P, lineHeight: 1, letterSpacing: P, color: UI.text }}>TOWER</span>
+          <div className="flex flex-col items-center shrink-0" style={{ paddingTop: 7 * P, gap: P }}>
+            <span style={{ fontFamily: '"Silkscreen", monospace', fontWeight: 700, fontSize: 12 * P, lineHeight: 1, letterSpacing: P, color: UI.text }}>TESELLA</span>
             <span className="tb-t" style={{ color: UI.dim, opacity: 0.7, letterSpacing: 2 * P }}>{online ? "COMPETITIVE" : "VS BOT"}</span>
           </div>
         )}
@@ -7786,6 +7847,8 @@ export default function TurfBlocks() {
       /* The end screen's panels rise into place, four pixels in four steps. */
       @keyframes tbRise { from { opacity: 0; transform: translateY(calc(var(--p) * 4)) } to { opacity: 1; transform: none } }
       .tb-rise { animation: tbRise 480ms steps(4) both; }
+      .tb-zgdanger { animation: tbZgDanger 650ms ease-in-out infinite alternate; }
+      @keyframes tbZgDanger { from { opacity: .35; } to { opacity: 1; } }
       .tb-zgflash { background: linear-gradient(90deg, rgba(200,250,255,.0), rgba(220,252,255,.95) 20%, rgba(255,255,255,1) 50%, rgba(220,252,255,.95) 80%, rgba(200,250,255,0)); animation: tbZgFlash 190ms ease-out both; }
       @keyframes tbZgFlash { 0% { opacity: 1; transform: scaleY(1); } 100% { opacity: 0; transform: scaleY(.15); } }
       /* A collision: the square glitches side to side. */
