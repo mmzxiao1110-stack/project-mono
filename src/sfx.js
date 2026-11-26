@@ -372,6 +372,11 @@ function piano(c, t, m, { vol = 0.018, d = 3, pan = 0, wet = 1 } = {}) {
   });
   hiss(c, t, { type: "lowpass", f: 2200, q: 0.7, vol: vol * 0.5, d: 0.025, pan, wet: 0.4 });
 }
+/** The crisp stab: a bright chip A over its third, ringing out under water. */
+function stab(c, t, { vol = 0.036 } = {}) {
+  chip(c, t, za(7, A5), { vol, d: 0.7 });
+  chip(c, t, za(4, A5), { vol: vol * 0.6, d: 0.7 });
+}
 /** A rolled run on the harp through the scale from degree a to b. */
 function harpRun(c, t, a, b, { step = 0.04, base = A3, vol = 0.04, d = 1.4 } = {}) {
   const dir = b >= a ? 1 : -1, n = Math.abs(b - a) + 1;
@@ -560,45 +565,36 @@ export const sfx = {
    */
   zgClear({ lines = 0, spin = null, combo = 0, b2b = 0, allClear = false } = {}) { // every piece's spin sounds the same
     play("zgClear", 30, (c, t) => {
+      // The combo is a scale: A, then one step higher for each clear in a row, peaking on the high A.
       const step = Math.max(0, Math.min(combo, COMBO_TOP));
       const note = za(step, A5);
       // The low harp, by lines.
       if (lines) [0, 4, 7].slice(0, Math.min(lines, 3)).forEach((d, i) => harp(c, t + i * 0.05, za(d, 45), { vol: 0.06, d: 1.8, pan: spread(i, 3) * 0.5 }));
-      // The harp roll up to the combo note, or the fast A to A at the top.
-      if (lines && combo >= 1) {
-        if (step >= COMBO_TOP) harpRun(c, t + 0.04, 0, 7, { step: 0.022, vol: 0.035, d: 1 });
-        else harpRun(c, t + 0.04, 0, step, { step: 0.045, vol: 0.038 });
-      }
-      const special = lines >= 4 || (spin === "full" && lines >= 2);
-      if (!special) {
-        if (lines) chip(c, t, note, { vol: 0.032, d: 0.55 });
-        if (spin === "mini" || (spin && lines <= 1)) {
-          // A small spin: two quick chip blips going up.
-          chip(c, t, za(step + 4, A5), { vol: 0.022, d: 0.12, duty: "p12" });
-          chip(c, t + 0.06, za(step + 7, A5), { vol: 0.022, d: 0.2, duty: "p12" });
-        }
+      // The harp rolls up the scale from A to the combo note, and the chip lands on it as the roll arrives
+      // (at the top: a fast run all the way from A to the high A).
+      let land = t;
+      if (lines && combo >= 1) land = harpRun(c, t + 0.02, 0, step, { base: A5, step: step >= COMBO_TOP ? 0.022 : 0.04, vol: 0.03, d: 1.1 }) - 0.02;
+      if (spin) {
+        // Every spin, any piece: small blips rising into the crisp stab.
+        const big = lines >= 2;
+        const pre = lines >= 3 ? [0, 2, 4] : lines === 2 ? [2, 4] : [4];
+        pre.forEach((d, i) => chip(c, t + i * 0.055, za(d, A5), { vol: 0.024, d: 0.09, duty: "p12" }));
+        const at = t + pre.length * 0.055;
+        stab(c, at, { vol: big ? 0.04 : 0.03 });
+        if (lines >= 3) for (let i = 0; i <= 7; i++) chip(c, at + 0.1 + i * 0.03, za(7 + i, A5), { vol: 0.014, d: 0.12, duty: "p12", pan: spread(i, 8) });
+        if (big) harp(c, at, za(0, 33), { vol: 0.07, d: 2.4 });
+        if (lines) chip(c, land, note, { vol: 0.026, d: 0.55 });
       } else if (lines >= 4) {
-        // The quad: a fast staccato chip arpeggio twice, then a crisp stab.
-        [0, 2, 4, 7, 2, 4, 7, 9].forEach((d, i) => chip(c, t + i * 0.035, za(d, A5), { vol: 0.026, d: 0.08, duty: "p12", pan: spread(i % 4, 4) * 0.6 }));
-        chip(c, t + 0.3, za(7, A5), { vol: 0.036, d: 0.7, steps: za(7, A5) });
-        chip(c, t + 0.3, za(4, A5), { vol: 0.022, d: 0.7 });
-        harp(c, t + 0.3, za(0, 33), { vol: 0.07, d: 2.2 });
-      } else if (lines === 2) {
-        // Spin double: a pitch zip up in console frames, then two crisp stabs.
-        chip(c, t, za(0, 69), { vol: 0.026, d: 0.12, steps: za(7, A5), duty: "p12" });
-        chip(c, t + 0.12, za(4, A5), { vol: 0.034, d: 0.14 });
-        chip(c, t + 0.22, za(7, A5), { vol: 0.036, d: 0.6 });
-        chip(c, t + 0.22, za(14, A5), { vol: 0.012, d: 0.4, duty: "p12" });
-      } else {
-        // Spin triple: three rising stabs, then a sparkling cascade falling from high A.
-        [2, 4, 7].forEach((d, i) => chip(c, t + i * 0.09, za(d, A5), { vol: 0.034, d: i === 2 ? 0.5 : 0.1 }));
-        for (let i = 0; i < 10; i++) chip(c, t + 0.3 + i * 0.03, za(14 - i, A5), { vol: 0.016, d: 0.12, duty: "p12", pan: spread(i, 10) });
-        harp(c, t + 0.27, za(0, 33), { vol: 0.07, d: 2.4 });
+        // The quad: a fast staccato chip run straight up the scale to the high A.
+        for (let i = 0; i <= 7; i++) chip(c, t + i * 0.035, za(i, A5), { vol: 0.026, d: i === 7 ? 0.6 : 0.08, duty: "p12", pan: spread(i, 8) * 0.6 });
+        harp(c, t + 0.25, za(0, 33), { vol: 0.07, d: 2.2 });
+      } else if (lines) {
+        chip(c, land, note, { vol: 0.032, d: 0.55 });
       }
       if (lines) {
         fizz(c, t + 0.02, 2 + Math.min(lines, 4), 0.18, { lo: 450, hi: 1400, vol: 0.045 });
         // The piano, far back: a chord tone two octaves over the harp.
-        piano(c, t + 0.08, za([4, 2, 0, 7][Math.min(lines, 4) - 1] + step, 81), { vol: 0.014 });
+        piano(c, land + 0.02, za(step + 7, A5), { vol: 0.014 }); // the combo note again, an octave up
       }
       if (b2b > 0) chip(c, t + 0.12, za(14, A5), { vol: 0.012, d: 0.6, duty: "p12" });
       if (allClear) {
