@@ -56,7 +56,7 @@ const BASE = NAMES.map((n) => {
   }
   return { spawn: [r0, c0], shapes: out };
 });
-export const shapeOf = (id, rot = 0) => BASE[id].shapes[((rot % 4) + 4) % 4];
+export const shapeOf = (id, rot = 0) => (id >= 100 ? junkShape(id, ((rot % 4) + 4) % 4) : BASE[id].shapes[((rot % 4) + 4) % 4]);
 
 /* ---------- seeded 7-bag ---------- */
 
@@ -100,8 +100,10 @@ export function newSprint(seed, goal = GOAL) {
  */
 export function spawn(st, slot) {
   const id = st.hand[slot];
-  const b = BASE[id], s = b.shapes[0];
-  return { slot, id, rot: 0, cr: b.spawn[0] + s.h / 2, cc: b.spawn[1] + s.w / 2 };
+  const s = shapeOf(id, 0);
+  // Junk spawns in the middle of the board; tetrominoes where SPAWN puts them.
+  const at = id >= 100 ? [Math.floor((SIZE - s.h) / 2), Math.floor((SIZE - s.w) / 2)] : BASE[id].spawn;
+  return { slot, id, rot: 0, cr: at[0] + s.h / 2, cc: at[1] + s.w / 2 };
 }
 /** The squares a piece would cover around its centre, without keeping it on the board. */
 function rawCells(a) {
@@ -197,4 +199,79 @@ export function place(st, a) {
   if (st.lines >= st.goal) { st.over = true; st.won = true; }
   else if (!anyFits(st)) st.over = true;
   return st;
+}
+
+/* ============================================================
+   BLITZ 1v1: junk pieces
+   ============================================================ */
+
+/**
+ * A junk piece grows with the attack's level, like a tumour, from the middle out:
+ *   1 one square · 2 two diagonal · 3 a small L · 4 a 2×2
+ *   5–8   a diagonal spike at each corner, one at a time, counter-clockwise
+ *         (top-left, bottom-left, bottom-right, top-right): 5 is the kite
+ *   9–12  the gaps between the spikes filled, one side at a time → 4×4
+ *   then the same again around that: spikes 13–16, sides 17–20 → 6×6,
+ *   spikes 21–24, sides 25–28 → 8×8 (the most it can grow).
+ * Junk ids are JUNK + level, so a board square remembers what it was.
+ */
+export const JUNK = 100;
+export const JUNK_MAX = 28;
+export const isJunk = (id) => id >= JUNK;
+export const junkLevel = (id) => id - JUNK;
+export function junkCells(level) {
+  const L = Math.max(1, Math.min(JUNK_MAX, level));
+  const cells = [[3, 3]];
+  if (L >= 2) cells.push([4, 4]);
+  if (L >= 3) cells.push([4, 3]);
+  if (L >= 4) cells.push([3, 4]);
+  let lv = 4;
+  for (let r = 1; r <= 3 && lv < L; r++) {
+    const lo = 3 - r, hi = 4 + r;
+    for (const c of [[lo, lo], [hi, lo], [hi, hi], [lo, hi]]) { if (lv >= L) break; cells.push(c); lv++; }
+    const sides = [
+      Array.from({ length: hi - lo - 1 }, (_, i) => [lo + 1 + i, lo]),
+      Array.from({ length: hi - lo - 1 }, (_, i) => [hi, lo + 1 + i]),
+      Array.from({ length: hi - lo - 1 }, (_, i) => [lo + 1 + i, hi]),
+      Array.from({ length: hi - lo - 1 }, (_, i) => [lo, lo + 1 + i]),
+    ];
+    for (const side of sides) { if (lv >= L) break; cells.push(...side); lv++; }
+  }
+  const r0 = Math.min(...cells.map((c) => c[0])), c0 = Math.min(...cells.map((c) => c[1]));
+  return cells.map(([r, c]) => [r - r0, c - c0]);
+}
+const junkShapes = new Map();
+function junkShape(id, rot) {
+  const k = `${id}:${rot}`;
+  if (!junkShapes.has(k)) {
+    let cells = junkCells(junkLevel(id));
+    let h = Math.max(...cells.map((c) => c[0])) + 1, w = Math.max(...cells.map((c) => c[1])) + 1;
+    for (let i = 0; i < rot; i++) { cells = cells.map(([r, c]) => [c, h - 1 - r]); [h, w] = [w, h]; }
+    junkShapes.set(k, { cells, h, w });
+  }
+  return junkShapes.get(k);
+}
+
+/**
+ * A spike: clears that come within SPIKE_MS of the one before (pieces that
+ * clear nothing in between don't break it). Each clear adds its lines to the
+ * level. When the spike ends, one junk piece of that level goes to the
+ * opponent, into their forecast right after the five they can see.
+ */
+export const SPIKE_MS = 500;
+export function noteClear(st, lines, now) {
+  if (!lines) return;
+  st.spike = st.spike && now - st.lastClearAt <= SPIKE_MS ? st.spike + lines : lines;
+  st.lastClearAt = now;
+}
+/** The junk level to send now (and resets the spike), or 0. */
+export function spikeDue(st, now) {
+  if (!st.spike || now - st.lastClearAt <= SPIKE_MS) return 0;
+  const level = Math.min(JUNK_MAX, st.spike);
+  st.spike = 0;
+  return level;
+}
+/** A junk piece arriving: into the forecast, just after the five on show. */
+export function receiveJunk(st, level) {
+  st.queue.splice(Math.min(FORECAST, st.queue.length), 0, JUNK + level);
 }
