@@ -365,6 +365,7 @@ export function applyOp(st, op) {
     case "f": return rotate(st, 2);
     case "h": return hold(st);
     case "H": return !!hardDrop(st);
+    case "P": return !!applyLock(st, op[2]); // a whole placement at once (the bot's, in a local replay)
     default: return false;
   }
 }

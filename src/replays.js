@@ -3,7 +3,7 @@
  * shared/replay.js), so the newest MAX are kept and older ones drop off.
  */
 const KEY = "tb:replays";
-const MAX = 40;
+const MAX = 250;
 
 function read() {
   try {
@@ -11,8 +11,12 @@ function read() {
     return Array.isArray(list) ? list : [];
   } catch { return []; }
 }
+/** Saves the list; if the browser's storage is full, the oldest replays make room until it fits. */
 function write(list) {
-  try { localStorage.setItem(KEY, JSON.stringify(list)); } catch { /* full or private mode: keep what fits */ }
+  for (let keep = list.length; keep > 0; keep = Math.floor(keep * 0.9)) {
+    try { localStorage.setItem(KEY, JSON.stringify(list.slice(0, keep))); if (keep < list.length) list.length = keep; return; }
+    catch { /* too big: try with fewer */ }
+  }
 }
 
 const listeners = new Set();

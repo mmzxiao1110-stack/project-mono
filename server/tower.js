@@ -59,11 +59,11 @@ export class TowerMatch {
   send(side, msg) { const s = this.seats[side].socket; if (s && s.readyState === 1) s.send(JSON.stringify(msg)); }
   hello(side, resume = false) {
     const o = this.seats[this.other(side)].profile;
-    this.send(side, { t: "towerStart", id: this.id, you: side, seed: this.seed, countdown: Math.max(0, this.startsAt - Date.now()), resume,
+    this.send(side, { t: "towerStart", id: this.id, you: side, seed: this.seed, countdown: Math.max(0, this.startsAt - Date.now()), resume, room: this.room || null,
       opponent: { name: o.name, guest: !!o.guest, rating: o.tower?.rating ? Math.round(o.tower.rating.r) : null } });
   }
-  start() {
-    this.startsAt = Date.now() + COUNTDOWN_MS;
+  start(countdown = COUNTDOWN_MS) {
+    this.startsAt = Date.now() + countdown;
     this.hello("A"); this.hello("B");
   }
   board(side, fix = false) {
@@ -138,7 +138,7 @@ export class TowerMatch {
         ratings[side] = { before: Math.round(before.r), after: Math.round(next[side].r), rdBefore: Math.round(before.rd), rdAfter: Math.round(next[side].rd) };
       }
     }
-    for (const side of ["A", "B"]) this.send(side, { t: "towerEnd", id: this.id, winner, you: side, reason, ratings, sent: this.sent, seed: this.seed, log: this.log,
+    for (const side of ["A", "B"]) this.send(side, { t: "towerEnd", id: this.id, winner, you: side, reason, ratings, rated: this.rated, sent: this.sent, seed: this.seed, log: this.log,
       names: { A: this.seats.A.profile.name, B: this.seats.B.profile.name } });
     this.onEnd(this);
   }
