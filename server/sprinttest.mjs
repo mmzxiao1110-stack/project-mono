@@ -3,17 +3,18 @@
 //   node server/sprinttest.mjs
 const S = await import("../shared/sprint.js");
 const ok = (c, w) => { console.log((c ? "PASS " : "FAIL ") + w); if (!c) process.exitCode = 1; };
-const key = (cells) => cells.map(([r, c]) => r * 7 + c).sort((a, b) => a - b).join(",");
+const key = (cells) => cells.map(([r, c]) => r * S.SIZE + c).sort((a, b) => a - b).join(",");
 
-const SPAWNS = { I: "10,17,24,31", O: "17,18,24,25", T: "16,17,18,24", S: "17,18,23,24", Z: "16,17,24,25", J: "17,24,30,31", L: "17,24,31,32" };
-for (const [i, n] of S.NAMES.entries()) ok(key(S.cellsOf(S.spawn({ hand: [i] }, 0))) === SPAWNS[n], `${n} spawns in the middle as specified`);
+const N = S.SIZE;
+const SPAWNS = { I: [[4,3],[4,4],[4,5],[4,6]], O: [[4,4],[4,5],[5,4],[5,5]], T: [[4,3],[4,4],[4,5],[5,4]], S: [[4,4],[4,5],[5,3],[5,4]], Z: [[4,3],[4,4],[5,4],[5,5]], J: [[4,3],[5,3],[5,4],[5,5]], L: [[4,5],[5,3],[5,4],[5,5]] };
+for (const [i, n] of S.NAMES.entries()) ok(key(S.cellsOf(S.spawn({ hand: [i] }, 0))) === key(SPAWNS[n]), `${n} spawns flat in the middle`);
 
 let bad = 0;
 for (let id = 0; id < 7; id++) for (const [dr, dc] of [[0, 0], [0, -1], [0, 1], [-1, 0], [1, 0], [-1, -1], [-1, 1], [1, -1], [1, 1]]) for (let k = 0; k < 4; k++) {
   let a = S.shift(S.spawn({ hand: [id] }, 0), dr, dc, true);
   for (let i = 0; i < k; i++) a = S.turn(a, 1);
   const start = key(S.cellsOf(a));
-  for (const dir of [1, -1]) { let t = a; for (let i = 0; i < 4; i++) { t = S.turn(t, dir); if (!S.cellsOf(t).every(([r, c]) => r >= 0 && c >= 0 && r < 7 && c < 7)) bad++; } if (key(S.cellsOf(t)) !== start) bad++; }
+  for (const dir of [1, -1]) { let t = a; for (let i = 0; i < 4; i++) { t = S.turn(t, dir); if (!S.cellsOf(t).every(([r, c]) => r >= 0 && c >= 0 && r < N && c < N)) bad++; } if (key(S.cellsOf(t)) !== start) bad++; }
   if (key(S.cellsOf(S.turn(S.turn(a, 1), -1))) !== start) bad++;
 }
 ok(bad === 0, "turning stays on the board and never drifts (centre, edges, corners)");
@@ -32,12 +33,12 @@ function best(st) {
   let b = null;
   for (let slot = 0; slot < S.HAND; slot++) for (let rot = 0; rot < 4; rot++) {
     const s = S.shapeOf(st.hand[slot], rot);
-    for (let r = 0; r + s.h <= 7; r++) for (let c = 0; c + s.w <= 7; c++) {
+    for (let r = 0; r + s.h <= N; r++) for (let c = 0; c + s.w <= N; c++) {
       if (!s.cells.every(([dr, dc]) => st.board[r + dr][c + dc] === null)) continue;
       const bb = st.board.map((row) => row.map((v) => v !== null)); for (const [dr, dc] of s.cells) bb[r + dr][c + dc] = true;
       let lines = 0, holes = 0;
-      for (let i = 0; i < 7; i++) { if (bb[i].every(Boolean)) lines++; if (bb.every((row) => row[i])) lines++; }
-      for (let i = 0; i < 7; i++) for (let j = 0; j < 7; j++) if (!bb[i][j]) { let n = 0; for (const [x, y] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const ii = i + x, jj = j + y; if (ii < 0 || jj < 0 || ii > 6 || jj > 6 || bb[ii][jj]) n++; } if (n >= 3) holes++; }
+      for (let i = 0; i < N; i++) { if (bb[i].every(Boolean)) lines++; if (bb.every((row) => row[i])) lines++; }
+      for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) if (!bb[i][j]) { let n = 0; for (const [x, y] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const ii = i + x, jj = j + y; if (ii < 0 || jj < 0 || ii >= N || jj >= N || bb[ii][jj]) n++; } if (n >= 3) holes++; }
       const score = lines * 50 - holes * 3 + Math.random();
       if (!b || score > b.score) b = { score, slot, rot, r, c, s };
     }
