@@ -3918,8 +3918,11 @@ function MarathonGame({ theme, onExit }) {
                   </div>
                   {vanish && <VanishLayer key={vanish.key} cleared={vanish.cleared} cell={cell} gap={g} ink={M_INK} />}
                   {flash && (
-                    <div key={flash.key} className="absolute flex pointer-events-none tb-rise" style={{ left: 0, bottom: -11 * P, zIndex: 4 }}>
-                      <span className="tb-t tb-b" style={{ color: GOLD, textShadow: `${P}px ${P}px 0 rgba(0,0,0,.6)` }}>{flash.text}</span>
+                    // Phones have the tray right under the board, so the points pop up on the board instead.
+                    <div key={flash.key} className="absolute flex pointer-events-none tb-rise"
+                      style={compact ? { left: 0, right: 0, bottom: 4 * P, justifyContent: "center", zIndex: 4 } : { left: 0, bottom: -11 * P, zIndex: 4 }}>
+                      <span className="tb-t tb-b" style={{ color: GOLD, textShadow: `${P}px ${P}px 0 rgba(0,0,0,.6)`,
+                        ...(compact ? { padding: `${P}px ${3 * P}px`, background: "color-mix(in srgb, var(--tb-panel-solid) 82%, transparent)", clipPath: CLIP1 } : null) }}>{flash.text}</span>
                     </div>
                   )}
                   {levelUp && (
@@ -3933,7 +3936,8 @@ function MarathonGame({ theme, onExit }) {
                       </div>
                     </div>
                   )}
-                  {st.combo > 1 && !over && (
+                  {/* The streak steps aside while a clear's points show: on a phone they'd overlap. */}
+                  {st.combo > 1 && !over && !flash && (
                     <div className="absolute tb-t" style={{ right: 0, bottom: -11 * P, color: GOLD, opacity: 0.8 }}>STREAK ×{st.combo}</div>
                   )}
                 </div>
