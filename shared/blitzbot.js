@@ -1,6 +1,7 @@
 /**
  * The Blitz bot, shared by VS BOT (in the browser) and simulations.
- * skill 1..10 sets both its speed (1 piece per 2 s at 1, 2 a second at 10)
+ * skill 1..10 sets both its speed (on average 0.6 pieces a second at 1, 3 at 10,
+ * at an uneven, human pace)
  * and how well it plays: at the top it looks two placements ahead, goes for
  * combos and big spikes (3s, 4s, T set-ups, all clears), and only takes a
  * lone single line to dig out when its board is in danger (downstacking).
@@ -8,15 +9,19 @@
 import { SIZE, shapeOf, attackLevel, SPIKE_MS } from "./sprint.js";
 
 const N = SIZE, FULL = (1 << N) - 1;
-export const botPps = (skill) => 0.5 + (Math.max(1, Math.min(10, skill)) - 1) * (1.5 / 9);
+export const botPps = (skill) => 0.6 + (Math.max(1, Math.min(10, skill)) - 1) * (2.4 / 9);
 /**
  * Milliseconds until the bot's next placement. A skilled bot speeds up while
  * a combo is open (like a human chasing the 500 ms window), then rests.
  */
-export function botDelay(st, skill) {
+export function botDelay(st, skill, rand = Math.random) {
   const base = 1000 / botPps(skill);
-  if (skill >= 6 && st.botComboOpen) return Math.min(base, 380 - (skill - 6) * 30);
-  return base;
+  // Chasing a combo: quick, but not metronome-quick.
+  if (skill >= 6 && st.botComboOpen) return Math.round(Math.min(base * 0.55, 300 - (skill - 6) * 25) * (0.8 + rand() * 0.4));
+  // Otherwise an uneven rhythm: mostly quick placements, now and then a
+  // longer think. Averages out to `base`.
+  const f = rand() < 0.18 ? 1.4 + rand() : 0.5 + rand() * 0.7;
+  return Math.max(120, Math.round(base * f));
 }
 const popc = (x) => { let c = 0; while (x) { x &= x - 1; c++; } return c; };
 
@@ -86,6 +91,17 @@ export function botMove(st, skill = 10, rand = Math.random) {
   const comboOpen = chains && !!st.botComboOpen;
   const b = st.board.map((row) => row.reduce((m, v, j) => (v !== null ? m | (1 << j) : m), 0));
   const danger = shape(b).filled > N * N * 0.55;
+  // The first piece goes anywhere it fits, at random: two bots with the same
+  // pieces then play different games. After that it plays its best.
+  if (!st.pieces) {
+    const all = [];
+    for (let s = 0; s < 2; s++) for (const p of placesOf(st.hand[s])) if (apply(b, p)) all.push({ s, p });
+    if (all.length) {
+      const { s, p } = all[Math.floor(rand() * all.length)];
+      st.botComboOpen = false;
+      return { slot: s, id: st.hand[s], rot: p.rot, cr: p.r + p.h / 2, cc: p.c + p.w / 2 };
+    }
+  }
   let best = null;
   for (let s = 0; s < 2; s++) for (const p of placesOf(st.hand[s])) {
     const a = apply(b, p); if (!a) continue;

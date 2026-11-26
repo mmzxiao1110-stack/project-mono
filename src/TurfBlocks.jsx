@@ -3177,7 +3177,7 @@ function HowToModal({ colors, loadout, onClose }) {
           <span className="tb-b" style={{ color: UI.text }}>VS BOT</span>
         </div>
       ),
-      body: "BLITZ is ranked 1v1 online, with its own rating on T-Terminal; the server checks every placement. VS BOT is the same game against a bot from skill 1 (a piece every two seconds) to 10 (two a second, and it hunts combos). Every match is saved in REPLAYS.",
+      body: "BLITZ is ranked 1v1 online, with its own rating on T-Terminal; the server checks every placement. VS BOT is the same game against a bot from skill 1 (about one piece every two seconds) to 10 (about three a second, and it hunts combos). Every match is saved in REPLAYS.",
     },
   ];
   const list = mode === "blitz" ? blitzPages : pages;
@@ -4898,11 +4898,11 @@ function BlitzGame({ onExit, online = false, colors }) {
             <button onClick={onExit} className="tb-t px-4" style={{ height: 38, ...sk(UI.line), color: UI.dim }}>CANCEL</button>
           </div>
         ) : (
-          // The bot's skill: 1 (a piece every 2 s, careless) to 10 (2 a second, hunts big spikes).
+          // The bot's skill: 1 (~0.6 a second, careless) to 10 (~3 a second, hunts big spikes).
           <div className="flex flex-col items-center tb-t" style={{ gap: 4 * P, width: 300 }}>
             <div className="flex items-baseline justify-between w-full"><span style={{ color: UI.dim }}>BOT SKILL</span><span className="tb-b" style={{ color: "#F29A4A" }}>{skill}</span></div>
             <PixelSlider min={1} max={10} value={skill} onChange={setSkill} ink="#F29A4A" label="Bot skill" className="w-full" />
-            <span style={{ color: UI.dim }}>{botPps(skill).toFixed(2)} pieces a second · {skill >= 8 ? "hunts combos and big spikes" : skill >= 5 ? "looks ahead" : "plays loosely"}</span>
+            <span style={{ color: UI.dim }}>about {botPps(skill).toFixed(1)} pieces a second · {skill >= 8 ? "hunts combos and big spikes" : skill >= 5 ? "looks ahead" : "plays loosely"}</span>
             <button onClick={startBot} className="tb-t px-6" style={{ height: 40, ...skFill("#F29A4A"), color: UI.text }}>START</button>
           </div>
         )}
