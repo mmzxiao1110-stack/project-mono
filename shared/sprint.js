@@ -257,17 +257,30 @@ function junkShape(id, rot) {
  * clear nothing in between don't break it). Each clear adds its lines to the
  * level. When the spike ends, one junk piece of that level goes to the
  * opponent, into their forecast right after the five they can see.
- * Levels add up linearly: a 4-line clear is 4, another 4 in the same
- * spike makes 8. An ALL CLEAR (the board left empty) counts as 10 on its
- * own, or adds 10 to the spike it ends. Single lines send single squares
- * ("cheese"): legal, but weak, and they can help the opponent.
+ * What each clear adds to the spike (they add up linearly):
+ *   1 line 1 (2 inside a combo) · 2 lines 2 (3 in a combo) · 3 lines 4
+ *   4 lines 6, or 8 if a T piece made them (the T set-up)
+ *   5+ lines 6 + 2 a line over 4 · an ALL CLEAR 12 (whatever the lines)
+ * Single lines send single squares ("cheese"): legal, weak, and they can
+ * even help the opponent.
  */
 export const SPIKE_MS = 500;
-export const ALL_CLEAR_LEVELS = 10;
-export function noteClear(st, lines, now, allClear = false) {
+export const ALL_CLEAR_LEVELS = 12;
+export const T_ID = 2;
+export function attackLevel(lines, { allClear = false, piece = -1, combo = false } = {}) {
+  if (!lines) return 0;
+  if (allClear) return ALL_CLEAR_LEVELS;
+  if (lines === 1) return combo ? 2 : 1;
+  if (lines === 2) return combo ? 3 : 2;
+  if (lines === 3) return 4;
+  if (lines === 4) return piece === T_ID ? 8 : 6;
+  return 6 + 2 * (lines - 4);
+}
+export function noteClear(st, lines, now, allClear = false, piece = -1) {
   if (!lines) return;
-  const add = allClear ? ALL_CLEAR_LEVELS : lines;
-  st.spike = st.spike && now - st.lastClearAt <= SPIKE_MS ? st.spike + add : add;
+  const combo = !!st.spike && now - st.lastClearAt <= SPIKE_MS;
+  const add = attackLevel(lines, { allClear, piece, combo });
+  st.spike = combo ? st.spike + add : add;
   st.lastClearAt = now;
 }
 /** The junk level to send now (and resets the spike), or 0. */

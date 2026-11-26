@@ -323,6 +323,12 @@ class Net {
 
   /** Marathon: ask for a seed (the server checks the finished game against it). */
   marathonStart() { this.send({ t: "marathonStart" }); }
+  /* ---------- Blitz 1v1 ---------- */
+  blitzQueue() { this.blitz = null; this.send({ t: "blitzQueue" }); }
+  blitzCancel() { this.send({ t: "unqueue" }); }
+  blitzPlace(slot, rot, r, c) { this.send({ t: "blitzPlace", slot, rot, r, c }); }
+  patchBlitz(p) { this.blitz = { ...(this.blitz || {}), ...p }; this.emit("blitz", this.blitz); }
+
   /** Sprint/Ultra: ask for a seed (the finished run is replayed against it to rank it). */
   soloStart(mode) { this.send({ t: "soloStart", mode }); }
   soloEnd(mode, seed, moves) { this.send({ t: "soloEnd", mode, seed, moves }); }
@@ -483,6 +489,27 @@ class Net {
         }
         break;
 
+      case "blitzStart":
+        this.blitz = { id: m.id, you: m.you, seed: m.seed, countdown: m.countdown, opponent: m.opponent, resume: !!m.resume, chat: this.blitz?.id === m.id ? this.blitz.chat : [], chatError: null, over: false, got: Date.now() };
+        this.emit("blitzStart", this.blitz);
+        this.emit("blitz", this.blitz);
+        break;
+      case "blitzState":
+        this.emit("blitzState", m);
+        break;
+      case "blitzJunk":
+        this.emit("blitzJunk", m);
+        break;
+      case "blitzEnd":
+        if (this.blitz) this.patchBlitz({ over: true });
+        if (m.ratings && this.profile) {
+          const after = m.ratings[m.you]?.after;
+          this.profile = { ...this.profile, blitz: { ...(this.profile.blitz || {}), rating: { ...(this.profile.blitz?.rating || {}), r: after } } };
+          this.emit("profile", this.profile);
+        }
+        this.emit("blitzEnd", m);
+        break;
+
       case "soloSeed":
         this.emit("soloSeed", m);
         break;
@@ -621,12 +648,19 @@ class Net {
         break;
 
       case "chat":
+        // A Blitz match has its own chat.
+        if (this.blitz && !this.blitz.over) {
+          if (this.isBlocked(m.name) && this.blitz.you !== m.side) break;
+          this.patchBlitz({ chat: [...(this.blitz.chat || []), { side: m.side, name: m.name, text: m.text, at: m.at, got: Date.now() }].slice(-60), chatError: null });
+          break;
+        }
         // Lines from someone you blocked are dropped here too (the server already stops them).
         if (this.match && this.isBlocked(m.name) && this.match.you !== m.side) break;
         if (this.match) this.patch({ chat: [...(this.match.chat || []), { side: m.side, name: m.name, text: m.text, at: m.at, got: Date.now() }].slice(-60), chatError: null });
         break;
 
       case "chatError":
+        if (this.blitz && !this.blitz.over) { this.patchBlitz({ chatError: m.msg }); break; }
         if (this.match) this.patch({ chatError: m.msg });
         break;
 
