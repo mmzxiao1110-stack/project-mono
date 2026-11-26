@@ -2,12 +2,13 @@
  * SPRINT — clear 40 lines as fast as you can. Keyboard only.
  *
  *   The 7×7 board, the seven tetrominoes from a shuffled 7-bag (each one
- *   once per bag). You hold three and see a fourth, the forecast: the piece
- *   you place is replaced by the forecast, and a new forecast comes from the
- *   bag. Pick a piece and it appears in the middle of the board; move it,
- *   turn it, place it. Nothing falls. Full rows and columns clear, like
- *   Marathon; each counts as a line. 40 lines stops the clock. If none of
- *   your three pieces fits anywhere, turned any way, the run is over.
+ *   once per bag). You hold two and see the next three: the piece you place
+ *   is replaced by the first of those, and a new one joins the end from the
+ *   bag. One of your two is always in play, in the middle of the board; swap
+ *   to the other with one key. Move it, turn it, place it. Nothing falls.
+ *   Full rows and columns clear, like Marathon; each counts as a line.
+ *   40 lines stops the clock. If neither piece fits anywhere, turned any
+ *   way, the run is over.
  *
  * Every piece spawns in one fixed way, symmetric about the middle column
  * where it can be: I upright, T as a T, J and L with the long stem in the
@@ -15,7 +16,8 @@
  */
 
 export const SIZE = 7;
-export const HAND = 3;
+export const HAND = 2;
+export const FORECAST = 3;
 export const GOAL = 40;
 export const NAMES = ["I", "O", "T", "S", "Z", "J", "L"];
 
@@ -71,10 +73,10 @@ export function newSprint(seed) {
   const st = {
     seed, rand: rng(seed), bag: [],
     board: Array.from({ length: SIZE }, () => Array(SIZE).fill(null)),
-    hand: [], next: null, lines: 0, pieces: 0, over: false, won: false,
+    hand: [], queue: [], lines: 0, pieces: 0, over: false, won: false,
   };
   for (let i = 0; i < HAND; i++) st.hand.push(draw(st));
-  st.next = draw(st);
+  for (let i = 0; i < FORECAST; i++) st.queue.push(draw(st));
   return st;
 }
 
@@ -155,7 +157,7 @@ export function anyFits(st) {
 /**
  * Places the moving piece. Mutates and returns `st` with `st.last`
  * ({ cells, cleared, lines }), or null if it doesn't fit. The used slot takes
- * the forecast; the forecast takes the next piece from the bag.
+ * the first forecast piece; a new one from the bag joins the end.
  */
 export function place(st, a) {
   if (st.over || !canPlace(st, a)) return null;
@@ -173,8 +175,8 @@ export function place(st, a) {
   for (const [r, c] of cleared) st.board[r][c] = null;
   st.lines += rows.length + cols.length;
   st.pieces += 1;
-  st.hand[a.slot] = st.next;
-  st.next = draw(st);
+  st.hand[a.slot] = st.queue.shift();
+  st.queue.push(draw(st));
   st.last = { cells, cleared, lines: rows.length + cols.length, id: a.id };
   if (st.lines >= GOAL) { st.over = true; st.won = true; }
   else if (!anyFits(st)) st.over = true;

@@ -9,15 +9,14 @@
 const KEY = "tb:sprintKeys";
 
 export const SPRINT_ACTIONS = [
-  { id: "slot1", label: "Piece 1", def: "a" },
-  { id: "slot2", label: "Piece 2", def: "s" },
-  { id: "slot3", label: "Piece 3", def: "d" },
+  { id: "swap", label: "Swap", def: "c" },
   { id: "left", label: "Left", def: "ArrowLeft" },
   { id: "right", label: "Right", def: "ArrowRight" },
   { id: "up", label: "Up", def: "ArrowUp" },
   { id: "down", label: "Down", def: "ArrowDown" },
   { id: "ccw", label: "Rotate L", def: "z" },
   { id: "cw", label: "Rotate R", def: "x" },
+  { id: "r180", label: "Rotate 180", def: "a" },
   { id: "place", label: "Place", def: " " },
   { id: "retry", label: "Retry", def: "r" },
   { id: "forfeit", label: "Forfeit", def: "Escape" },

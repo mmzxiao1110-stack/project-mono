@@ -4157,7 +4157,8 @@ function SprintKeysModal({ onClose }) {
 
 /** A copy of a Sprint game to change (the bag's random source is shared: it only moves forward). */
 const cloneSprint = (st) => ({ ...st, board: st.board.map((row) => row.slice()), hand: st.hand.slice(), bag: st.bag.slice() });
-const freshSprint = () => ({ st: newSprint(newSprintSeed()), act: null, startAt: 0, endAt: 0, result: null, newBest: false, vanish: null });
+// A piece is always in play: the first of your two, in the middle, from the start.
+const freshSprint = () => { const st = newSprint(newSprintSeed()); return { st, act: sSpawn(st, 0), startAt: 0, endAt: 0, result: null, newBest: false, vanish: null }; };
 
 function SprintGame({ onExit }) {
   useGameMusic();
@@ -4207,8 +4208,9 @@ function SprintGame({ onExit }) {
   }, []);
   // Places the piece in play (Space, or a click in mouse mode).
   const placeNow = useCallback(() => {
-    const cur = live.current;
+    let cur = live.current;
     if (cur.result || !cur.act) return;
+    if (!cur.startAt) cur = { ...cur, startAt: performance.now() };
     if (!sCanPlace(cur.st, cur.act)) { sfx.illegal(); return; }
     const st = cloneSprint(cur.st);
     const slot = cur.act.slot;
@@ -4221,8 +4223,9 @@ function SprintGame({ onExit }) {
       vanish = { cleared: L.cleared, key: st.pieces };
       setTimeout(() => { const c = live.current; if (c.vanish && c.vanish.key === st.pieces) commit({ ...c, vanish: null }); }, 650);
     }
-    // With the mouse, the slot you used is picked straight back up (it now holds the forecast piece).
-    const act = getSprintKeys().mode === "mouse" && !st.over ? toMouse(sSpawn(st, slot)) : null;
+    // The slot you used comes straight back with the forecast piece: in the
+    // middle with the keyboard, at the cursor with the mouse.
+    const act = st.over ? null : toMouse(sSpawn(st, slot));
     const next = { ...cur, st, act, vanish };
     if (st.over) finish(next, st.won ? "done" : "stuck"); else commit(next);
   }, [commit, finish, toMouse]);
@@ -4257,18 +4260,19 @@ function SprintGame({ onExit }) {
       const a = sprintActionFor(e.key);
       if (!a) return;
       e.preventDefault();
-      const cur = live.current;
+      let cur = live.current;
       if (a === "retry") { if (!e.repeat) retry(); return; }
       if (cur.result) return;
       if (a === "forfeit") { if (!e.repeat) finish(cur, "forfeit"); return; }
       if (e.repeat) return; // holding is DAS's job, not the key repeat's
-      if (a.startsWith("slot")) {
-        const slot = Number(a.slice(4)) - 1;
-        commit({ ...cur, act: toMouse(sSpawn(cur.st, slot)), startAt: cur.startAt || performance.now() });
+      if (!cur.act) return;
+      // The clock starts with your first move, turn, swap or place.
+      if (!cur.startAt) cur = { ...cur, startAt: performance.now() };
+      if (a === "swap") {
+        commit({ ...cur, act: toMouse(sSpawn(cur.st, 1 - cur.act.slot)) });
         sfx.pick();
         return;
       }
-      if (!cur.act) return;
       if (DIRS[a]) {
         const [dr, dc] = DIRS[a];
         const das = getSprintKeys().das;
@@ -4277,8 +4281,13 @@ function SprintGame({ onExit }) {
         if (das > 0) timers[a] = setTimeout(() => { const c = live.current; if (c.act && !c.result) commit({ ...c, act: sShift(c.act, dr, dc, true) }); }, das);
         return;
       }
-      if (a === "cw" || a === "ccw") { commit({ ...cur, act: toMouse(sTurn(cur.act, a === "cw" ? 1 : -1)) }); sfx.rotate(a === "cw" ? 1 : -1); return; }
-      if (a === "place") placeNow();
+      if (a === "cw" || a === "ccw" || a === "r180") {
+        const dir = a === "cw" ? 1 : a === "ccw" ? -1 : 2;
+        commit({ ...cur, act: toMouse(sTurn(cur.act, dir)) });
+        sfx.rotate(dir === -1 ? -1 : 1);
+        return;
+      }
+      if (a === "place") { live.current = cur; placeNow(); }
     };
     const onUp = (e) => {
       const a = sprintActionFor(e.key);
@@ -4346,34 +4355,37 @@ function SprintGame({ onExit }) {
             {!r.startAt && !r.result && (
               <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none" style={{ gap: 2 * P }}>
                 <span className="tb-t" style={{ color: UI.text, padding: `${P}px ${3 * P}px`, background: "color-mix(in srgb, var(--tb-panel-solid) 80%, transparent)" }}>
-                  PICK A PIECE ({keyOf("slot1")} {keyOf("slot2")} {keyOf("slot3")}) TO START
+                  THE CLOCK STARTS ON YOUR FIRST MOVE
                 </span>
               </div>
             )}
           </div>
-          {/* The hand, each with its key, then the forecast. */}
+          {/* Your two pieces (the one in play lit up), then the next three. */}
           <div className="flex flex-col" style={{ width: sideW - 6 * P, gap: 2 * P }}>
+            <span className="tb-t" style={{ color: UI.dim }}>SWAP <span style={{ color: UI.text }}>{keyOf("swap")}</span></span>
             {st.hand.map((id, i) => {
               const picked = r.act && r.act.slot === i;
               return (
-                <div key={i} role="img" aria-label={`Piece ${i + 1}: ${S_NAMES[id]}`} className="relative flex items-center" style={{ height: 17 * P, ...glass(picked ? UI.text : UI.line) }}>
-                  {/* The key on the left, the piece centred in the rest. */}
-                  <span className="tb-t text-center shrink-0" style={{ width: 9 * P, color: picked ? UI.text : UI.dim }}>{keyOf(`slot${i + 1}`)}</span>
-                  <span className="flex-1 flex items-center justify-center"><SPiece id={id} cell={slotCell} gap={g} /></span>
+                <div key={i} role="img" aria-label={`Piece ${i + 1}: ${S_NAMES[id]}${picked ? " (in play)" : ""}`} className="relative flex items-center justify-center"
+                  style={{ height: 17 * P, ...glass(picked ? UI.text : UI.line), opacity: picked ? 1 : 0.75 }}>
+                  <SPiece id={id} cell={slotCell} gap={g} />
                 </div>
               );
             })}
             <span className="tb-t" style={{ color: UI.dim, marginTop: 2 * P }}>NEXT</span>
-            <div role="img" aria-label={`Next: ${S_NAMES[st.next]}`} className="flex items-center justify-center" style={{ height: 13 * P, ...glass(UI.line), opacity: 0.8 }}>
-              <SPiece id={st.next} cell={Math.round(slotCell * 0.8)} gap={g} />
-            </div>
+            {st.queue.map((id, i) => (
+              <div key={i} role="img" aria-label={`Next ${i + 1}: ${S_NAMES[id]}`} className="flex items-center justify-center"
+                style={{ height: (i ? 11 : 13) * P, ...glass(UI.line), opacity: i ? 0.6 : 0.85 }}>
+                <SPiece id={id} cell={Math.round(slotCell * (i ? 0.65 : 0.8))} gap={g} />
+              </div>
+            ))}
           </div>
         </div>
         <BoardLine width={boardW + sideW} />
         <div className="tb-t text-center" style={{ width: boardW + sideW, color: UI.dim, opacity: 0.7, marginTop: 2 * P }}>
           {keys.mode === "mouse"
-            ? <>CLICK OR {keyOf("place")} PLACES · {keyOf("slot1")} {keyOf("slot2")} {keyOf("slot3")} PICK · {keyOf("ccw")} / {keyOf("cw")} TURN</>
-            : <>{keyOf("place")} PLACES · {keyOf("ccw")} / {keyOf("cw")} TURN · HOLD A DIRECTION TO SLIDE</>}
+            ? <>CLICK OR {keyOf("place")} PLACES · {keyOf("swap")} SWAPS · {keyOf("ccw")} {keyOf("cw")} {keyOf("r180")} TURN</>
+            : <>{keyOf("place")} PLACES · {keyOf("swap")} SWAPS · {keyOf("ccw")} {keyOf("cw")} {keyOf("r180")} TURN · HOLD A DIRECTION TO SLIDE</>}
         </div>
         <div className="flex items-center justify-center" style={{ width: boardW + sideW, gap: 3 * P, marginTop: 2 * P }}>
           <div className="flex shrink-0" style={{ gap: 2 * P }}>
