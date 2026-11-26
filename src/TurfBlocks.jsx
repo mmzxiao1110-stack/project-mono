@@ -5124,7 +5124,7 @@ function ZeroGGame({ onExit }) {
           </div>
           {/* Right: the next five, flush against the board; the buttons in a column at its bottom. */}
           <div className="flex flex-col items-start tb-t" style={{ width: colW, marginTop: sideTop, height: sideH, marginLeft: side }}>
-            <div aria-label="Next pieces" className="flex flex-col items-center" style={{ width: boxW, gap: 2 * P, padding: pad, ...glass(UI.line) }}>
+            <div aria-label="Next pieces" className="flex flex-col items-center" style={{ width: boxW, flex: 1, minHeight: 0, justifyContent: "space-between", gap: 2 * P, padding: pad, ...glass(UI.line) }}>
               <span style={{ color: UI.dim }}>NEXT</span>
               {st.queue.slice(0, Z_NEXT).map((id, i) => (
                 <div key={i} role="img" aria-label={`Next ${i + 1}: ${Z_NAMES[id]}`} className="flex items-center justify-center" style={{ height: 2 * cell + g, opacity: i ? 0.8 : 1 }}>
@@ -5132,7 +5132,7 @@ function ZeroGGame({ onExit }) {
                 </div>
               ))}
             </div>
-            <div className="flex flex-col items-start" style={{ marginTop: "auto", gap: 3 * P }}>
+            <div className="flex flex-col items-start" style={{ marginTop: 3 * P, gap: 3 * P, flexShrink: 0 }}>
               <Bubble w={railD} h={railD} label="Controls and handling" onClick={() => setOpts(true)}><Settings2 /></Bubble>
               <Bubble w={railD} h={railD} label={`Retry (${keyOf("retry")})`} onClick={retry}><RefreshCw /></Bubble>
               {r.result
