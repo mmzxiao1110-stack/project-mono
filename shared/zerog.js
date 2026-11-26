@@ -3,15 +3,18 @@
  *
  *   A 10-wide, 40-tall board (the bottom 20 rows are the field you see; the
  *   20 above are buffer). The seven tetrominoes come from a 7-bag; you see
- *   the next five and can hold one (once per piece). Pieces spawn above the
- *   field and stay where they are until you move them: nothing falls on its
- *   own. Soft drop moves the piece down, hard drop drops it and locks it.
- *   A piece only locks on a hard drop. Full rows clear at once.
+ *   the next five and can hold one (swap with it as often as you like).
+ *   Pieces spawn above the field and stay where they are until you move
+ *   them: nothing falls on its own. Soft drop takes the piece straight down
+ *   without locking it (hold it to keep the piece on the floor while you
+ *   slide and turn: that's how S, Z and other spins are set up); hard drop
+ *   drops it and locks it. Full rows clear at once.
  *
  *   Rotation is SRS: the four states of every piece around its box, the
  *   standard wall kicks, plus a 180 turn with its own short kick list.
  *   T-spins use the three-corner rule (a mini when the front corners aren't
- *   both filled, unless the last kick was used).
+ *   both filled, unless the last kick was used). Every other piece spins too:
+ *   turned into a spot it can't move out of (not left, right or up).
  *
  * Coordinates: x is the column (0 left), y is the row (0 top, 39 bottom).
  * Kick tables are written as in the SRS reference (y up) and flipped here.
@@ -157,19 +160,25 @@ export function rotate(st, dir) {
   return false;
 }
 
-/** Swap with the held piece (once per piece). True if it held. */
+/** Swap with the held piece (any time, as often as you like). True if it held. */
 export function hold(st) {
-  if (!st.cur || st.held) return false;
+  if (!st.cur) return false;
   const id = st.cur.id;
   const next = st.hold === null ? st.queue.shift() : st.hold;
-  st.hold = id; st.held = true;
+  st.hold = id;
   spawn(st, next);
   return true;
 }
 
-// T-spin: three of the four corners of the T's box are filled (walls count).
-function tSpin(st, p) {
-  if (NAMES[p.id] !== "T" || !st.lastRot) return null;
+// A spin: the last move was a turn and the piece is stuck where it is.
+// T: three of the four corners of its box are filled (walls count).
+// Any other piece: it can't move left, right or up.
+function spinOf(st, p) {
+  if (!st.lastRot) return null;
+  if (NAMES[p.id] !== "T") {
+    const stuck = [[-1, 0], [1, 0], [0, -1]].every(([dx, dy]) => !fits(st.board, { ...p, x: p.x + dx, y: p.y + dy }));
+    return stuck ? "full" : null;
+  }
   const at = ([dx, dy]) => !free(st.board, p.x + dx, p.y + dy);
   const corners = [[0, 0], [2, 0], [2, 2], [0, 2]]; // clockwise from top left
   const filled = corners.map(at);
@@ -187,7 +196,7 @@ export function hardDrop(st) {
   if (!st.cur) return null;
   const p = dropped(st.board, st.cur);
   if (p.y !== st.cur.y) st.lastRot = false;
-  const spin = tSpin(st, p);
+  const spin = spinOf(st, p);
   const cells = cellsOf(p);
   for (const [x, y] of cells) st.board[y][x] = p.id;
   st.pieces++;
@@ -211,8 +220,7 @@ export function hardDrop(st) {
   } else {
     st.combo = -1;
   }
-  st.last = { lines: n, rows, spin, combo: st.combo, b2b: n ? st.b2b : -1, allClear, name: clearName(n, spin), piece: p };
-  st.held = false;
+  st.last = { lines: n, rows, spin, combo: st.combo, b2b: n ? st.b2b : -1, allClear, name: clearName(n, spin, NAMES[p.id]), piece: p };
   // Locked wholly above the field: topped out.
   const lockOut = cells.every(([, y]) => y < TOP);
   if (st.lines >= st.goal) { st.over = true; st.won = true; st.cur = null; }
@@ -221,9 +229,9 @@ export function hardDrop(st) {
   return st.last;
 }
 
-export function clearName(n, spin) {
+export function clearName(n, spin, piece = "T") {
   const word = ["", "SINGLE", "DOUBLE", "TRIPLE", "QUAD"][Math.min(n, 4)] || "";
-  if (spin) return `${spin === "mini" ? "T-SPIN MINI" : "T-SPIN"}${word ? ` ${word}` : ""}`;
+  if (spin) return `${piece}-SPIN${spin === "mini" ? " MINI" : ""}${word ? ` ${word}` : ""}`;
   return word;
 }
 

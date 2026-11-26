@@ -46,7 +46,7 @@ import {
   loadTheme, saveTheme, applyPreset, editTheme, themeVars,
 } from "./theme.js";
 import { ACTIONS, getKeys, subscribeKeys, setKey, resetKeys, actionFor, keyLabel, canBind } from "./keys.js";
-import { ZG_ACTIONS, HANDLING, SDF_MAX, zgSubscribe, getZgKeys, getZgHandling, setZgKey, setZgHandling, resetZg, zgActionFor } from "./zgKeys.js";
+import { ZG_ACTIONS, HANDLING, zgSubscribe, getZgKeys, getZgHandling, setZgKey, setZgHandling, resetZg, zgActionFor } from "./zgKeys.js";
 import {
   W as Z_W, TOP as Z_TOP, VISIBLE as Z_VISIBLE, NEXT as Z_NEXT, GOAL as Z_GOAL, NAMES as Z_NAMES, newGame as zNewGame, shapeCells as zShapeCells,
   cellsOf as zCellsOf, dropped as zDropped, shift as zShift, down as zDown, rotate as zRotate, hold as zHold, hardDrop as zHardDrop,
@@ -3970,9 +3970,10 @@ function Difficulty({ onStart, onBack, colors }) {
 }
 
 /** The FORFEIT bubble (red): asks before ending the match. */
-function ForfeitButton({ onConfirm, ranked = false, disabled = false, compact = false }) {
+function ForfeitButton({ onConfirm, ranked = false, disabled = false, compact = false, size = 0 }) {
   const [asking, setAsking] = useState(false);
-  const d = useBubble(compact);
+  const auto = useBubble(compact);
+  const d = size || auto;
   return (
     <>
       <Bubble w={d} h={d} label="Forfeit" tint="#DB4F6D" fill={22} onClick={() => setAsking(true)} disabled={disabled}>
@@ -4779,7 +4780,7 @@ function SprintGame({ onExit, ultra = false }) {
    five next, SRS turns with 180, T-spins). See shared/zerog.js.
    ============================================================ */
 const zgBest = { get: () => Number(store.get("tb:zgBest")) || 0, set: (ms) => store.set("tb:zgBest", String(ms)) };
-const ZG_SHOW = Z_VISIBLE + 3; // the field and the three buffer rows above it (pieces spawn in them)
+const ZG_SHOW = Z_VISIBLE + 2; // the field and two buffer rows above it (only the landing spot is drawn, so it can show up there near the top)
 
 /** A piece drawn on its own (hold and next), in its spawn state. */
 function ZPiece({ id, cell, gap, dim = false }) {
@@ -4834,7 +4835,7 @@ function ZgControlsSection() {
           <div key={h.id} className="flex flex-col" style={{ gap: P }}>
             <div className="flex items-center justify-between tb-t">
               <span>{h.label} <span style={{ color: UI.dim }}>· {h.hint}</span></span>
-              <span className="tabular-nums" style={{ color: UI.dim }}>{h.id === "sdf" && hd.sdf >= SDF_MAX ? "INSTANT" : `${hd[h.id]} ${h.unit}`}</span>
+              <span className="tabular-nums" style={{ color: UI.dim }}>{`${hd[h.id]} ${h.unit}`}</span>
             </div>
             <PixelSlider min={h.min} max={h.max} step={h.step} value={hd[h.id]} onChange={(v) => setZgHandling(h.id, v)} label={h.label} />
           </div>
@@ -4879,7 +4880,7 @@ function ZeroGGame({ onExit }) {
   const [showEnd, setShowEnd] = useState(false);
   const [opts, setOpts] = useState(false);
   // Held keys: which way the piece slides, since when, and the soft drop.
-  const hold = useRef({ left: false, right: false, dir: 0, dasAt: 0, step: 0, soft: false, softStep: 0, dcd: 0 });
+  const hold = useRef({ left: false, right: false, dir: 0, dasAt: 0, step: 0, soft: false, dcd: 0 });
 
   const finish = useCallback((result) => {
     const r = run.current;
@@ -4908,11 +4909,11 @@ function ZeroGGame({ onExit }) {
       r.flash = { rows: L.rows, key: at };
       sfx.zgClear({ lines: L.lines, spin: L.spin, b2b: L.b2b, allClear: L.allClear });
       if (L.combo >= 1) sfx.zgCombo(L.combo);
-      r.pop = { name: L.name, combo: L.combo, b2b: L.b2b, allClear: L.allClear, key: at };
+      r.pop = { name: L.name, piece: L.piece.id, combo: L.combo, b2b: L.b2b, allClear: L.allClear, key: at };
       setTimeout(() => { const c = run.current; if (c.flash && c.flash.key === at) { c.flash = null; bump(); } }, 200);
       setTimeout(() => { const c = run.current; if (c.pop && c.pop.key === at) { c.pop = null; bump(); } }, 1400);
     } else if (L.spin) {
-      r.pop = { name: L.name, combo: -1, b2b: -1, key: st.pieces };
+      r.pop = { name: L.name, piece: L.piece.id, combo: -1, b2b: -1, key: st.pieces };
     }
     hold.current.dcd = performance.now() + getZgHandling().dcd;
     if (st.over) finish(st.won ? "done" : "stuck");
@@ -4932,11 +4933,12 @@ function ZeroGGame({ onExit }) {
       return;
     }
     if (a === "soft") {
-      h.soft = true; h.softStep = now;
+      // Instant: straight to the floor, without locking. Held, it keeps the piece there.
+      h.soft = true;
       start();
       let moved = false;
-      if (getZgHandling().sdf >= SDF_MAX) { while (zDown(st)) moved = true; } else moved = zDown(st);
-      if (moved) { if (getZgHandling().sdf >= SDF_MAX) sfx.zgLand(); bump(); }
+      while (zDown(st)) moved = true;
+      if (moved) { sfx.zgLand(); bump(); }
       return;
     }
     if (a === "hard") { doHard(); return; }
@@ -4979,13 +4981,7 @@ function ZeroGGame({ onExit }) {
         }
         if (moved) sfx.zgMove();
       }
-      if (h.soft) {
-        if (hd.sdf >= SDF_MAX) { while (zDown(st)) moved = true; }
-        else {
-          const every = 1000 / hd.sdf;
-          for (let i = 0; i < 10 && now - h.softStep >= every; i++) { h.softStep += every; if (zDown(st)) moved = true; else { h.softStep = now; break; } }
-        }
-      }
+      if (h.soft) while (zDown(st)) moved = true;
       if (moved) bump();
     };
     raf = requestAnimationFrame(loop);
@@ -5023,33 +5019,36 @@ function ZeroGGame({ onExit }) {
     return (
       <EndScreen verdict={r.newBest ? "NEW BEST" : good ? "FINISHED" : r.result === "stuck" ? "TOPPED OUT" : "FORFEIT"}
         ink={good ? GOLD : UI.bad} sound={good ? "win" : "lose"} compare={false}
-        note={`${st.lines} lines · ${st.pieces} pieces · ${pps.toFixed(2)} PPS · ${st.stats.quad} quads · ${st.stats.tspin} T-spins · max combo ${Math.max(0, st.stats.maxCombo)}`}
+        note={`${st.lines} lines · ${st.pieces} pieces · ${pps.toFixed(2)} PPS · ${st.stats.quad} quads · ${st.stats.tspin} spins · max combo ${Math.max(0, st.stats.maxCombo)}`}
         left={{ name: good ? "TIME" : "LINES", score: good ? fmtClock(r.endAt - r.startAt) : `${st.lines}/${Z_GOAL}`, ink: "var(--tb-you)", won: r.newBest }}
         right={{ name: "BEST", score: best ? fmtClock(best) : "—", ink: GOLD }}
         actions={[{ label: "MENU", onClick: onExit }, { label: `RETRY (${keyOf("retry")})`, onClick: retry, main: true }]} />
     );
   }
 
-  // The field: 10 wide, the 20 visible rows plus the 2 spawn rows above them.
+  // The field: 10 wide, the 20 visible rows plus 2 buffer rows above them, as big as the screen allows.
   const g = P;
   const side = 2 * P; // the small gap between the board and the panels beside it
-  const availH = stage.h - (TITLE_H + 12) * P - 16 * P;
-  const fitW = (stage.w - 24 * P - 9 * g) / 18.5; // the board plus both side columns must fit across
-  const cell = Math.max(4 * P, Math.min(16 * P, Math.floor(Math.min((availH - (ZG_SHOW - 1) * g) / ZG_SHOW, fitW) / P) * P));
+  const availH = stage.h - (TITLE_H + 6) * P - 8 * P;
+  const fitW = (stage.w - 24 * P - 9 * g) / 19; // the board plus both side columns must fit across
+  const cell = Math.max(4 * P, Math.min(40 * P, Math.floor(Math.min((availH - (ZG_SHOW - 1) * g) / ZG_SHOW, fitW) / P) * P));
+  // Text and buttons grow with the board.
+  const zoom = Math.max(1, cell / (8 * P));
+  const font = Math.round(8 * P * Math.min(zoom, 1.6));
+  const btn = Math.max(railD, Math.round(railD * Math.min(zoom, 1.5)) | 1);
   const boardW = Z_W * cell + (Z_W - 1) * g;
   const boardH = ZG_SHOW * cell + (ZG_SHOW - 1) * g;
   // Hold and next show pieces at board size, in boxes just wide enough for an I with some padding.
-  const pad = 4 * P;
+  const pad = Math.round(4 * P * Math.min(zoom, 1.5));
   const boxW = 4 * cell + 3 * g + 2 * pad;
-  const colW = Math.max(boxW, 46 * P);
-  const sideTop = 3 * (cell + g); // the side columns start level with the field's top row
+  const colW = Math.max(boxW, Math.round(46 * P * Math.min(zoom, 1.6)));
+  const sideTop = 2 * (cell + g); // the side columns start level with the field's top row
   const sideH = boardH - sideTop;
-  const top0 = Z_TOP - 3;
-  const curCells = st.cur ? zCellsOf(st.cur) : [];
-  const ghost = st.cur ? zCellsOf(zDropped(st.board, st.cur)) : [];
-  const at = new Map();
-  for (const [x, y] of ghost) at.set(y * Z_W + x, "ghost");
-  for (const [x, y] of curCells) at.set(y * Z_W + x, "cur");
+  const top0 = Z_TOP - 2;
+  // The piece where it floats, and its ghost where it will land (solid once the piece rests there).
+  const land = st.cur ? zDropped(st.board, st.cur) : null;
+  const landed = !!land && land.y === st.cur.y;
+  const at = new Set(land ? zCellsOf(land).map(([x, y]) => y * Z_W + x) : []);
   const flashRows = new Set(r.flash ? r.flash.rows : []);
   const stat = (label, value, ink = UI.text) => (
     <div className="flex flex-col items-end" style={{ gap: P }}><span style={{ color: UI.dim }}>{label}</span><span className="tb-b tabular-nums" style={{ color: ink }}>{value}</span></div>
@@ -5064,11 +5063,11 @@ function ZeroGGame({ onExit }) {
         <div style={{ flex: 1, minHeight: 2 * P }} />
         <div className="flex items-start">
           {/* Left: hold, flush against the board, then the stats and the last clear. */}
-          <div className="flex flex-col items-end text-right tb-t" style={{ width: colW, gap: 4 * P, marginTop: sideTop, height: sideH, marginRight: side }}>
+          <div className="flex flex-col items-end text-right tb-t" style={{ fontSize: font, lineHeight: 1.25, width: colW, gap: 4 * P, marginTop: sideTop, height: sideH, marginRight: side }}>
             <div className="flex flex-col items-center" style={{ width: boxW, gap: 2 * P, padding: pad, ...glass(UI.line) }}>
               <span style={{ color: UI.dim }}>HOLD ({keyOf("hold")})</span>
               <div className="flex items-center justify-center" style={{ height: 2 * cell + g }}>
-                {st.hold !== null && <ZPiece id={st.hold} cell={cell} gap={g} dim={st.held} />}
+                {st.hold !== null && <ZPiece id={st.hold} cell={cell} gap={g} />}
               </div>
             </div>
             <div className="flex flex-col items-end" style={{ gap: 3 * P, marginTop: 2 * P }}>
@@ -5081,7 +5080,7 @@ function ZeroGGame({ onExit }) {
               {pop && (
                 <div key={pop.key} className="flex flex-col items-end tb-rise" style={{ gap: P }}>
                   {pop.b2b > 0 && <span className="tb-b" style={{ color: GOLD }}>B2B ×{pop.b2b}</span>}
-                  {pop.name && <span className="tb-b" style={{ color: pop.name.startsWith("T-SPIN") ? S_INK[2] : pop.name === "QUAD" ? S_INK[0] : UI.text, fontSize: "1.2em" }}>{pop.name}</span>}
+                  {pop.name && <span className="tb-b" style={{ color: pop.name.includes("-SPIN") ? S_INK[pop.piece] : pop.name === "QUAD" ? S_INK[0] : UI.text, fontSize: "1.2em" }}>{pop.name}</span>}
                   {pop.combo >= 1 && <span className="tb-b" style={{ color: "var(--tb-you)" }}>{pop.combo} COMBO</span>}
                   {pop.allClear && <span className="tb-b" style={{ color: GOLD, fontSize: "1.2em" }}>ALL CLEAR</span>}
                 </div>
@@ -5098,16 +5097,19 @@ function ZeroGGame({ onExit }) {
             <div className="relative" style={{ width: boardW, height: boardH, padding: 0 }}>
               <div style={{ display: "grid", gridTemplateColumns: `repeat(${Z_W}, ${cell}px)`, gap: g }}>
                 {Array.from({ length: ZG_SHOW }, (_, i) => top0 + i).map((y) => st.board[y].map((v, x) => {
-                  const k = y * Z_W + x, mark = at.get(k), buffer = y < Z_TOP;
+                  const k = y * Z_W + x, mark = at.has(k), buffer = y < Z_TOP;
                   return (
                     <div key={k} style={{ position: "relative", width: cell, height: cell, ...(v === null && !buffer ? GLASS : null) }}>
                       {v !== null && <Ink size={cell} color={S_INK[v]} />}
-                      {v === null && mark === "cur" && <Ink size={cell} color={S_INK[st.cur.id]} />}
-                      {v === null && mark === "ghost" && <div className="absolute inset-0" style={{ opacity: 0.28 }}><Ink size={cell} color={S_INK[st.cur.id]} /></div>}
+                      {v === null && mark && <div className="absolute inset-0" style={{ opacity: landed ? 1 : 0.4 }}><Ink size={cell} color={S_INK[st.cur.id]} /></div>}
                     </div>
                   );
                 }))}
               </div>
+              {/* The piece itself, wherever it floats (above the board too, without taking room from it). */}
+              {st.cur && !landed && zCellsOf(st.cur).map(([x, y]) => (
+                <div key={`p${x},${y}`} className="absolute pointer-events-none" style={{ left: x * (cell + g), top: (y - top0) * (cell + g) }}><Ink size={cell} color={S_INK[st.cur.id]} /></div>
+              ))}
               {/* A clear: the rows flash and fade in under a fifth of a second. */}
               {r.flash && [...flashRows].filter((y) => y >= top0).map((y) => (
                 <div key={`${r.flash.key}-${y}`} className="absolute pointer-events-none tb-zgflash" style={{ left: 0, width: boardW, top: (y - top0) * (cell + g), height: cell }} />
@@ -5123,7 +5125,7 @@ function ZeroGGame({ onExit }) {
             <BoardLine width={boardW} />
           </div>
           {/* Right: the next five, flush against the board; the buttons in a column at its bottom. */}
-          <div className="flex flex-col items-start tb-t" style={{ width: colW, marginTop: sideTop, height: sideH, marginLeft: side }}>
+          <div className="flex flex-col items-start tb-t" style={{ fontSize: font, lineHeight: 1.25, width: colW, marginTop: sideTop, height: sideH, marginLeft: side }}>
             <div aria-label="Next pieces" className="flex flex-col items-center" style={{ width: boxW, flex: 1, minHeight: 0, justifyContent: "space-between", gap: 2 * P, padding: pad, ...glass(UI.line) }}>
               <span style={{ color: UI.dim }}>NEXT</span>
               {st.queue.slice(0, Z_NEXT).map((id, i) => (
@@ -5133,11 +5135,11 @@ function ZeroGGame({ onExit }) {
               ))}
             </div>
             <div className="flex flex-col items-start" style={{ marginTop: 3 * P, gap: 3 * P, flexShrink: 0 }}>
-              <Bubble w={railD} h={railD} label="Controls and handling" onClick={() => setOpts(true)}><Settings2 /></Bubble>
-              <Bubble w={railD} h={railD} label={`Retry (${keyOf("retry")})`} onClick={retry}><RefreshCw /></Bubble>
+              <Bubble w={btn} h={btn} label="Controls and handling" onClick={() => setOpts(true)}><Settings2 /></Bubble>
+              <Bubble w={btn} h={btn} label={`Retry (${keyOf("retry")})`} onClick={retry}><RefreshCw /></Bubble>
               {r.result
-                ? <Bubble w={railD} h={railD} label="Menu" onClick={onExit}><LogOut /></Bubble>
-                : <ForfeitButton onConfirm={() => finish("forfeit")} />}
+                ? <Bubble w={btn} h={btn} label="Menu" onClick={onExit}><LogOut /></Bubble>
+                : <ForfeitButton size={btn} onConfirm={() => finish("forfeit")} />}
             </div>
           </div>
         </div>

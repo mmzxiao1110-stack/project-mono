@@ -5,7 +5,6 @@
  *   das  delayed auto shift: how long (ms) you hold left/right before the
  *        piece starts sliding on its own
  *   arr  auto repeat rate: ms between steps once it slides (0: straight to the wall)
- *   sdf  soft drop speed in rows per second (the top of the slider: instant, to the bottom)
  *   dcd  DAS cut delay: after a turn or a new piece, a held slide waits this long (ms)
  */
 const KEY = "tb:zgKeys1";
@@ -14,7 +13,7 @@ const HKEY = "tb:zgHandling1";
 export const ZG_ACTIONS = [
   { id: "left", label: "Left", def: "ArrowLeft" },
   { id: "right", label: "Right", def: "ArrowRight" },
-  { id: "soft", label: "Soft drop", def: "ArrowDown" },
+  { id: "soft", label: "Soft drop", def: "ArrowDown" }, // instant: straight to the floor, without locking
   { id: "hard", label: "Hard drop", def: " " },
   { id: "ccw", label: "Turn L", def: "z" },
   { id: "cw", label: "Turn R", def: "ArrowUp" },
@@ -24,11 +23,9 @@ export const ZG_ACTIONS = [
   { id: "forfeit", label: "Forfeit", def: "Escape" },
 ];
 
-export const SDF_MAX = 41; // the slider's top: instant
 export const HANDLING = [
   { id: "das", label: "DAS", unit: "ms", min: 0, max: 300, step: 1, def: 120, hint: "hold before sliding" },
   { id: "arr", label: "ARR", unit: "ms", min: 0, max: 80, step: 1, def: 0, hint: "between slide steps · 0 = instant" },
-  { id: "sdf", label: "SOFT DROP", unit: "rows/s", min: 5, max: SDF_MAX, step: 1, def: SDF_MAX, hint: "max = instant" },
   { id: "dcd", label: "DCD", unit: "ms", min: 0, max: 100, step: 1, def: 0, hint: "slide pause after a turn" },
 ];
 
