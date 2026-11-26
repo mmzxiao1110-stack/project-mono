@@ -64,11 +64,11 @@ export class BlitzMatch {
   send(side, msg) { const s = this.seats[side].socket; if (s && s.readyState === 1) s.send(JSON.stringify(msg)); }
   rating(side) { return this.seats[side].profile.blitz?.rating || null; }
 
-  start() {
-    this.startsAt = Date.now() + COUNTDOWN_MS;
+  start(countdown = COUNTDOWN_MS) {
+    this.startsAt = Date.now() + countdown;
     for (const side of ["A", "B"]) {
       const o = this.seats[this.other(side)].profile;
-      this.send(side, { t: "blitzStart", id: this.id, you: side, seed: this.seed, countdown: COUNTDOWN_MS,
+      this.send(side, { t: "blitzStart", id: this.id, you: side, seed: this.seed, countdown: countdown, room: this.room || null,
         opponent: { name: o.name, guest: !!o.guest, rating: o.blitz?.rating ? Math.round(o.blitz.rating.r) : null } });
     }
     this.timer = unref(setInterval(() => this.tick(), 50));

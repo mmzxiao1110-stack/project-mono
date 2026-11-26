@@ -208,6 +208,7 @@ const roomView = (room, userId) => {
     opponent: other ? { name: other.name, guest: !!other.guest } : null,
     rematch: { me: room.rematch.has(userId), them: !!otherId && room.rematch.has(otherId) },
     playing: !!room.match,
+    mode: room.mode || "control",
   };
 };
 const tellRoom = (room) => { for (const id of [room.host, room.guest]) if (id) sendTo(id, roomView(room, id)); };
@@ -236,6 +237,9 @@ function leaveRoom(userId, why = "Your friend left the room.") {
   else { room.guest = null; room.rematch.clear(); tellRoom(room); }
 }
 
+const ROOM_MODES = ["control", "blitz", "tower"];
+const PRIVATE_COUNTDOWN_MS = 4200; // no match-found intro in a room: just the 3-2-1
+
 function startRoomMatch(room) {
   const sa = sockets.get(room.host), sb = sockets.get(room.guest);
   if (!sa || !sb) return;
@@ -243,6 +247,24 @@ function startRoomMatch(room) {
   // Take turns being the bottom seat: the joiner starts on the bottom.
   room.games = (room.games || 0) + 1;
   const [a, b] = room.games % 2 ? [room.guest, room.host] : [room.host, room.guest];
+  // Blitz or TOWER in a room: the same match as ranked, unrated.
+  if (room.mode === "blitz" || room.mode === "tower") {
+    const Kind = room.mode === "blitz" ? BlitzMatch : TowerMatch;
+    const match = new Kind([{ profile: profileOf(a), socket: sockets.get(a) }, { profile: profileOf(b), socket: sockets.get(b) }], (m) => {
+      inMatch.delete(a); inMatch.delete(b);
+      if (rooms.get(room.code) === room) { room.match = null; room.touched = Date.now(); tellRoom(room); }
+      console.log(`[room] ${room.code}: ${m.id} finished`);
+    }, { rated: false });
+    match.room = room.code;
+    room.match = match;
+    room.touched = Date.now();
+    inMatch.set(a, { match, side: "A" });
+    inMatch.set(b, { match, side: "B" });
+    tellRoom(room);
+    console.log(`[room] ${room.code}: ${room.mode} ${profileOf(a).name} vs ${profileOf(b).name}`);
+    match.start(PRIVATE_COUNTDOWN_MS);
+    return;
+  }
   const match = new Match(
     [
       { profile: profileOf(a), loadout: sanitizeLoadout(), socket: sockets.get(a) },
@@ -576,7 +598,8 @@ async function handle(ws, msg) {
       if (inMatch.has(ws.userId)) return fail(ws, "Finish your match first.");
       leaveQueues(ws.userId);
       leaveRoom(ws.userId);
-      const room = { code: newRoomCode(), host: ws.userId, guest: null, match: null, rematch: new Set(), touched: Date.now(), leaveTimer: null };
+      const room = { code: newRoomCode(), host: ws.userId, guest: null, match: null, rematch: new Set(), touched: Date.now(), leaveTimer: null,
+        mode: ROOM_MODES.includes(msg.mode) ? msg.mode : "control" };
       rooms.set(room.code, room);
       roomOf.set(ws.userId, room.code);
       tellRoom(room);
@@ -603,6 +626,16 @@ async function handle(ws, msg) {
     case "leaveRoom":
       leaveRoom(ws.userId);
       break;
+
+    case "roomMode": {
+      // The host picks what the room plays (between games).
+      const room = rooms.get(roomOf.get(ws.userId));
+      if (!room || room.host !== ws.userId || room.match || !ROOM_MODES.includes(msg.mode)) return;
+      room.mode = msg.mode;
+      room.rematch.clear();
+      tellRoom(room);
+      break;
+    }
 
     case "rematch": {
       const room = rooms.get(roomOf.get(ws.userId));

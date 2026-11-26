@@ -200,9 +200,14 @@ class Net {
     this.send({ t: "guest", name, gid: this.guestInfo?.gid });
   }
 
-  createRoom() {
+  createRoom(mode = "control") {
     this.roomError = null;
-    this.send({ t: "createRoom" });
+    this.send({ t: "createRoom", mode });
+  }
+
+  /** The host picks what the room plays: control, blitz or tower. */
+  roomMode(mode) {
+    this.send({ t: "roomMode", mode });
   }
 
   joinRoom(code) {
@@ -380,7 +385,7 @@ class Net {
         break;
 
       case "room":
-        this.room = { code: m.code, host: m.host, opponent: m.opponent, rematch: m.rematch, playing: m.playing };
+        this.room = { code: m.code, host: m.host, opponent: m.opponent, rematch: m.rematch, playing: m.playing, mode: m.mode || "control" };
         this.roomError = null;
         this.emit("room", this.room);
         break;
@@ -499,7 +504,7 @@ class Net {
         break;
 
       case "towerStart":
-        this.tower = { id: m.id, you: m.you, seed: m.seed, countdown: m.countdown, opponent: m.opponent, resume: !!m.resume, over: false, got: Date.now() };
+        this.tower = { id: m.id, you: m.you, seed: m.seed, countdown: m.countdown, opponent: m.opponent, resume: !!m.resume, room: m.room || null, over: false, got: Date.now() };
         this.emit("towerStart", this.tower);
         break;
       case "towerGarbage":
@@ -525,7 +530,7 @@ class Net {
         this.emit("towerEnd", m);
         break;
       case "blitzStart":
-        this.blitz = { id: m.id, you: m.you, seed: m.seed, countdown: m.countdown, opponent: m.opponent, resume: !!m.resume, chat: this.blitz?.id === m.id ? this.blitz.chat : [], chatError: null, over: false, got: Date.now() };
+        this.blitz = { id: m.id, you: m.you, seed: m.seed, countdown: m.countdown, opponent: m.opponent, resume: !!m.resume, room: m.room || null, chat: this.blitz?.id === m.id ? this.blitz.chat : [], chatError: null, over: false, got: Date.now() };
         this.emit("blitzStart", this.blitz);
         this.emit("blitz", this.blitz);
         break;

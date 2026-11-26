@@ -3687,7 +3687,7 @@ function PlayModal({ status, authed, verified, profile, onPick, onClose }) {
                     {half(
                       <ModeCard ink={MODE_INK.ai} icon={Robot} title="VS BOT" sub="skill 1–10" h={56} delay={200} disabled={lock()} onClick={() => onPick("BLITZBOT")} />,
                       <ModeCard ink={MODE_INK.marathon} icon={Stack} title="MARATHON" h={56} delay={300} disabled={lock()}
-                        sub={open ? `resume · ${open.score.toLocaleString("en-US")}` : best ? `best ${best.toLocaleString("en-US")}` : "solo high score"} onClick={() => onPick("MARATHON")} />,
+                        sub={open ? `resume · ${open.score.toLocaleString("en-US")}` : best ? `best ${best.toLocaleString("en-US")}` : "no timer"} onClick={() => onPick("MARATHON")} />,
                     )}
                     {half(
                       <ModeCard ink={MODE_INK.sprint} icon={Clock} title="SPRINT" sub={sprintBest.get() ? `best ${fmtClock(sprintBest.get())}` : "40 lines"} h={56} delay={400} disabled={lock()} onClick={() => onPick("SPRINT")} />,
@@ -3703,12 +3703,12 @@ function PlayModal({ status, authed, verified, profile, onPick, onClose }) {
                     sub={rt.sub} note={rt.note} noteInk={rt.noteInk}
                     disabled={!online || lock("tower")} onClick={() => onPick("TOWER")} />
                   {half(
-                    <ModeCard ink={MODE_INK.ai} icon={Robot} title="VS BOT" sub="zero-g 1v1" h={56} delay={250} disabled={lock()} onClick={() => onPick("TOWERBOT")} />,
-                    <ModeCard ink={MODE_INK.zerog} icon={Clock} title="SPRINT" sub={zgBest.get() ? `best ${fmtClock(zgBest.get())}` : "zero-g · 40 lines"} h={56} delay={350} disabled={lock()} onClick={() => onPick("ZEROG")} />,
+                    <ModeCard ink={MODE_INK.ai} icon={Robot} title="VS BOT" sub="skill 1–10" h={56} delay={250} disabled={lock()} onClick={() => onPick("TOWERBOT")} />,
+                    <ModeCard ink={MODE_INK.zerog} icon={Stack} title="MARATHON" sub={zgMarathonBest.get() ? `best ${zgMarathonBest.get().toLocaleString("en-US")}` : "no timer"} h={56} delay={350} disabled={lock()} onClick={() => onPick("ZEROGMARATHON")} />,
                   )}
                   {half(
-                    <ModeCard ink={MODE_INK.zerog} icon={Flag} title="ULTRA" sub={zgUltraBest.get() ? `best ${zgUltraBest.get().toLocaleString("en-US")}` : "zero-g · 2 min"} h={56} delay={450} disabled={lock()} onClick={() => onPick("ZEROGULTRA")} />,
-                    <div />,
+                    <ModeCard ink={MODE_INK.zerog} icon={Clock} title="SPRINT" sub={zgBest.get() ? `best ${fmtClock(zgBest.get())}` : "40 lines"} h={56} delay={450} disabled={lock()} onClick={() => onPick("ZEROG")} />,
+                    <ModeCard ink={MODE_INK.zerog} icon={Flag} title="ULTRA" sub={zgUltraBest.get() ? `best ${zgUltraBest.get().toLocaleString("en-US")}` : "2 min"} h={56} delay={550} disabled={lock()} onClick={() => onPick("ZEROGULTRA")} />,
                   )}
                 </div>
               )}
@@ -3716,10 +3716,9 @@ function PlayModal({ status, authed, verified, profile, onPick, onClose }) {
                 <ModeCard big ink={MODE_INK.ranked} icon={Trophy} title="CONTROL" h={phone ? 96 : 100} delay={500}
                   sub={rc.sub} note={rc.note} noteInk={rc.noteInk}
                   disabled={!online || lock("control")} onClick={() => onPick("MATCHMAKING")} />
-                {half(
-                  <ModeCard ink={MODE_INK.ai} icon={Robot} title="VS AI" sub="strength 1–10" h={56} delay={800} disabled={lock()} onClick={() => onPick("DIFFICULTY")} />,
-                  <ModeCard ink={MODE_INK.private} icon={Lock} title="PRIVATE" sub={off || "a room code"} h={56} delay={650} disabled={!online || lock()} onClick={() => onPick("PRIVATE")} />,
-                )}
+                <div className="w-full"><ModeCard ink={MODE_INK.ai} icon={Robot} title="VS AI" sub="strength 1–10" h={56} delay={800} disabled={lock()} onClick={() => onPick("DIFFICULTY")} /></div>
+                {/* A room with a friend: Control, Blitz or TOWER, picked in the room. */}
+                <div className="w-full"><ModeCard ink={MODE_INK.private} icon={Lock} title="PRIVATE" sub={off || "play a friend · any mode"} h={56} delay={650} disabled={!online || lock()} onClick={() => onPick("PRIVATE")} /></div>
                 {/* Pass-and-play only makes sense on one phone in two hands. */}
                 {phone && <div className="w-full"><ModeCard ink={MODE_INK.turns} icon={People} title="TURN BASED" sub="1 device" h={56} delay={300} disabled={lock()} onClick={() => onPick("TURNBASED")} /></div>}
               </div>
@@ -4891,11 +4890,12 @@ function ZgClock({ run, style, left = 0 }) {
   return <span ref={el} className="tb-t tb-b tabular-nums" style={style}>{fmtClock(left)}</span>;
 }
 
-/** Is the stack within 5 rows of the top of the field? */
-function zgDanger(board) {
-  for (let y = 0; y < Z_TOP + 5; y++) if (board[y].some((v) => v !== null)) return true;
-  return false;
+/** Rows of room left above the stack when it's within 5 rows of the top of the field (0: touching it), else -1. */
+function zgRoom(board) {
+  for (let y = 0; y < Z_TOP + 5; y++) if (board[y].some((v) => v !== null)) return Math.max(0, y - Z_TOP);
+  return -1;
 }
+const zgDanger = (board) => zgRoom(board) >= 0;
 
 /**
  * One side of a ZERO-G game, drawn the same way for you and your opponent:
@@ -4987,6 +4987,7 @@ function ZgField({ L, st, stats, pop, bottom, incoming = 0, flash = null, overla
 }
 
 const zgUltraBest = { get: () => Number(store.get("tb:zgUltraBest")) || 0, set: (n) => store.set("tb:zgUltraBest", String(n)) };
+const zgMarathonBest = { get: () => Number(store.get("tb:zgMarathonBest")) || 0, set: (n) => store.set("tb:zgMarathonBest", String(n)) };
 const zgBotSkill = { get: () => Math.max(1, Math.min(10, Number(store.get("tb:zgBotSkill")) || 6)), set: (n) => store.set("tb:zgBotSkill", String(n)) };
 const ZG_GARBAGE_INK = "#4B4757"; // garbage: dark, so it reads as the floor, not as pieces
 const zInk = (v) => (v === Z_GARBAGE ? ZG_GARBAGE_INK : S_INK[v]);
@@ -5001,7 +5002,7 @@ function freshZg(mode, seed = undefined, goAt = 0) {
   const versus = mode === "tower" || mode === "towerbot";
   // The other side, played out on a copy of the same game: the bot's moves, or the online opponent's (as they arrive, in time).
   const opp = versus ? { st: Object.assign(zNewGame(st.seed, Infinity), { incoming: [] }), given: 0, sent: 0, q: [] } : null;
-  return { out: [], mode, st, startAt: 0, endAt: 0, result: null, newBest: false, flash: null, pop: null, score: 0, holds: 0, seen: 0, sent: 0, given: 0, opp, goAt: versus ? goAt : 0, ratings: null };
+  return { out: [], log: [], mode, st, startAt: 0, endAt: 0, result: null, newBest: false, flash: null, pop: null, score: 0, holds: 0, seen: 0, sent: 0, given: 0, opp, goAt: versus ? goAt : 0, ratings: null };
 }
 
 /** Shows a clear on the opponent's side: its name, combo and back-to-back, and the rows flashing. */
@@ -5016,6 +5017,7 @@ function oppClear(o, L, key) {
  * ZERO-G: falling-block rules on a 10×40 board, no gravity.
  *   sprint    40 lines, fastest time
  *   ultra     2 minutes, highest score
+ *   marathon  Ultra with no timer: score until you top out
  *   tower     ranked 1v1, run by the server: clears send garbage rows
  *   towerbot  the same against the ZERO-G bot (skill 1–10)
  */
@@ -5036,7 +5038,8 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
   const run = useRef(first);
   const [r, setSnap] = useState(() => ({ ...first, now: 0 }));
   const bump = useCallback(() => setSnap({ ...run.current, now: performance.now() }), []);
-  const record = mode === "ultra" ? zgUltraBest : zgBest;
+  const scored = mode === "ultra" || mode === "marathon"; // played for points
+  const record = mode === "ultra" ? zgUltraBest : mode === "marathon" ? zgMarathonBest : zgBest;
   const [best, setBest] = useState(record.get);
   const [skill, setSkill] = useState(zgBotSkill.get);
   const [showEnd, setShowEnd] = useState(false);
@@ -5054,26 +5057,36 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
       const ms = Math.round(r.endAt - r.startAt);
       if (!zgBest.get() || ms < zgBest.get()) { zgBest.set(ms); setBest(ms); r.newBest = true; }
     }
-    if (mode === "ultra" && result !== "forfeit" && r.score > zgUltraBest.get()) { zgUltraBest.set(r.score); setBest(r.score); r.newBest = true; }
+    if (scored && result !== "forfeit" && r.score > record.get()) { record.set(r.score); setBest(r.score); r.newBest = true; }
+    // Kept as a replay: the moves (and, against the bot, its pieces and the garbage).
+    if (!online && result !== "forfeit" && r.log.length) {
+      const me = net.profile?.name || "YOU";
+      if (versus) replays.save({ kind: "tower", ranked: false, seed: r.st.seed, moves: r.log, names: { A: me, B: `BOT ${zgBotSkill.get()}` }, you: "A", winner: result === "won" ? "A" : "B", sent: { A: r.sent, B: r.opp?.sent || 0 }, date: Date.now() });
+      else replays.save({ kind: "zerog", mode, seed: r.st.seed, moves: r.log, name: me, date: Date.now(),
+        result: { ms: Math.round(r.endAt - r.startAt), score: r.score, lines: r.st.lines, pieces: r.st.pieces, done: result === "done" } });
+    }
     if (result === "done" || result === "time" || result === "won") sfx.zgFinish();
     else if (result === "forfeit") sfx.forfeit();
     else sfx.zgTopOut();
     bump();
     setTimeout(() => wipe(() => { if (run.current.result) setShowEnd(true); }), result === "forfeit" ? 0 : 900);
-  }, [bump, wipe, mode, online]);
+  }, [bump, wipe, mode, online, record, scored, versus]);
   const retry = useCallback(() => {
     if (online) return; // a ranked match isn't retried; queue again from the end screen
     run.current = freshZg(mode, undefined, versus ? goTime() : 0); setShowEnd(false); sfx.pick(); bump();
   }, [bump, mode, online, versus]);
   const start = () => { const r = run.current; if (!r.startAt) r.startAt = r.goAt || performance.now(); };
   const waiting = useCallback(() => versus && performance.now() < run.current.goAt, [versus]);
-  // Online, every change you make is a move sent to the server (see shared/zerog.js), timed from GO.
+  // Every change you make is a move (see shared/zerog.js), timed from GO (or your first move): kept for the
+  // replay, and online also sent to the server.
   const rec = useCallback((code, arg) => {
-    if (!online) return;
     const r = run.current;
-    const t = Math.max(0, Math.round(performance.now() - r.goAt));
-    r.out.push(arg === undefined ? [t, code] : [t, code, arg]);
+    const t = Math.max(0, Math.round(performance.now() - (r.goAt || r.startAt || performance.now())));
+    const op = arg === undefined ? [t, code] : [t, code, arg];
+    if (r.log.length < 60000) r.log.push([t, "A", ...op.slice(1)]);
+    if (online) r.out.push(op);
   }, [online]);
+  const logAt = () => { const r = run.current; return Math.max(0, Math.round(performance.now() - (r.goAt || r.startAt || performance.now()))); };
   const flush = useCallback(() => { const r = run.current; if (online && r.out.length) { net.send({ t: "towerOps", ops: r.out }); r.out = []; } }, [online]);
 
   const doHard = useCallback(() => {
@@ -5084,12 +5097,19 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
     rec("H", r.seen);
     const L = zHardDrop(st);
     r.holds = 0;
-    if (mode === "ultra") r.score += zScoreOf(L);
+    if (scored) r.score += zScoreOf(L);
     if (versus) {
+      const waiting0 = zIncoming(st);
       const atk = zTowerLock(st, L);
+      const landed = !L.lines ? waiting0 - zIncoming(st) : 0;
+      if (landed > 0) sfx.zgGarbageLand(landed);
       r.sent += atk;
       if (online) flush(); // a lock goes out at once (garbage depends on it)
-      else if (atk > 0) r.opp.st.incoming.push({ n: atk, hole: Math.floor(Math.random() * Z_W), i: r.opp.given++ });
+      else if (atk > 0) {
+        const g = { n: atk, hole: Math.floor(Math.random() * Z_W), i: r.opp.given++ };
+        r.opp.st.incoming.push(g);
+        r.log.push([logAt(), "B", "G", g.n, g.hole, g.i]);
+      }
     }
     sfx.zgDrop();
     if (L.lines || L.spin) sfx.zgClear({ lines: L.lines, spin: L.spin, piece: L.piece.id, combo: Math.max(0, L.combo), b2b: L.b2b, allClear: L.allClear });
@@ -5110,7 +5130,7 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
       else finish(st.won ? "done" : versus ? "lost" : "stuck");
     }
     bump();
-  }, [bump, finish, mode, versus, online, waiting, rec, flush]);
+  }, [bump, finish, versus, online, waiting, rec, flush, scored]);
 
   const press = useCallback((a) => {
     if (a === "retry") { retry(); return; }
@@ -5201,13 +5221,19 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
     return () => cancelAnimationFrame(raf);
   }, [bump, versus, online, rec]);
 
-  // Danger (your stack within 5 rows of the top): a low stab every 2 seconds until you dig out.
+  // Danger (your stack within 5 rows of the top): a low stab, every 2 seconds at 5 rows of room,
+  // faster as it climbs, 3 a second once it touches the top.
   useEffect(() => {
-    const h = setInterval(() => {
-      const r = run.current;
-      if (!r.result && r.st.cur && r.startAt && zgDanger(r.st.board)) sfx.zgAlarm();
-    }, 2000);
-    return () => clearInterval(h);
+    let t;
+    const tick = () => {
+      const r = run.current, room = zgRoom(r.st.board);
+      if (!r.result && r.st.cur && r.startAt && room >= 0) {
+        sfx.zgAlarm();
+        t = setTimeout(tick, 333 + (2000 - 333) * Math.min(1, room / 4));
+      } else t = setTimeout(tick, 200);
+    };
+    t = setTimeout(tick, 200);
+    return () => clearTimeout(t);
   }, []);
 
   // ULTRA: two minutes from the first move.
@@ -5230,10 +5256,16 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
         const o = r.opp, m = zBotLock(o.st);
         const L = m && zApplyLock(o.st, m);
         if (!L) { finish("won"); return; }
+        r.log.push([logAt(), "B", "P", m]);
         const atk = zTowerLock(o.st, L);
         o.sent = (o.sent || 0) + atk;
         if (L.lines || L.spin) oppClear(o, L, o.st.pieces);
-        if (atk > 0) { r.st.incoming.push({ n: atk, hole: Math.floor(Math.random() * Z_W), i: r.seen++ }); sfx.zgLand(); }
+        if (atk > 0) {
+          const g = { n: atk, hole: Math.floor(Math.random() * Z_W), i: r.seen++ };
+          r.st.incoming.push(g);
+          r.log.push([logAt(), "A", "G", g.n, g.hole, g.i]);
+          sfx.zgGarbageIn(atk);
+        }
         if (o.st.over) { finish("won"); return; }
         bump();
         next();
@@ -5255,7 +5287,7 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
     if (!online) return undefined;
     const offs = [
       net.on("towerStart", (m) => { if (m.resume) { run.current = { ...freshZg(mode, m.seed, performance.now()), startAt: performance.now() }; bump(); } }),
-      net.on("towerGarbage", (m) => { const r = run.current; r.st.incoming.push({ n: m.n, hole: m.hole, i: m.i }); r.seen = Math.max(r.seen, m.i + 1); sfx.zgLand(); bump(); }),
+      net.on("towerGarbage", (m) => { const r = run.current; r.st.incoming.push({ n: m.n, hole: m.hole, i: m.i }); r.seen = Math.max(r.seen, m.i + 1); sfx.zgGarbageIn(m.n); bump(); }),
       net.on("towerOps", (m) => { const r = run.current; if (m.side !== net.tower?.you && r.opp) r.opp.q.push(...m.ops); }),
       net.on("towerOppGarbage", (m) => { const o = run.current.opp; if (o) o.st.incoming.push({ n: m.n, hole: m.hole, i: m.i }); }),
       // After a reconnect: both games as the server has them.
@@ -5269,7 +5301,7 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
       net.on("towerEnd", (m) => {
         const r = run.current;
         // The match, kept as a replay: both players' moves and the garbage, timed.
-        if (m.log?.length) replays.save({ kind: "tower", ranked: true, seed: m.seed, moves: m.log, names: m.names, you: m.you, winner: m.winner, sent: m.sent, ratings: m.ratings, date: Date.now() });
+        if (m.log?.length) replays.save({ kind: "tower", ranked: m.rated !== false, seed: m.seed, moves: m.log, names: m.names, you: m.you, winner: m.winner, sent: m.sent, ratings: m.ratings, date: Date.now() });
         r.ratings = m.ratings ? m.ratings[m.you] : null; r.oppName = net.tower?.opponent?.name; r.sentBy = m.sent; r.toppedOut = false; r.result = null; finish(m.winner === m.you ? "won" : "lost"); }),
     ];
     return () => offs.forEach((f) => f());
@@ -5315,15 +5347,15 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
         left={{ name: net.profile?.name || "YOU", score: `${r.sent} SENT`, ink: "var(--tb-you)", won }}
         right={{ name: oppName, score: `${online ? (r.sentBy?.[net.tower?.you === "A" ? "B" : "A"] ?? oppView?.sent ?? 0) : (oppView?.sent || 0)} SENT`, ink: "var(--tb-rival)", won: !won }}
         actions={online
-          ? [{ label: "MENU", onClick: onExit }, { label: "PLAY AGAIN", onClick: () => onRequeue?.(), main: true }]
+          ? [{ label: "MENU", onClick: () => { if (net.tower?.room) net.leaveRoom(); onExit(); } }, { label: net.tower?.room ? "BACK TO ROOM" : "PLAY AGAIN", onClick: () => onRequeue?.(), main: true }]
           : [{ label: "MENU", onClick: onExit }, { label: `REMATCH (${keyOf("retry")})`, onClick: retry, main: true }]}>
         {r.ratings && <RatingPanel from={r.ratings.before} to={r.ratings.after} rdFrom={r.ratings.rdBefore} rdTo={r.ratings.rdAfter} />}
       </EndScreen>
     );
   }
-  if (showEnd && r.result && mode === "ultra") {
+  if (showEnd && r.result && scored) {
     return (
-      <EndScreen verdict={r.newBest ? "NEW BEST" : r.result === "time" ? "TIME UP" : r.result === "stuck" ? "TOPPED OUT" : "FORFEIT"}
+      <EndScreen verdict={r.newBest ? "NEW BEST" : r.result === "time" ? "TIME UP" : r.result === "stuck" ? (mode === "marathon" ? "GAME OVER" : "TOPPED OUT") : "FORFEIT"}
         ink={r.result === "forfeit" ? UI.bad : GOLD} sound={r.result === "forfeit" ? "lose" : "win"} compare={false}
         note={`${st.lines} lines · ${st.pieces} pieces · ${pps.toFixed(2)} PPS · ${st.stats.quad} quads · ${st.stats.tspin} spins · max combo ${Math.max(0, st.stats.maxCombo)}`}
         left={{ name: "SCORE", score: r.score.toLocaleString("en-US"), ink: "var(--tb-you)", won: r.newBest }}
@@ -5371,12 +5403,12 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
   const apmOf = (sent) => (ms > 0 ? sent / (ms / 60000) : 0).toFixed(1);
   const ppsOf = (n) => (ms > 0 ? n / (ms / 1000) : 0).toFixed(2);
   const myStats = [
-    mode === "ultra" && stat("SCORE", r.score.toLocaleString("en-US"), GOLD),
+    scored && stat("SCORE", r.score.toLocaleString("en-US"), GOLD),
     versus && stat("SENT", r.sent, GOLD),
     stat("PIECES", st.pieces),
     stat("PPS", pps.toFixed(2)),
     versus && stat("APM", apmOf(r.sent)),
-    !versus && stat("BEST", best ? (mode === "ultra" ? best.toLocaleString("en-US") : fmtClock(best)) : "—", GOLD),
+    !versus && stat("BEST", best ? (scored ? best.toLocaleString("en-US") : fmtClock(best)) : "—", GOLD),
     mode === "towerbot" && (
       <div key="skill" className="flex items-baseline justify-end" style={{ gap: 2 * P, whiteSpace: "nowrap" }}>
         <span style={{ color: UI.dim }}>BOT</span>
@@ -5396,11 +5428,11 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
   );
   const myOverlay = (
     <>
-      {mode === "towerbot" && !r.result && <Countdown goAt={r.goAt} block={false} />}
+      {(mode === "towerbot" || (online && net.tower?.room)) && !r.result && <Countdown goAt={r.goAt} block={false} />}
       {!versus && !r.startAt && !r.result && (
         <div className="absolute inset-x-0 flex justify-center pointer-events-none" style={{ top: 5 * (cell + g) }}>
           <span className="tb-t" style={{ color: UI.text, padding: `${P}px ${3 * P}px`, background: "color-mix(in srgb, var(--tb-panel-solid) 80%, transparent)" }}>
-            {mode === "ultra" ? "2 MINUTES · THE CLOCK STARTS ON YOUR FIRST MOVE" : "NO GRAVITY · THE CLOCK STARTS ON YOUR FIRST MOVE"}
+            {mode === "ultra" ? "2 MINUTES · THE CLOCK STARTS ON YOUR FIRST MOVE" : mode === "marathon" ? "NO TIMER · PLAY UNTIL YOU TOP OUT" : "NO GRAVITY · THE CLOCK STARTS ON YOUR FIRST MOVE"}
           </span>
         </div>
       )}
@@ -5441,7 +5473,7 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
         {versus && (
           <div className="flex flex-col items-center shrink-0" style={{ paddingTop: 7 * P, gap: P }}>
             <span style={{ fontFamily: '"Silkscreen", monospace', fontWeight: 700, fontSize: 12 * P, lineHeight: 1, letterSpacing: P, color: UI.text }}>TESELLA</span>
-            <span className="tb-t" style={{ color: UI.dim, opacity: 0.7, letterSpacing: 2 * P }}>{online ? "COMPETITIVE" : "VS BOT"}</span>
+            <span className="tb-t" style={{ color: UI.dim, opacity: 0.7, letterSpacing: 2 * P }}>{!online ? "VS BOT" : net.tower?.room ? "PRIVATE" : "COMPETITIVE"}</span>
           </div>
         )}
         <div style={{ flex: 1, minHeight: cell + 2 * P }} />
@@ -5840,7 +5872,7 @@ function BlitzGame({ onExit, online = false, colors, onRequeue }) {
         </div>
         <div style={{ flex: 2, minHeight: 2 * P }} />
         {/* vs bot: 3-2-1 here. Online, the match-found intro counts down. */}
-        {g && !online && !g.result && <Countdown key={g.startAt} goAt={g.startAt} block={false} />}
+        {g && (!online || net.blitz?.room) && !g.result && <Countdown key={g.startAt} goAt={g.startAt} block={false} />}
       </div>
       {online && g && chatM && <ChatDock m={{ chat: chatM.chat || [], you: chatM.you, opponent: chatM.opponent, chatError: chatM.chatError }} colors={colors} />}
       {profileOf && <ProfilePopup name={profileOf.name} guest={profileOf.guest} onClose={() => setProfileOf(null)} />}
@@ -6734,6 +6766,17 @@ function PrivateRoom({ status, onBack, pendingCode, clearPending }) {
           <button onClick={copyCode} className="tb-t flex-1" style={big(false)}>{copied ? "COPIED" : "COPY CODE"}</button>
           <button onClick={share} className="tb-t flex-1" style={big(false)}>SHARE LINK</button>
         </div>
+        {/* What the room plays: the host picks, between games; the other player sees it. */}
+        <div className="flex w-full" style={{ gap: 6 }}>
+          {[["control", "CONTROL"], ["blitz", "BLITZ"], ["tower", "TOWER"]].map(([k, label]) => {
+            const on = (room.mode || "control") === k;
+            return (
+              <button key={k} onClick={() => room.host && !room.playing && net.roomMode(k)} disabled={!room.host || room.playing} aria-pressed={on}
+                className="tb-t flex-1 disabled:cursor-default" style={{ height: 34, ...(on ? skFill(MODE_INK.private) : glass(UI.line)), color: on ? UI.text : UI.dim, opacity: !room.host && !on ? 0.5 : 1 }}>{label}</button>
+            );
+          })}
+        </div>
+        {!room.host && <div className="tb-t" style={{ color: UI.dim, opacity: 0.7 }}>Your friend picks the mode.</div>}
         {!room.opponent ? (
           <div className="tb-t tb-pulse py-2" style={{ color: UI.dim }}>Waiting for your friend…</div>
         ) : room.playing ? (
@@ -6782,13 +6825,20 @@ function replaySides(rec) {
   return { me, them, meName: rec.you ? "YOU" : rec.players.A.name, themName: rec.players[them].name };
 }
 
-const REPLAY_TABS = [["all", "ALL"], ["tower", "TOWER"], ["match", "CONTROL"], ["blitz", "BLITZ"], ["sprint", "SPRINT"], ["ultra", "ULTRA"], ["marathon", "MARATHON"]];
+// Replays by family (Blitz's 8×8 games, TOWER's ZERO-G games, Control), then by mode within a family.
+const REPLAY_FAMILIES = [["all", "ALL"], ["blitz", "BLITZ"], ["tower", "TOWER"], ["control", "CONTROL"]];
+const REPLAY_MODES = [["all", "ALL"], ["1v1", "1V1"], ["sprint", "SPRINT"], ["ultra", "ULTRA"], ["marathon", "MARATHON"]];
+const replayFamily = (r) => (!r.kind ? "control" : r.kind === "tower" || r.kind === "zerog" ? "tower" : "blitz");
+const replayMode = (r) => (!r.kind ? "1v1" : r.kind === "blitz" || r.kind === "tower" ? "1v1" : r.kind === "zerog" ? r.mode || "sprint" : r.kind);
 function ReplayList({ onOpen, onBack }) {
   const P = usePx();
   const all = useReplayList();
-  const [tab, setTab] = useState(() => store.get("tb:replayTab") || "all");
-  const pick = (k) => { setTab(k); store.set("tb:replayTab", k); };
-  const list = all.filter((r) => tab === "all" || (tab === "match" ? !r.kind : r.kind === tab));
+  const [fam, setFam] = useState(() => (REPLAY_FAMILIES.some(([k]) => k === store.get("tb:replayFam")) ? store.get("tb:replayFam") : "all"));
+  const [sub, setSub] = useState(() => (REPLAY_MODES.some(([k]) => k === store.get("tb:replaySub")) ? store.get("tb:replaySub") : "all"));
+  const pickFam = (k) => { setFam(k); store.set("tb:replayFam", k); setSub("all"); store.set("tb:replaySub", "all"); };
+  const pickSub = (k) => { setSub(k); store.set("tb:replaySub", k); };
+  const hasModes = fam === "blitz" || fam === "tower";
+  const list = all.filter((r) => (fam === "all" || replayFamily(r) === fam) && (!hasModes || sub === "all" || replayMode(r) === sub));
   const [code, setCode] = useState("");
   const [err, setErr] = useState(null);
   const doImport = () => {
@@ -6808,16 +6858,38 @@ function ReplayList({ onOpen, onBack }) {
           <button type="submit" disabled={!code.trim()} className="tb-t px-3 disabled:opacity-40" style={{ height: 40, ...glass(UI.line), color: UI.dim }}>OPEN</button>
         </form>
         {err && <div className="tb-t mb-1" style={{ color: UI.bad }}>{err}</div>}
-        {/* What to show. */}
+        {/* What to show: the family, then (for Blitz and TOWER) the mode. */}
         <div className="flex flex-wrap gap-1.5 mt-2 shrink-0">
-          {REPLAY_TABS.map(([k, label]) => (
-            <button key={k} onClick={() => pick(k)} aria-pressed={tab === k} className="tb-t px-2"
-              style={{ height: 30, ...(tab === k ? skFill(GOLD) : glass(UI.line)), color: tab === k ? UI.text : UI.dim }}>{label}</button>
+          {REPLAY_FAMILIES.map(([k, label]) => (
+            <button key={k} onClick={() => pickFam(k)} aria-pressed={fam === k} className="tb-t px-2"
+              style={{ height: 30, ...(fam === k ? skFill(GOLD) : glass(UI.line)), color: fam === k ? UI.text : UI.dim }}>{label}</button>
           ))}
         </div>
+        {hasModes && (
+          <div className="flex flex-wrap gap-1.5 mt-1.5 shrink-0">
+            {REPLAY_MODES.map(([k, label]) => (
+              <button key={k} onClick={() => pickSub(k)} aria-pressed={sub === k} className="tb-t px-2"
+                style={{ height: 26, ...(sub === k ? skFill(UI.line) : glass(UI.line)), color: sub === k ? UI.text : UI.dim }}>{label}</button>
+            ))}
+          </div>
+        )}
+        <div className="tb-t mt-1.5 shrink-0" style={{ color: UI.dim, opacity: 0.7 }}>{list.length} replay{list.length === 1 ? "" : "s"}</div>
         <div className="flex-1 min-h-0 overflow-y-auto mt-2 flex flex-col gap-2 pr-1">
           {!list.length && <div className="tb-t text-center py-10" style={{ color: UI.dim }}>No replays here yet. Every game you finish is saved here.</div>}
           {list.map((rec) => {
+            if (rec.kind === "zerog") {
+              const m = rec.mode || "sprint";
+              const main = m === "sprint" ? (rec.result?.done ? fmtClock(rec.result.ms || 0) : `${rec.result?.lines || 0} lines`) : (rec.result?.score || 0).toLocaleString("en-US");
+              return (
+                <button key={rec.id} onClick={() => onOpen(rec.id)} className="w-full text-left flex items-center gap-3 px-3 py-2" style={{ ...glass(UI.line) }}>
+                  <div className="flex-1 min-w-0">
+                    <div className="tb-t truncate">TOWER · {m.toUpperCase()}</div>
+                    <div className="tb-t truncate" style={{ color: UI.dim }}>{rec.result?.pieces || 0} pieces · {fmtDate(rec.date)}</div>
+                  </div>
+                  <span className="tb-t tb-b tabular-nums" style={{ color: GOLD }}>{main}</span>
+                </button>
+              );
+            }
             if (rec.kind === "tower") {
               const them = rec.you === "A" ? "B" : "A";
               const won = rec.winner === rec.you;
@@ -6825,7 +6897,7 @@ function ReplayList({ onOpen, onBack }) {
                 <button key={rec.id} onClick={() => onOpen(rec.id)} className="w-full text-left flex items-center gap-3 px-3 py-2" style={{ ...glass(UI.line) }}>
                   <div className="flex-1 min-w-0">
                     <div className="tb-t truncate">{rec.names?.[rec.you] || "YOU"} <span style={{ color: UI.dim }}>vs</span> {rec.names?.[them] || "?"}</div>
-                    <div className="tb-t truncate" style={{ color: UI.dim }}>TOWER · {rec.ranked ? "RANKED" : "MATCH"} · {rec.sent?.[rec.you] ?? 0}–{rec.sent?.[them] ?? 0} SENT · {fmtDate(rec.date)}</div>
+                    <div className="tb-t truncate" style={{ color: UI.dim }}>TOWER · {rec.ranked ? "RANKED" : rec.names?.B?.startsWith("BOT") ? "VS BOT" : "PRIVATE"} · {rec.sent?.[rec.you] ?? 0}–{rec.sent?.[them] ?? 0} SENT · {fmtDate(rec.date)}</div>
                   </div>
                   <span className="tb-t tb-b" style={{ color: won ? GOLD : UI.bad }}>{won ? "WIN" : "LOSS"}</span>
                 </button>
@@ -6849,7 +6921,7 @@ function ReplayList({ onOpen, onBack }) {
               return (
                 <button key={rec.id} onClick={() => onOpen(rec.id)} className="w-full text-left flex items-center gap-3 px-3 py-2" style={{ ...glass(UI.line) }}>
                   <div className="flex-1 min-w-0">
-                    <div className="tb-t truncate">{rec.kind.toUpperCase()}</div>
+                    <div className="tb-t truncate">BLITZ · {rec.kind.toUpperCase()}</div>
                     <div className="tb-t truncate" style={{ color: UI.dim }}>{rec.moves.length} pieces · {fmtDate(rec.date)}</div>
                   </div>
                   <div className="tb-t tb-b tabular-nums shrink-0" style={{ color: "var(--tb-you)" }}>{main}</div>
@@ -7143,7 +7215,7 @@ function ReplayPage({ onBack, head, aside, stageRef, children, pb, rec, frames, 
         {/* Transport: start · back · play · forward · end, speed, a scrubber, and the video. */}
         <div className="shrink-0 flex flex-col items-center gap-2 pt-2 pb-3">
           <PixelSlider min={0} max={Math.max(1, Math.ceil(end / 100))} value={Math.round(time / 100)} onChange={(v) => { setPlaying(false); seek(v * 100); }}
-            ink={ink} label="Replay position" className="w-full" style={{ maxWidth: 720 }} />
+            ink={UI.text} label="Replay position" className="w-full" style={{ maxWidth: 720 }} />
           <div className="flex items-center justify-center flex-wrap" style={{ gap: 2 * P }}>
             <Bubble w={d} h={d} label="Start" onClick={() => { setPlaying(false); seek(0); }}><First /></Bubble>
             <Bubble w={d} h={d} label="Back 2 seconds" onClick={() => seek(time - 2000)}><ChevronLeft /></Bubble>
@@ -7319,15 +7391,17 @@ function BlitzReplayViewer({ rec, colors, onBack }) {
 /** A TOWER match at time `T` (ms from GO): both games, replayed from the log of moves and garbage. */
 function towerAt(rec, T) {
   const mk = () => Object.assign(zNewGame(rec.seed, Infinity), { incoming: [] });
-  const sim = { A: mk(), B: mk(), sent: { A: 0, B: 0 }, pop: { A: null, B: null }, flash: { A: null, B: null } };
+  const sim = { A: mk(), B: mk(), sent: { A: 0, B: 0 }, score: 0, pop: { A: null, B: null }, flash: { A: null, B: null } };
+  const solo = rec.kind === "zerog";
   for (const e of rec.moves) {
     if (e[0] > T) break;
     const [t, side, code, ...rest] = e;
     if (code === "G") { sim[side].incoming.push({ n: rest[0], hole: rest[1], i: rest[2] }); continue; }
     const st = sim[side], before = st.pieces;
-    if (!zApplyOp(st, [t, code, ...rest]) || code !== "H" || st.pieces === before) continue;
+    if (!zApplyOp(st, [t, code, ...rest]) || (code !== "H" && code !== "P") || st.pieces === before) continue;
     const L = st.last;
-    sim.sent[side] += zTowerLock(st, L, rest[0]);
+    if (solo) sim.score += zScoreOf(L);
+    else sim.sent[side] += zTowerLock(st, L, code === "P" ? Infinity : rest[0]);
     if (L.lines || L.spin) {
       sim.pop[side] = T - t < 1400 ? { name: L.name, piece: L.piece.id, combo: L.combo, b2b: L.b2b, allClear: L.allClear, key: `${side}${st.pieces}` } : null;
       sim.flash[side] = L.rows.length && T - t < 200 ? { rows: L.rows, key: `${side}${st.pieces}` } : null;
@@ -7369,6 +7443,19 @@ function TowerReplayViewer({ rec, onBack }) {
     );
   };
   const them = rec.you === "A" ? "B" : "A";
+  if (rec.kind === "zerog") {
+    // A solo run: one board, its score or lines, and its clock.
+    const st = sim.A, scored = rec.mode !== "sprint";
+    return (
+      <ReplayPage onBack={onBack} stageRef={stageRef} pb={pb} rec={rec} frames={null} endMs={end} ink={MODE_INK.zerog}
+        head={`TOWER · ${(rec.mode || "sprint").toUpperCase()} · ${rec.name || "YOU"}`}
+        label={`${fmtClock(pb.time)} / ${fmtClock(end)}`}>
+        <ZgField L={L} st={st} name={rec.name || "YOU"} pop={sim.pop.A} flash={sim.flash.A}
+          stats={[scored && stat("SCORE", sim.score.toLocaleString("en-US"), GOLD), stat("PIECES", st.pieces), stat("PPS", (sec > 0 ? st.pieces / sec : 0).toFixed(2))].filter(Boolean)}
+          bottom={<span className="tb-b tabular-nums">{rec.mode === "sprint" ? `${Math.min(st.lines, Z_GOAL)} / ${Z_GOAL}` : `${st.lines} LINES`}</span>} />
+      </ReplayPage>
+    );
+  }
   return (
     <ReplayPage onBack={onBack} stageRef={stageRef} pb={pb} rec={rec} frames={null} endMs={end} ink={MODE_INK.zerog}
       head={`TOWER · ${rec.names?.[rec.you] || "YOU"} vs ${rec.names?.[them] || "?"} · ${rec.winner === rec.you ? "WIN" : "LOSS"}`}
@@ -7717,16 +7804,17 @@ export default function TurfBlocks() {
       return true;
     };
     const offF = net.on("found", (f) => { if (f && !f.room) begin("control", f.opponent); });
+    // A private room's Blitz or TOWER match: straight in (no match-found intro), with its 3-2-1.
     const offB = net.on("blitzStart", (b) => {
-      if (b.resume) { setScreen("BLITZ"); return; }
+      if (b.resume || b.room) { setMenuModal(null); wipe(() => setScreen("BLITZ")); return; }
       begin("blitz", b.opponent);
     });
     const offT = net.on("towerStart", (t) => {
-      if (t.resume) { setScreen("TOWER"); return; }
+      if (t.resume || t.room) { setMenuModal(null); wipe(() => setScreen("TOWER")); return; }
       begin("tower", t.opponent);
     });
     return () => { offF(); offB(); offT(); };
-  }, [setScreen]);
+  }, [setScreen, wipe]);
 
   const status = useStatus();
   const profile = useProfile();
@@ -7969,7 +8057,7 @@ export default function TurfBlocks() {
           else if (t === "PRIVATE") setScreen("PRIVATE");
           else if (t === "REPLAYS") setScreen("REPLAYS");
           // Every game mode: in on the tide (the game then counts down from 3).
-          else if (["MARATHON", "SPRINT", "ULTRA", "ZEROG", "ZEROGULTRA", "TOWERBOT", "BLITZBOT", "TURNBASED", "HOTSEAT"].includes(t)) wipe(() => { setSeed((s) => s + 1); setScreen(t); });
+          else if (["MARATHON", "SPRINT", "ULTRA", "ZEROG", "ZEROGULTRA", "ZEROGMARATHON", "TOWERBOT", "BLITZBOT", "TURNBASED", "HOTSEAT"].includes(t)) wipe(() => { setSeed((s) => s + 1); setScreen(t); });
         }}
         loadout={loadout} setLoadout={setLoadout}
         colors={colors} profile={profile} status={status}
@@ -7986,7 +8074,7 @@ export default function TurfBlocks() {
   else if (screen === "REPLAYS")
     view = <ReplayList onOpen={(id) => { setReplayId(id); setScreen("REPLAY"); }} onBack={() => setScreen("MENU")} />;
   else if (screen === "REPLAY")
-    view = replays.get(replayId)?.kind === "tower"
+    view = replays.get(replayId)?.kind === "tower" || replays.get(replayId)?.kind === "zerog"
       ? <TowerReplayViewer rec={replays.get(replayId)} onBack={() => setScreen("REPLAYS")} />
       : replays.get(replayId)?.kind === "blitz"
       ? <BlitzReplayViewer rec={replays.get(replayId)} colors={colors} onBack={() => setScreen("REPLAYS")} />
@@ -8017,12 +8105,12 @@ export default function TurfBlocks() {
     );
   else if (screen === "BLITZ" || screen === "BLITZBOT")
     view = <BlitzGame key={`${screen}${seed}`} online={screen === "BLITZ"} colors={colors} onExit={() => setScreen("MENU")}
-      onRequeue={() => { startQueue("blitz", loadout); setMenuModal("LOBBY:blitz"); setScreen("MENU"); }} />;
+      onRequeue={() => { if (net.blitz?.room) { setScreen("PRIVATE"); return; } startQueue("blitz", loadout); setMenuModal("LOBBY:blitz"); setScreen("MENU"); }} />;
   else if (screen === "SPRINT" || screen === "ULTRA")
     view = <SprintGame key={`${screen}${seed}`} ultra={screen === "ULTRA"} onExit={() => setScreen("MENU")} />;
-  else if (screen === "ZEROG" || screen === "ZEROGULTRA" || screen === "TOWERBOT" || screen === "TOWER")
-    view = <ZeroGGame key={`${screen}${seed}`} mode={{ ZEROG: "sprint", ZEROGULTRA: "ultra", TOWERBOT: "towerbot", TOWER: "tower" }[screen]} onExit={() => setScreen("MENU")}
-      onRequeue={() => { startQueue("tower", loadout); setMenuModal("LOBBY:tower"); setScreen("MENU"); }} />;
+  else if (screen === "ZEROG" || screen === "ZEROGULTRA" || screen === "ZEROGMARATHON" || screen === "TOWERBOT" || screen === "TOWER")
+    view = <ZeroGGame key={`${screen}${seed}`} mode={{ ZEROG: "sprint", ZEROGULTRA: "ultra", ZEROGMARATHON: "marathon", TOWERBOT: "towerbot", TOWER: "tower" }[screen]} onExit={() => setScreen("MENU")}
+      onRequeue={() => { if (net.tower?.room) { setScreen("PRIVATE"); return; } startQueue("tower", loadout); setMenuModal("LOBBY:tower"); setScreen("MENU"); }} />;
   else if (screen === "MARATHON")
     view = <MarathonGame key={seed} theme={theme} onExit={(again) => (again ? setSeed((s) => s + 1) : setScreen("MENU"))} />;
   else

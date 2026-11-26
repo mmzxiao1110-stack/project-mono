@@ -643,11 +643,29 @@ export const sfx = {
       muffle(c, t, { vol: 0.3, f: 110 });
     });
   },
-  /** Danger: the stab two octaves down, fading in softly, every 2 seconds while your stack is near the top. */
+  /** Danger: the stab two octaves down, with its sharp attack; the game repeats it faster the nearer the top you are. */
   zgAlarm() {
-    play("zgAlarm", 1000, (c, t) => {
-      stab(c, t, { vol: 0.04, base: A3 - 12, a: 0.06 });
-      tone(c, t, { wave: "sine", f: mtof(33), vol: 0.06, a: 0.07, d: 0.35, wet: 0.2 });
+    play("zgAlarm", 250, (c, t) => {
+      stab(c, t, { vol: 0.04, base: A3 - 12 });
+      tone(c, t, { wave: "sine", f: mtof(33), vol: 0.06, a: 0.004, d: 0.3, wet: 0.2 });
+    });
+  },
+  /** Garbage on its way to you: two low chip blips stepping down, and a bubble. More rows, a little louder. */
+  zgGarbageIn(n = 1) {
+    play("zgGarbageIn", 80, (c, t) => {
+      const v = Math.min(0.045, 0.022 + 0.004 * n);
+      chip(c, t, za(4, 45), { vol: v, d: 0.12, duty: "p12" });
+      chip(c, t + 0.07, za(0, 45), { vol: v, d: 0.2, duty: "p12" });
+      bubble(c, t + 0.03, rand(380, 460), 0.04, rand(-0.3, 0.3), 0.3);
+    });
+  },
+  /** Garbage landing: the board shoved up from below, a deep muffled rumble and grit, longer for more rows. */
+  zgGarbageLand(n = 1) {
+    play("zgGarbageLand", 80, (c, t) => {
+      const d = Math.min(0.5, 0.16 + 0.03 * n);
+      muffle(c, t, { vol: Math.min(0.42, 0.25 + 0.02 * n), f: 120 });
+      hiss(c, t, { type: "lowpass", f: 700, to: 140, q: 0.8, vol: 0.05 + 0.006 * Math.min(n, 8), d, wet: 0.25, crush: true });
+      tone(c, t + 0.02, { wave: "p25", f: 70, to: 45, glide: 4 * FRAME, steps: true, vol: 0.035, d, wet: 0.1, lp: [500, 150, 1] });
     });
   },
   /** A sample of the key, when MINOR KEY is switched. */
