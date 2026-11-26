@@ -9,48 +9,56 @@
 <body>
 <main>
 <h1>Privacy Policy</h1>
-<p class="meta">Tesella · Last updated: [DATE]</p>
+<p class="meta">Tesella · Last updated: November 26, 2026</p>
 
-<!-- TEMPLATE: written to match what the game's code actually does. Fill in every
-     [BRACKETED] item, read it through, and have it checked if you're unsure —
-     this is a starting point, not legal advice. Delete this comment when done. -->
-
-<p>Tesella is a browser game run by [YOUR NAME OR STUDIO] ("we"). This page explains what we collect when you play, why, and what you can do about it. Questions: <a href="mailto:[CONTACT EMAIL]">[CONTACT EMAIL]</a>.</p>
+<p>Tesella is a game you play on the web (tesella.io) and in our Android app, made by Tesella ("we"). This page explains what we collect when you play, why, and what you can do about it. Questions: <a href="mailto:support@tesella.io">support@tesella.io</a>.</p>
 
 <h2>If you only play offline</h2>
-<p>Solo and take-turns games run entirely in your browser. We don't receive anything about them. Your settings (theme, volume, your block deck) are saved in your browser's local storage on your own device.</p>
+<p>Games against the AI, pass-and-play games and Marathon played without an account run entirely on your device. We don't receive anything about them. Your settings (theme, volume, controls) and your replays are saved on your own device.</p>
+
+<h2>If you play as a guest</h2>
+<p>Online without an account, you choose a guest name. It is shown to the players you meet and kept only while you're connected. Guests have no record and nothing is saved about them.</p>
 
 <h2>If you make an account</h2>
-<p>To play ranked games online we store:</p>
+<p>To play ranked games and keep your progress we store:</p>
 <ul>
-  <li><strong>Username and display name.</strong> Your display name, rating and rank are shown to the players you're matched with.</li>
-  <li><strong>Email address.</strong> Used only to send verification and password-reset codes. We don't send marketing email and don't show your email to other players.</li>
-  <li><strong>Password</strong>, stored only as a salted scrypt hash. We can't read it.</li>
-  <li><strong>Game record:</strong> rating, wins and losses, time played, and your recent matches (opponent's name and the score).</li>
-  <li><strong>A sign-in token</strong> saved in your browser so you stay logged in, valid for 30 days.</li>
+  <li><strong>Username and display name.</strong> Shown to other players with your rating and rank.</li>
+  <li><strong>Email address.</strong> Used only to send verification and password-reset codes, and to confirm a request about your account. We don't send marketing email and never show your email to other players.</li>
+  <li><strong>Password</strong>, stored only as a salted scrypt hash. We can't read it. If you sign in with Google instead, we receive your email address and a Google account ID from Google, and no password.</li>
+  <li><strong>Game record:</strong> rating, wins and losses, time played, your recent ranked matches (opponent's name and the score), and your Marathon scores. A Marathon game you play signed in is sent to us (its starting seed and your moves) so we can check the score and let you resume it later.</li>
+  <li><strong>Players you block.</strong> Kept with your account so their chat stays hidden and you're never matched with them.</li>
+  <li><strong>A sign-in token</strong> saved on your device so you stay logged in, valid for 30 days.</li>
 </ul>
 
 <h2>What other people can see</h2>
-<p>Your player profile is public on T-Terminal (tesella.io/terminal) and in the game's profile popups: your display name, rating and rank, wins and losses, time played, your rating over your last 40 ranked games and your recent matches (opponent's name, score and when). Your best Marathon score (and its lines) is also public. Your email address and anything about how you sign in are never shown. Accounts that haven't verified their email aren't listed.</p>
+<p>Your player profile is public on T-Terminal (tesella.io/terminal) and in the game's profile popups: your display name, rating and rank, wins and losses, time played, your rating over your last 40 ranked games, your recent matches, and your best Marathon score. Your email address and how you sign in are never shown. Accounts that haven't verified their email aren't listed.</p>
 
-<h2>Chat</h2>
-<p>During online matches you can chat with your opponent. Messages go through our server only to be passed on to the two players in that match. We don't store them, and they're gone when the match ends. Messages are filtered for blocked words and limited in length and rate.</p>
+<h2>Chat, reports and blocking</h2>
+<p>During online matches you can chat with your opponent. Messages pass through our server to the two players in that match and are filtered for blocked words and limited in length and rate. We keep the last few lines only in memory while the match lasts and don't store chat.</p>
+<p>If you <strong>report</strong> a player, we store the report (who sent it, who it's about, the reason, any note you add, and the recent chat between you two) and email it to our moderators so we can act on it. Reports are kept until they've been dealt with and are no longer needed. The person you report isn't told who reported them.</p>
+<p>If you <strong>block</strong> a player, their chat no longer reaches you and matchmaking never pairs you with them.</p>
 
 <h2>Technical data</h2>
-<p>Our server sees your IP address while you're connected. We use it in memory to limit abuse (for example, too many sign-ups from one network) and don't store it in your account. The server's logs, which our host keeps for a limited time, record usernames and match events, and an IP address when one of those abuse limits is triggered.</p>
+<p>Our server sees your IP address while you're connected. We use it in memory to limit abuse (for example, too many sign-ups from one network) and don't store it with your account. Our host keeps server logs for a limited time; they record usernames and match events, and an IP address when an abuse limit is triggered.</p>
 
 <h2>Who else handles it</h2>
 <ul>
-  <li><strong>Render</strong> hosts the game server and its data ([REGION, e.g. United States]).</li>
-  <li><strong>Resend</strong> delivers the emails with your codes, so it receives your email address and the code.</li>
+  <li><strong>Cloudflare</strong> hosts the game, its server and its data.</li>
+  <li><strong>Resend</strong> delivers our emails: it receives your email address and code when we send you one, and the contents of reports we email to our moderators.</li>
+  <li><strong>Google</strong>, only if you choose to sign in with Google.</li>
 </ul>
 <p>We don't sell your data, show ads, or use third-party analytics or tracking.</p>
 
 <h2>How long we keep it</h2>
-<p>Account data is kept until you ask us to delete it. Backups of the game database are kept for up to 48 hours, so deleted data disappears from them within two days.</p>
+<p>Account data is kept until you delete your account. Deleting it removes your account, email, sign-ins, ratings, stats, Marathon scores and blocks straight away; in other players' match lists your name is replaced with "deleted player". Our host keeps recovery copies of the database for up to 30 days, so deleted data disappears from those within 30 days.</p>
 
 <h2>Your choices</h2>
-<p>You can change your display name in Settings. To get a copy of your data or have your account deleted, email <a href="mailto:[CONTACT EMAIL]">[CONTACT EMAIL]</a> from the address on your account. Depending on where you live (for example the EU, UK or California), you may have further rights over your data, and you can contact us or your local data protection authority about them.</p>
+<ul>
+  <li><strong>Delete your account</strong> any time in the game: Account, then Delete account. Or see <a href="/delete-account">tesella.io/delete-account</a>.</li>
+  <li>Change your display name in Settings.</li>
+  <li>For a copy of your data, or if you can't sign in to delete your account, email <a href="mailto:support@tesella.io">support@tesella.io</a> from the address on your account.</li>
+</ul>
+<p>Depending on where you live (for example the EU, UK or California), you may have further rights over your data. You can contact us, or your local data protection authority, about them.</p>
 
 <h2>Children</h2>
 <p>Tesella isn't directed at children under 13 (or the minimum age in your country), and we don't knowingly collect their data. If you believe a child has made an account, contact us and we'll delete it.</p>

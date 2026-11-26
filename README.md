@@ -44,6 +44,7 @@ The same game server runs as a Cloudflare Worker (`cloudflare/worker.js`) with o
    - `RESEND_API_KEY` (type *Secret*)
    - `MAIL_FROM`, e.g. `Tesella <no-reply@yourdomain.com>`
    - Optional: `GOOGLE_CLIENT_ID`
+   - Optional: `REPORT_EMAIL`, where player reports are emailed (default `support@tesella.io`)
 3. Try it on the `*.workers.dev` address, then add your domain under **Settings → Domains & Routes → Custom domain** (remove any old DNS records for that name first).
 
 To run the Cloudflare version locally:

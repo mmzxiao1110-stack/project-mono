@@ -4,10 +4,12 @@
  *   /ws, /api/*   → the game (one Durable Object, see game.js)
  *   terminal.* hosts, at their root → T-Terminal's page
  *   /music/*      → the song, in byte ranges (so a song can start mid-track)
+ *   /.well-known/assetlinks.json → proves the Android app is ours (no browser bar in it)
  *   everything else is the built site (dist/), served by Cloudflare's static
  *   assets without running this code at all.
  */
 export { Game } from "./game.js";
+import assetLinks from "../public/.well-known/assetlinks.json";
 
 export default {
   async fetch(req, env) {
@@ -20,6 +22,10 @@ export default {
       return env.ASSETS.fetch(new Request(new URL("/terminal", url), req));
     }
     if (url.pathname.startsWith("/music/")) return ranged(req, env);
+    // Served from here, not left to static assets: a dot-folder may be skipped on upload.
+    if (url.pathname === "/.well-known/assetlinks.json") {
+      return new Response(JSON.stringify(assetLinks), { headers: { "content-type": "application/json", "cache-control": "public, max-age=300", "access-control-allow-origin": "*" } });
+    }
     return env.ASSETS.fetch(req);
   },
 };

@@ -62,6 +62,8 @@ export class Queue {
       for (let j = i + 1; j < list.length; j++) {
         const a = list[i], b = list[j];
         const gap = Math.abs(a.rating.r - b.rating.r);
+        // Someone who blocked the other is never matched with them.
+        if (a.blocked?.has(b.playerId) || b.blocked?.has(a.playerId)) continue;
         if (gap <= Math.min(a.band, b.band)) pairs.push({ a, b, gap });
       }
     pairs.sort((x, y) => x.gap - y.gap);

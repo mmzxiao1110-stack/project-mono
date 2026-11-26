@@ -1688,6 +1688,54 @@ function Popup({ title, onClose, children, pinned, maxW = 430, wideW }) {
 /* ============================================================
    PROFILES — a player's record, from the same API as T-Terminal
    ============================================================ */
+/**
+ * Report and block, for another player. Block: their chat no longer reaches
+ * you and you're never matched with them (kept on your account). Report: sent
+ * to the moderators with the recent chat between you.
+ */
+const REPORT_REASONS = [["chat", "OFFENSIVE CHAT"], ["name", "OFFENSIVE NAME"], ["cheating", "CHEATING"], ["other", "SOMETHING ELSE"]];
+function SafetyActions({ name }) {
+  const P = usePx();
+  const status = useStatus();
+  const [blocked, setBlocked] = useState(() => net.isBlocked(name));
+  const [reporting, setReporting] = useState(false);
+  const [reason, setReason] = useState(null);
+  const [note, setNote] = useState("");
+  const [done, setDone] = useState(null);
+  useEffect(() => net.on("blocked", (set) => setBlocked(set.has(name))), [name]);
+  useEffect(() => net.on("reported", (who) => { if (who === name) { setReporting(false); setDone("Thanks. We'll review your report."); } }), [name]);
+  const me = net.profile?.name;
+  if (status !== "online" || !name || name === me) return null;
+  const small = { height: 34, ...glass(UI.line) };
+  return (
+    <div className="flex flex-col" style={{ gap: 2 * P }}>
+      <div className="flex" style={{ gap: 2 * P }}>
+        <button onClick={() => net.block(name, !blocked)} className="flex-1 tb-t" aria-pressed={blocked}
+          style={{ ...small, color: blocked ? GOLD : UI.dim }}>{blocked ? "UNBLOCK" : "BLOCK"}</button>
+        <button onClick={() => { setReporting(!reporting); setDone(null); }} className="flex-1 tb-t" aria-expanded={reporting}
+          style={{ ...small, color: reporting ? UI.text : UI.bad }}>REPORT</button>
+      </div>
+      {blocked && <div className="tb-t" style={{ color: UI.dim }}>Blocked: their chat is hidden and you won't be matched with them.</div>}
+      {done && <div className="tb-t" style={{ color: UI.good }}>{done}</div>}
+      {reporting && (
+        <div className="flex flex-col" style={{ gap: 2 * P }}>
+          <div className="tb-t" style={{ color: UI.dim }}>What's wrong?</div>
+          <div className="grid grid-cols-2" style={{ gap: 2 * P }}>
+            {REPORT_REASONS.map(([k, label]) => (
+              <button key={k} onClick={() => setReason(k)} aria-pressed={reason === k} className="tb-t"
+                style={{ height: 32, ...(reason === k ? skFill(UI.text) : glass(UI.line)), color: reason === k ? UI.text : UI.dim }}>{label}</button>
+            ))}
+          </div>
+          <input value={note} onChange={(e) => setNote(e.target.value.slice(0, 300))} placeholder="Anything else? (optional)" aria-label="Report details"
+            className="tb-t px-2" style={{ height: 34, ...glass(UI.line), color: UI.text, outline: "none" }} />
+          <button disabled={!reason} onClick={() => net.report(name, reason, note)} className="tb-t disabled:opacity-35"
+            style={{ height: 36, ...skFill(UI.bad), color: UI.text }}>SEND REPORT</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProfilePopup({ name, guest = false, onClose }) {
   const P = usePx();
   // The popup can follow links to other players (their recent opponents).
@@ -1729,6 +1777,7 @@ function ProfilePopup({ name, guest = false, onClose }) {
             <span style={{ color: ACCENTS.terminal, display: "flex" }}><TerminalIcon /></span> OPEN IN T-TERMINAL
           </a>
         )}
+        <SafetyActions name={who} />
       </div>
     </Popup>
   );
@@ -1741,6 +1790,7 @@ const CHAT_MAX = 120;
 function ChatDock({ m, colors }) {
   const P = usePx();
   const [open, setOpen] = useState(false);
+  const [safety, setSafety] = useState(false);
   const [draft, setDraft] = useState("");
   const [muted, setMuted] = useState(() => store.get("tb:chatMuted") === "1");
   const [seen, setSeen] = useState(0);
@@ -1790,10 +1840,16 @@ function ChatDock({ m, colors }) {
               {muted ? "MUTED" : "MUTE"}
             </button>
           </div>
-          {/* The rules, always in view. */}
-          <div className="tb-t" style={{ color: UI.dim, opacity: 0.8 }}>
-            Be respectful to everyone.
+          {/* The rules, always in view, with a way to act on them. */}
+          <div className="flex items-center justify-between" style={{ gap: 2 * P }}>
+            <span className="tb-t" style={{ color: UI.dim, opacity: 0.8 }}>Be respectful to everyone.</span>
+            {m.opponent?.name && (
+              <button onClick={() => setSafety(!safety)} className="tb-t shrink-0" aria-expanded={safety} style={{ color: safety ? UI.text : UI.bad }}>
+                REPORT / BLOCK
+              </button>
+            )}
           </div>
+          {safety && m.opponent?.name && <SafetyActions name={m.opponent.name} />}
           <div ref={listRef} className="tb-scroll flex-1 min-h-0 overflow-y-auto flex flex-col" style={{ gap: P }}>
             {!shown.length && <div className="tb-t" style={{ color: UI.dim, opacity: 0.6 }}>{muted ? "Their messages are hidden." : "No messages yet. Say good luck!"}</div>}
             {shown.map((l, i) => (
@@ -1984,7 +2040,7 @@ function StatCell({ label, value, sub, color }) {
   );
 }
 
-function StatsModal({ profile, status, onClose, onLogout }) {
+function StatsModal({ profile, status, onClose, onLogout, onDelete }) {
   const wide = useWidePanel();
   // No profile has two very different causes. Saying "offline" for both sent
   // people hunting a server problem when they simply weren't signed in.
@@ -2153,10 +2209,13 @@ function StatsModal({ profile, status, onClose, onLogout }) {
     </div>
   );
   const signOut = onLogout && (
-    <button onClick={onLogout} className="w-full rounded tb-t flex items-center justify-center gap-2 mt-2 mb-1"
-      style={{ height: wide ? 38 : 44, ...sk(UI.line), color: UI.dim }}>
-      <LogOut size={13} /> SIGN OUT
-    </button>
+    <>
+      <button onClick={onLogout} className="w-full rounded tb-t flex items-center justify-center gap-2 mt-2 mb-1"
+        style={{ height: wide ? 38 : 44, ...sk(UI.line), color: UI.dim }}>
+        <LogOut size={13} /> SIGN OUT
+      </button>
+      {onDelete && <button onClick={onDelete} className="w-full tb-t py-2" style={{ color: UI.bad, opacity: 0.75 }}>DELETE ACCOUNT</button>}
+    </>
   );
 
   return (
@@ -2832,7 +2891,7 @@ function VerifyModal({ profile, onClose }) {
 /* ============================================================
    ACCOUNT — who you are
    ============================================================ */
-function AccountModal({ profile, onLogout, onClose }) {
+function AccountModal({ profile, onLogout, onClose, onDelete }) {
   if (profile && profile.guest) {
     return (
       <Popup title="ACCOUNT" onClose={onClose} maxW={380}>
@@ -2852,7 +2911,7 @@ function AccountModal({ profile, onLogout, onClose }) {
     );
   }
   // Signed in: your account and your stats are one page.
-  if (profile.stats) return <StatsModal profile={profile} status="online" onClose={onClose} onLogout={onLogout} />;
+  if (profile.stats) return <StatsModal profile={profile} status="online" onClose={onClose} onLogout={onLogout} onDelete={onDelete} />;
   const st = profile.stats;
   const tr = Math.round(profile.rating.r);
   const placed = st.games >= PLACEMENT_GAMES;
@@ -2910,7 +2969,47 @@ function AccountModal({ profile, onLogout, onClose }) {
           style={{ height: 44, ...sk(UI.line), color: UI.dim }}>
           <LogOut size={13} /> SIGN OUT
         </button>
+        {onDelete && <button onClick={onDelete} className="w-full tb-t py-2 mt-1" style={{ color: UI.bad, opacity: 0.75 }}>DELETE ACCOUNT</button>}
       </div>
+    </Popup>
+  );
+}
+
+/**
+ * Deleting your account, for good: the account, sign-ins, ratings, stats and
+ * Marathon scores. Confirmed with the password (or, for Google sign-in, by
+ * typing the username).
+ */
+function DeleteAccountModal({ profile, onClose }) {
+  const P = usePx();
+  const [value, setValue] = useState("");
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => net.on("deleteError", (m) => { setErr(m); setBusy(false); }), []);
+  const google = profile?.provider === "google";
+  const go = () => {
+    if (!value.trim() || busy) return;
+    setBusy(true); setErr(null);
+    net.deleteAccount(google ? { confirm: value.trim() } : { password: value });
+  };
+  return (
+    <Popup title="DELETE ACCOUNT" onClose={onClose} maxW={380}>
+      <form className="pt-4 pb-1 flex flex-col" style={{ gap: 3 * P }} onSubmit={(e) => { e.preventDefault(); go(); }}>
+        <div className="tb-t" style={{ color: UI.text }}>
+          This permanently deletes <span style={{ color: UI.bad }}>{profile?.name}</span>: your account, email, ratings, stats and Marathon scores.
+          Other players' match lists will show "deleted player". This can't be undone.
+        </div>
+        <label className="tb-t" style={{ color: UI.dim }}>{google ? "TYPE YOUR USERNAME TO CONFIRM" : "YOUR PASSWORD"}</label>
+        <input type={google ? "text" : "password"} value={value} onChange={(e) => { setValue(e.target.value); setErr(null); }} autoComplete={google ? "off" : "current-password"}
+          aria-label={google ? "Username" : "Password"} className="tb-t px-3" style={{ ...fieldStyle, height: 44 }} />
+        {err && <div className="tb-t" style={{ color: UI.bad }}>{err}</div>}
+        <div className="flex" style={{ gap: 2 * P }}>
+          <button type="button" onClick={onClose} className="flex-1 tb-t" style={{ height: 44, ...sk(UI.line), color: UI.dim }}>KEEP IT</button>
+          <button type="submit" disabled={!value.trim() || busy} className="flex-1 tb-t disabled:opacity-35" style={{ height: 44, ...skFill(UI.bad), color: UI.text }}>
+            {busy ? "DELETING…" : "DELETE FOREVER"}
+          </button>
+        </div>
+      </form>
     </Popup>
   );
 }
@@ -3312,10 +3411,15 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
       {modal === "THEME" && <ThemeModal theme={theme} setTheme={setTheme} onClose={() => setModal(null)} />}
       {modal === "HOWTO" && <HowToModal colors={colors} loadout={loadout} onClose={() => setModal(null)} />}
       {modal === "ACCOUNT" && (
-        <AccountModal profile={profile} onLogout={() => { setModal(null); onLogout(); }} onClose={() => setModal(null)} />
+        <AccountModal profile={profile} onLogout={() => { setModal(null); onLogout(); }} onClose={() => setModal(null)} onDelete={() => setModal("DELETE")} />
       )}
       {modal === "SETTINGS" && <SettingsModal name={name} rename={rename} status={status} theme={theme} setTheme={setTheme} onClose={() => setModal(null)} />}
       {modal === "STATS" && <StatsModal profile={profile} status={status} onClose={() => setModal(null)} />}
+      {modal === "DELETE" && (profile && !profile.guest
+        ? <DeleteAccountModal profile={profile} onClose={() => setModal("ACCOUNT")} />
+        : <Popup title="ACCOUNT DELETED" onClose={() => setModal(null)} maxW={360}>
+            <div className="pt-4 pb-2 tb-t" style={{ color: UI.text }}>Your account and everything stored with it has been deleted.</div>
+          </Popup>)}
       {modal === "PLAY" && (
         <PlayModal status={status} authed={authed} verified={verified} placed={placed} rank={rank} tr={tr}
           onClose={() => setModal(null)}
@@ -5279,10 +5383,11 @@ export default function TurfBlocks() {
   useEffect(() => {
     net.connect(store.get("tb:token"));
     const offT = net.on("token", (t) => store.set("tb:token", t));
+    const offD = net.on("accountDeleted", () => { store.set("tb:token", ""); setScreen("MENU"); });
     const offM = net.on("match", (m) => {
       if (m && m.board && !m.over) setScreen((cur) => (cur === "RESULT" ? cur : "RANKED"));
     });
-    return () => { offT(); offM(); };
+    return () => { offT(); offM(); offD(); };
   }, [setScreen]);
 
   const guest = useAuth() === "guest";
