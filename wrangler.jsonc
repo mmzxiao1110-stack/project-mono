@@ -3,7 +3,7 @@
 // GitHub repo in the Cloudflare dashboard; see README "Cloudflare").
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "tesella",
+  "name": "project-mono",
   "main": "cloudflare/worker.js",
   "compatibility_date": "2025-09-01",
   "compatibility_flags": ["nodejs_compat"],
