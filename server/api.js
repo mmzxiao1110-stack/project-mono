@@ -19,6 +19,7 @@ import { allProfiles, getAccount } from "./store.js";
 import { Limiter, clientIp } from "./limits.js";
 import { RANKS, PLACEMENT_GAMES, rankIndexFor } from "../shared/glicko.js";
 import { blitzRates } from "./blitz.js";
+import { towerRates } from "./tower.js";
 import { cleanCard } from "../shared/card.js";
 
 const apiLimit = new Limiter({ burst: 60, perMinute: 120 });
@@ -98,9 +99,10 @@ function card(p, c) {
       name: m.name, won: !!m.won, drew: !!m.drew, delta: m.delta ?? 0, score: m.score || null, seconds: m.seconds || 0, at: m.at || null,
     })),
     joined: p.createdAt || null,
-    played: Math.round((st.seconds || 0) + (p.blitz?.ms || 0) / 1000),
+    played: Math.round((st.seconds || 0) + (p.blitz?.ms || 0) / 1000 + (p.tower?.ms || 0) / 1000),
     card: cleanCard(p.card),
     marathon: p.marathon?.best ? { best: p.marathon.best, lines: p.marathon.lines, games: p.marathon.games, at: p.marathon.at, position: c.mpos.get(p.playerId) || null } : null,
+    tower: p.tower?.games ? { rating: Math.round(p.tower.rating.r), rd: Math.round(p.tower.rating.rd), games: p.tower.games, wins: p.tower.wins || 0, best: p.tower.best || 0, ...towerRates(p.tower) } : null,
     blitz: p.blitz?.games ? { rating: Math.round(p.blitz.rating.r), rd: Math.round(p.blitz.rating.rd), games: p.blitz.games, wins: p.blitz.wins || 0, position: c.bpos.get(p.playerId) || null, best: p.blitz.best || 0, ...blitzRates(p.blitz) } : null,
     sprint: p.sprint?.best ? { best: p.sprint.best, pieces: p.sprint.pieces, games: p.sprint.games, at: p.sprint.at, position: c.spos.get(p.playerId) || null } : null,
     ultra: p.ultra?.best ? { best: p.ultra.best, lines: p.ultra.lines, games: p.ultra.games, at: p.ultra.at, position: c.upos.get(p.playerId) || null } : null,

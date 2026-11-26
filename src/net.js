@@ -325,6 +325,8 @@ class Net {
   marathonStart() { this.send({ t: "marathonStart" }); }
   /* ---------- Blitz 1v1 ---------- */
   blitzQueue() { this.blitz = null; this.send({ t: "blitzQueue" }); }
+  towerQueue() { this.tower = null; this.send({ t: "towerQueue" }); }
+  towerPlace(m) { this.send({ t: "towerPlace", ...m }); }
   blitzCancel() { this.send({ t: "unqueue" }); }
   setCard(card) { this.send({ t: "setCard", card }); }
   blitzPlace(slot, rot, r, c) { this.send({ t: "blitzPlace", slot, rot, r, c }); }
@@ -497,6 +499,26 @@ class Net {
         }
         break;
 
+      case "towerStart":
+        this.tower = { id: m.id, you: m.you, seed: m.seed, countdown: m.countdown, opponent: m.opponent, resume: !!m.resume, over: false, got: Date.now() };
+        this.emit("towerStart", this.tower);
+        break;
+      case "towerGarbage":
+        this.emit("towerGarbage", m);
+        break;
+      case "towerBoard":
+        this.emit("towerBoard", m);
+        break;
+      case "towerEnd":
+        if (this.tower) this.tower = { ...this.tower, over: true };
+        if (m.ratings && this.profile) {
+          const after = m.ratings[m.you]?.after;
+          const t = this.profile.tower || {};
+          this.profile = { ...this.profile, tower: { ...t, games: (t.games || 0) + 1, wins: (t.wins || 0) + (m.winner === m.you ? 1 : 0), rating: { ...(t.rating || {}), r: after, rd: m.ratings[m.you]?.rdAfter } } };
+          this.emit("profile", this.profile);
+        }
+        this.emit("towerEnd", m);
+        break;
       case "blitzStart":
         this.blitz = { id: m.id, you: m.you, seed: m.seed, countdown: m.countdown, opponent: m.opponent, resume: !!m.resume, chat: this.blitz?.id === m.id ? this.blitz.chat : [], chatError: null, over: false, got: Date.now() };
         this.emit("blitzStart", this.blitz);

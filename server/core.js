@@ -52,6 +52,7 @@ import {
 import { Queue } from "./queue.js";
 import { Match } from "./match.js";
 import { BlitzMatch, blitzRates } from "./blitz.js";
+import { TowerMatch, towerRates } from "./tower.js";
 import { cleanCard } from "../shared/card.js";
 import { newRating } from "../shared/glicko.js";
 import { unref } from "./timers.js";
@@ -84,6 +85,7 @@ const publicProfile = (p, acct) => ({
   marathon: p.marathon || null,
   card: cleanCard(p.card),
   blitz: p.blitz ? { rating: p.blitz.rating, games: p.blitz.games, wins: p.blitz.wins, ...blitzRates(p.blitz) } : null,
+  tower: p.tower ? { rating: p.tower.rating, games: p.tower.games, wins: p.tower.wins, ...towerRates(p.tower) } : null,
   sprint: p.sprint ? { best: p.sprint.best, pieces: p.sprint.pieces, games: p.sprint.games, at: p.sprint.at } : null,
   ultra: p.ultra ? { best: p.ultra.best, lines: p.ultra.lines, games: p.ultra.games, at: p.ultra.at } : null,
   marathonOpen: p.marathonOpen ? { score: p.marathonOpen.score, lines: p.marathonOpen.lines, at: p.marathonOpen.at } : null,
@@ -146,16 +148,31 @@ const pairBlitz = (a, b) => {
   console.log(`[blitz] ${match.id}: ${a.profile.name} vs ${b.profile.name}`);
   match.start();
 };
+/** Pairs two TOWER players (ranked, verified accounts). */
+const pairTower = (a, b) => {
+  const sa = sockets.get(a.playerId), sb = sockets.get(b.playerId);
+  if (!sa || !sb) { const alive = sa ? a : sb ? b : null; if (alive) towerQueue.add(alive); return; }
+  const match = new TowerMatch([{ profile: a.profile, socket: sa }, { profile: b.profile, socket: sb }], (m) => {
+    inMatch.delete(m.seats.A.profile.playerId);
+    inMatch.delete(m.seats.B.profile.playerId);
+    console.log(`[tower] ${m.id} finished`);
+  });
+  inMatch.set(a.profile.playerId, { match, side: "A" });
+  inMatch.set(b.profile.playerId, { match, side: "B" });
+  console.log(`[tower] ${match.id}: ${a.profile.name} vs ${b.profile.name}`);
+  match.start();
+};
 const queue = new Queue(pairUp(true));         // ranked
 const casualQueue = new Queue(pairUp(false));  // unranked: anyone, guests included; ratings don't move
 const blitzQueue = new Queue(pairBlitz);      // Blitz, ranked
+const towerQueue = new Queue(pairTower);      // TOWER, ranked
 /** Players queueing and in a game, per ranked mode. */
 function lobbyCounts() {
-  let control = 0, blitz = 0;
-  for (const { match } of inMatch.values()) { if (match instanceof BlitzMatch) blitz++; else if (match.rated) control++; }
-  return { queueing: { control: queue.size, blitz: blitzQueue.size }, playing: { control, blitz } };
+  let control = 0, blitz = 0, tower = 0;
+  for (const { match } of inMatch.values()) { if (match instanceof BlitzMatch) blitz++; else if (match instanceof TowerMatch) tower++; else if (match.rated) control++; }
+  return { queueing: { control: queue.size, blitz: blitzQueue.size, tower: towerQueue.size }, playing: { control, blitz, tower } };
 }
-const leaveQueues = (id) => { queue.remove(id); casualQueue.remove(id); blitzQueue.remove(id); };
+const leaveQueues = (id) => { queue.remove(id); casualQueue.remove(id); blitzQueue.remove(id); towerQueue.remove(id); };
 
 /* ---------- guests ----------
  * A guest is a name and a random id the browser keeps, nothing more. Guests
@@ -653,6 +670,28 @@ async function handle(ws, msg) {
       const uid = ws.userId;
       blitzQueue.add({ playerId: uid, blocked: ws.blocked, profile, rating: profile.blitz?.rating || newRating(), onProgress: (p) => sendTo(uid, { t: "searching", ...p }) });
       console.log(`[blitz] + ${profile.name} — ${blitzQueue.size} waiting`);
+      break;
+    }
+
+    case "towerQueue": {
+      if (isGuest(ws.userId)) return fail(ws, "Make an account to play TOWER.");
+      const acct = getAccount(ws.userId);
+      if (!acct || !acct.emailVerified) return send(ws, { t: "needVerify" });
+      if (inMatch.has(ws.userId)) return fail(ws, "Already in a match.");
+      if (towerQueue.has(ws.userId)) return;
+      leaveQueues(ws.userId);
+      const profile = getProfile(ws.userId);
+      const uid = ws.userId;
+      towerQueue.add({ playerId: uid, blocked: ws.blocked, profile, rating: profile.tower?.rating || newRating(), onProgress: (p) => sendTo(uid, { t: "searching", ...p }) });
+      console.log(`[tower] + ${profile.name} — ${towerQueue.size} waiting`);
+      break;
+    }
+
+    case "towerPlace": {
+      const active = inMatch.get(ws.userId);
+      if (!active || !(active.match instanceof TowerMatch)) return fail(ws, "Not in a TOWER match.");
+      const err = active.match.submit(active.side, msg);
+      if (err) fail(ws, err);
       break;
     }
 

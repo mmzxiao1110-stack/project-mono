@@ -90,6 +90,7 @@ function refill(st) {
     const bag = [0, 1, 2, 3, 4, 5, 6];
     for (let i = bag.length - 1; i > 0; i--) { const j = Math.floor(st.rand() * (i + 1)); [bag[i], bag[j]] = [bag[j], bag[i]]; }
     st.queue.push(...bag);
+    st.bags = (st.bags || 0) + 1;
   }
 }
 
@@ -236,4 +237,105 @@ export function clearName(n, spin, piece = "T") {
 }
 
 /** A copy to change without touching the original (the random source is shared: it only moves forward). */
-export const clone = (st) => ({ ...st, board: st.board.map((r) => r.slice()), queue: st.queue.slice(), cur: st.cur && { ...st.cur }, stats: { ...st.stats } });
+export const clone = (st) => ({ ...st, board: st.board.map((r) => r.slice()), queue: st.queue.slice(), cur: st.cur && { ...st.cur }, stats: { ...st.stats }, incoming: (st.incoming || []).map((g) => ({ ...g })) });
+
+/* ------------------------------------------------------------------
+   ULTRA: 2 minutes, highest score.
+   ------------------------------------------------------------------ */
+export const ULTRA_MS = 120000;
+/**
+ * Points for a lock (`st.last`): lines by kind, more for spins; back-to-back
+ * ×1.5, +50 per clear in a row, and an all clear adds 3500.
+ */
+export function scoreOf(L) {
+  if (!L || (!L.lines && !L.spin)) return 0;
+  const n = Math.min(L.lines, 4);
+  let pts = L.spin === "full" ? [400, 800, 1200, 1600][n] : L.spin === "mini" ? [100, 200, 400, 400][n] : [0, 100, 300, 500, 800][n];
+  if (L.b2b > 0 && n) pts *= 1.5;
+  if (n && L.combo > 0) pts += 50 * L.combo;
+  if (L.allClear) pts += 3500;
+  return Math.round(pts);
+}
+
+/* ------------------------------------------------------------------
+   TOWER: the ranked 1v1. Each player has a ZERO-G board (the same pieces);
+   clears send garbage rows (full but for one gap) to the other side.
+   ------------------------------------------------------------------ */
+const COMBO_BONUS = [0, 0, 1, 1, 1, 2, 2, 3, 3, 4, 4, 4, 5];
+/** Garbage rows a lock sends, before cancelling what's coming at you. */
+export function attackOf(L) {
+  if (!L || !L.lines) return 0;
+  const n = Math.min(L.lines, 4);
+  let a = L.spin === "full" ? 2 * n : L.spin === "mini" ? n - 1 : [0, 0, 1, 2, 4][n];
+  if (L.b2b > 0) a += 1;
+  a += COMBO_BONUS[Math.min(Math.max(0, L.combo), COMBO_BONUS.length - 1)];
+  if (L.allClear) a += 10;
+  return a;
+}
+/** Push `n` garbage rows (gap at column `hole`) in from the bottom. Anything pushed off the top tops you out. */
+export function addGarbage(st, n, hole) {
+  if (n <= 0) return;
+  const off = st.board.slice(0, n);
+  if (off.some((row) => row.some((v) => v !== null))) st.over = true;
+  const row = () => Array.from({ length: W }, (_, x) => (x === hole ? null : GARBAGE));
+  st.board = [...st.board.slice(n), ...Array.from({ length: n }, row)];
+  // The piece in play is pushed up with the stack if it would overlap it.
+  if (st.cur) {
+    let p = st.cur;
+    while (!fits(st.board, p) && p.y > 0) p = { ...p, y: p.y - 1 };
+    if (!fits(st.board, p)) { st.over = true; st.cur = null; } else st.cur = p;
+  }
+}
+export const GARBAGE = 7; // the colour index garbage squares use
+
+/**
+ * After a lock in TOWER: the attack cancels incoming garbage first; what's
+ * left is sent. A lock that clears nothing lets up to 8 waiting rows in.
+ * Only garbage the player has seen (`seen` entries of `st.incoming`) counts,
+ * so the server and the player's own copy always agree.
+ */
+export function towerLock(st, L, seen = Infinity) {
+  st.incoming ||= [];
+  let atk = attackOf(L);
+  const ready = () => st.incoming.findIndex((g) => g.n > 0 && g.i < seen);
+  for (let k; atk > 0 && (k = ready()) >= 0;) { const g = st.incoming[k], c = Math.min(atk, g.n); g.n -= c; atk -= c; }
+  if (!L.lines) {
+    let cap = 8;
+    for (let k; cap > 0 && (k = ready()) >= 0;) { const g = st.incoming[k], c = Math.min(cap, g.n); addGarbage(st, c, g.hole); g.n -= c; cap -= c; }
+  }
+  st.incoming = st.incoming.filter((g) => g.n > 0);
+  return atk;
+}
+/** Garbage waiting for you (rows). */
+export const incomingRows = (st) => (st.incoming || []).reduce((a, g) => a + g.n, 0);
+
+/**
+ * A lock as sent over the network: { holds, id, rot, x, y, spin, kick }.
+ * `holds`: how many times hold was pressed for this piece (each press swaps
+ * with the held piece, the first with an empty hold takes the next); `spin` and
+ * `kick` say the last move was a turn and which kick it used. Applies it to
+ * `st` if it's a real resting spot for that piece; returns `st.last`, or null.
+ */
+export function applyLock(st, m) {
+  if (!st.cur || !m || ![m.id, m.rot, m.x, m.y].every(Number.isInteger) || m.rot < 0 || m.rot > 3) return null;
+  const holds = Number.isInteger(m.holds) ? m.holds : m.hold ? 1 : 0;
+  if (holds < 0 || holds > 50) return null;
+  for (let i = 0; i < holds; i++) hold(st);
+  if (!st.cur || st.cur.id !== m.id) return null;
+  const p = { id: m.id, rot: m.rot, x: m.x, y: m.y };
+  if (!fits(st.board, p) || fits(st.board, { ...p, y: p.y + 1 })) return null;
+  st.cur = p; st.lastRot = !!m.spin; st.lastKick = Number.isInteger(m.kick) ? m.kick : 0;
+  return hardDrop(st);
+}
+
+/**
+ * Makes `st` (a game from `seed`) match the server's copy: the same bags
+ * drawn from the random source, then its board, pieces and counters.
+ */
+export function syncTo(seed, fix, goal = Infinity) {
+  const st = newGame(seed, goal);
+  while ((st.bags || 0) < fix.bags) { const bag = [0, 1, 2, 3, 4, 5, 6]; for (let i = bag.length - 1; i > 0; i--) { const j = Math.floor(st.rand() * (i + 1)); [bag[i], bag[j]] = [bag[j], bag[i]]; } st.bags++; }
+  Object.assign(st, { board: fix.board.map((r) => r.slice()), queue: fix.queue.slice(), hold: fix.hold, cur: fix.cur && { ...fix.cur },
+    pieces: fix.pieces, lines: fix.lines, combo: fix.combo, b2b: fix.b2b, incoming: (fix.list || []).map((g) => ({ ...g })), over: false });
+  return st;
+}
