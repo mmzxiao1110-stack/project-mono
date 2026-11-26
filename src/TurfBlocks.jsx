@@ -34,7 +34,7 @@ import { net, SERVER_URL, IS_SECURE, GOOGLE_CLIENT_ID } from "./net.js";
 import { FX } from "./tuning.js";
 import { SkyCanvas, sky, rgbOf, mixRgb, BAYER } from "./sky.jsx";
 import { VERSION_LABEL } from "./version.js";
-import { sfx, setVolume, installUiSounds } from "./sfx.js";
+import { sfx, setVolume, installUiSounds, core, unlock } from "./sfx.js";
 import { music } from "./music.js";
 import { RULES } from "../shared/rules.js";
 import {
@@ -5954,6 +5954,194 @@ function ReplayList({ onOpen, onBack }) {
   );
 }
 
+/* ============================================================
+   REPLAY SOUND AND VIDEO — Sprint, Ultra, Marathon and Blitz
+   ============================================================ */
+/** The sounds a frame made in the game: the piece locking in, a clear, junk landing. */
+function replayFrameSound(prev, f, blitz) {
+  if (!prev || !f) return;
+  if (blitz) {
+    if (f.junk) { sfx.reveal({ lines: Math.min(4, f.junk) }); return; }
+    if (!f.side) return;
+    sfx.lockIn("place");
+    const lines = f[f.side].lines - prev[f.side].lines;
+    if (lines > 0) sfx.reveal({ lines });
+    return;
+  }
+  if (!f.cells) return;
+  sfx.lockIn("place");
+  const lines = (f.lines || 0) - (prev.lines || 0);
+  if (lines > 0) sfx.reveal({ lines });
+}
+/** Plays the sounds of the frames a playing replay just passed (the newest few, at high speeds). */
+function useReplaySfx(frames, i, playing, blitz) {
+  const lastRef = useRef(i);
+  useEffect(() => {
+    const from = lastRef.current;
+    lastRef.current = i;
+    if (!playing || i <= from || i - from > 8) return;
+    for (let k = Math.max(from + 1, i - 2); k <= i; k++) replayFrameSound(frames[k - 1], frames[k], blitz);
+  }, [i, playing, frames, blitz]);
+}
+const frameAt = (frames, time) => { let i = 0; while (i + 1 < frames.length && frames[i + 1].t <= time) i++; return i; };
+
+/** Draws one moment of a replay onto a 1280×720 canvas, in the game's colours and font. */
+function paintReplay(ctx, rec, frames, time, look) {
+  const W = 1280, H = 720;
+  const i = frameAt(frames, time), f = frames[i];
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, look.top); g.addColorStop(1, look.bottom);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.textBaseline = "middle";
+  const text = (s, x, y, color, size = 20, align = "left") => { ctx.font = `${size}px Silkscreen, monospace`; ctx.textAlign = align; ctx.fillStyle = color; ctx.fillText(s, x, y); };
+  const tile = (x, y, s, color, alpha = 1) => {
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = color; ctx.fillRect(x, y, s, s);
+    ctx.fillStyle = "rgba(255,255,255,.28)"; ctx.fillRect(x, y, s, Math.max(1, s / 9)); ctx.fillRect(x, y, Math.max(1, s / 9), s);
+    ctx.fillStyle = "rgba(0,0,0,.25)"; ctx.fillRect(x, y + s - Math.max(1, s / 9), s, Math.max(1, s / 9)); ctx.fillRect(x + s - Math.max(1, s / 9), y, Math.max(1, s / 9), s);
+    ctx.globalAlpha = 1;
+  };
+  const slot = (x, y, s) => { ctx.fillStyle = "rgba(255,255,255,.07)"; ctx.fillRect(x, y, s, s); ctx.fillStyle = "rgba(0,0,0,.18)"; ctx.fillRect(x, y + s - 2, s, 2); };
+  const board = (x, y, cell, gap, b, ink, just) => {
+    const n = b.length;
+    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+      const px = x + c * (cell + gap), py = y + r * (cell + gap), v = b[r][c];
+      if (v === null || v === undefined) slot(px, py, cell); else tile(px, py, cell, ink(v));
+      if (just && just.has(r * n + c)) { ctx.strokeStyle = look.text; ctx.lineWidth = 3; ctx.strokeRect(px + 1.5, py + 1.5, cell - 3, cell - 3); }
+    }
+  };
+  const piece = (cx, cy, id, s, gap) => {
+    const sh = sShapeOf(id, 0);
+    const w = sh.w * s + (sh.w - 1) * gap, h = sh.h * s + (sh.h - 1) * gap;
+    for (const [r, c] of sh.cells) tile(cx - w / 2 + c * (s + gap), cy - h / 2 + r * (s + gap), s, S_INK_ALL[id]);
+  };
+  const box = (x, y, w, h) => { ctx.fillStyle = "rgba(255,255,255,.06)"; ctx.fillRect(x, y, w, h); ctx.strokeStyle = "rgba(255,255,255,.18)"; ctx.lineWidth = 2; ctx.strokeRect(x + 1, y + 1, w - 2, h - 2); };
+  const kind = rec.kind;
+  text("TESELLA", W / 2, 44, look.text, 34, "center");
+  if (kind === "blitz") {
+    const me = rec.you || "A", them = me === "A" ? "B" : "A";
+    text(`BLITZ · ${fmtClock(time)}`, W / 2, 86, "#F29A4A", 22, "center");
+    const lastOf = (s) => { for (let k = i; k > 0; k--) if (frames[k].side === s && frames[k].cells) return frames[k]; return null; };
+    const cell = 50, gap = 4, bw = 8 * cell + 7 * gap;
+    [me, them].forEach((s, k) => {
+      const ox = k === 0 ? 40 : W / 2 + 20, oy = 150;
+      const b = f[s], lp = lastOf(s);
+      const just = new Set(lp && time - lp.t < 400 ? lp.cells.map(([r, c]) => r * 8 + c) : []);
+      text(`${rec.names?.[s] || s}${rec.winner === s && time >= frames[frames.length - 1].t ? " ★" : ""}`, ox, oy - 22, s === me ? look.you : look.rival, 20);
+      if (f.side === s && f.junk && time - f.t < 700) text(`+ JUNK ${f.junk}`, ox + bw, oy - 22, look.bad, 20, "right");
+      board(ox, oy, cell, gap, b.board, (v) => (sIsJunk(v) ? JUNK_INK : S_INK[v]), just);
+      const sx = ox + bw + 16;
+      b.hand.forEach((id, h) => { box(sx, oy + h * 76, 120, 68); piece(sx + 60, oy + h * 76 + 34, id, sIsJunk(id) ? 7 : 14, 2); });
+      b.queue.forEach((id, q) => { tile(sx, oy + 160 + q * 40, 32, sIsJunk(id) ? JUNK_INK : S_INK[id], q ? 0.85 : 1); if (sIsJunk(id)) text(String(sJunkLevel(id)), sx + 16, oy + 176 + q * 40, look.text, 16, "center"); });
+      const secs = Math.max(0.001, time / 1000);
+      text(`SENT ${f.sent[s]}   PIECES ${b.pieces}   PPS ${(b.pieces / secs).toFixed(2)}`, ox, oy + bw + 30, look.dim, 18);
+    });
+    return;
+  }
+  const marathon = kind === "marathon";
+  const N = marathon ? M_SIZE : S_SIZE;
+  const cell = Math.floor(470 / N) - 4, gap = 4, bw = N * cell + (N - 1) * gap;
+  const ox = (W - bw) / 2, oy = 130;
+  text(marathon ? `MARATHON · ${f.score.toLocaleString("en-US")}` : `${kind.toUpperCase()} · ${fmtClock(kind === "ultra" ? Math.max(0, S_ULTRA_MS - time) : time)}`, W / 2, 90, look.you, 24, "center");
+  const lp = f.cells && time - f.t < 400 ? new Set(f.cells.map(([r, c]) => r * N + c)) : null;
+  board(ox, oy, cell, gap, f.board, (v) => (marathon ? M_INK[v] : S_INK_ALL[v]), lp);
+  if (!marathon) {
+    const sx = ox + bw + 24;
+    f.hand.forEach((id, h) => { box(sx, oy + h * 86, 140, 76); piece(sx + 70, oy + h * 86 + 38, id, 16, 2); });
+    f.queue.forEach((id, q) => tile(sx, oy + 184 + q * 46, 36, S_INK_ALL[id], q ? 0.85 : 1));
+  }
+  const stats = [kind === "ultra" || marathon ? `SCORE ${f.score.toLocaleString("en-US")}` : null, `LINES ${f.lines}`, f.pieces != null ? `PIECES ${f.pieces}` : null].filter(Boolean);
+  text(stats.join("    "), W / 2, oy + bw + 34, look.dim, 20, "center");
+  if (rec.name) text(rec.name, ox, oy - 22, look.you, 18);
+}
+
+/**
+ * Records a replay to a video file: the replay is drawn on a canvas in real
+ * time, its sounds mixed in, and the browser's recorder makes an MP4 (or a
+ * WebM where MP4 can't be recorded).
+ */
+async function recordReplayVideo(rec, frames, { onProgress, stopRef }) {
+  if (typeof MediaRecorder === "undefined") throw new Error("This browser can't record video.");
+  try { await document.fonts.load("20px Silkscreen"); } catch { /* the fallback font will do */ }
+  const css = getComputedStyle(document.documentElement);
+  const v = (n, d) => css.getPropertyValue(n).trim() || d;
+  const look = { top: v("--tb-ground", "#1c1b33"), bottom: v("--tb-panel-solid", "#26304a"), text: v("--tb-text", "#f4f1ff"), dim: v("--tb-dim", "#a99fd0"), you: v("--tb-you", "#7cc7bf"), rival: v("--tb-rival", "#e88fb4"), bad: "#ff6b7a" };
+  const canvas = document.createElement("canvas");
+  canvas.width = 1280; canvas.height = 720;
+  const ctx = canvas.getContext("2d");
+  const stream = canvas.captureStream(30);
+  // The game's sounds go into the video too.
+  const audio = core();
+  let tap = null;
+  if (audio) { tap = audio.ctx.createMediaStreamDestination(); audio.mix.connect(tap); tap.stream.getAudioTracks().forEach((t) => stream.addTrack(t)); unlock(); }
+  const types = ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4;codecs=avc1.42E01E", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
+  const mimeType = types.find((t) => MediaRecorder.isTypeSupported(t)) || "";
+  const rec2 = new MediaRecorder(stream, mimeType ? { mimeType, videoBitsPerSecond: 6_000_000 } : undefined);
+  const chunks = [];
+  rec2.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  const done = new Promise((res) => { rec2.onstop = res; });
+  const blitz = rec.kind === "blitz";
+  const end = frames[frames.length - 1].t + 1500; // a moment on the final board
+  paintReplay(ctx, rec, frames, 0, look);
+  rec2.start(500);
+  const t0 = performance.now();
+  let last = 0;
+  await new Promise((res) => {
+    const id = setInterval(() => {
+      const time = Math.min(end, performance.now() - t0);
+      const i = frameAt(frames, time);
+      for (let k = last + 1; k <= i; k++) replayFrameSound(frames[k - 1], frames[k], blitz);
+      last = i;
+      paintReplay(ctx, rec, frames, time, look);
+      onProgress?.(time / end);
+      if (time >= end || stopRef.current) { clearInterval(id); res(); }
+    }, 1000 / 30);
+  });
+  rec2.stop();
+  await done;
+  if (tap) { try { audio.mix.disconnect(tap); } catch { /* already gone */ } }
+  stream.getTracks().forEach((t) => t.stop());
+  if (stopRef.current) return null;
+  const type = rec2.mimeType || mimeType || "video/webm";
+  return { blob: new Blob(chunks, { type }), ext: type.includes("mp4") ? "mp4" : "webm" };
+}
+
+/** The SAVE VIDEO button for a replay, with progress and cancel. */
+function VideoButton({ rec, frames, onStart }) {
+  const P = usePx();
+  const [state, setState] = useState(null); // null | { p } while recording | { error }
+  const stopRef = useRef(false);
+  const go = async () => {
+    stopRef.current = false;
+    onStart?.();
+    setState({ p: 0 });
+    try {
+      const out = await recordReplayVideo(rec, frames, { onProgress: (p) => setState({ p }), stopRef });
+      if (out) {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(out.blob);
+        a.download = `tesella-${rec.kind}-${new Date(rec.date || Date.now()).toISOString().slice(0, 10)}.${out.ext}`;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      }
+      setState(null);
+    } catch (e) { setState({ error: e.message || "Couldn't record." }); }
+  };
+  if (state && state.p != null) {
+    return (
+      <button onClick={() => { stopRef.current = true; }} className="tb-t px-3" title="Cancel" style={{ height: 32, ...skFill(GOLD), color: UI.text }}>
+        RECORDING {Math.round(state.p * 100)}% · CANCEL
+      </button>
+    );
+  }
+  return (
+    <span className="flex items-center" style={{ gap: 2 * P }}>
+      <button onClick={go} className="tb-t px-3" title="Records the replay at normal speed, with sound, and downloads it" style={{ height: 32, ...glass(GOLD), color: GOLD }}>SAVE VIDEO</button>
+      {state?.error && <span className="tb-t" style={{ color: UI.bad }}>{state.error}</span>}
+    </span>
+  );
+}
+
 const SPEEDS = [0.5, 1, 2, 4];
 
 /**
@@ -6002,8 +6190,9 @@ function SoloReplayViewer({ rec, onBack }) {
     return () => cancelAnimationFrame(raf);
   }, [playing, speed, end]);
   const seek = (t) => { live.current.time = t; setTime(t); };
-  let i = 0; while (i + 1 < frames.length && frames[i + 1].t <= time) i++;
+  const i = frameAt(frames, time);
   const f = frames[i];
+  useReplaySfx(frames, i, playing, false);
   const marathon = rec.kind === "marathon";
   const N = marathon ? M_SIZE : S_SIZE;
   const cell = 9 * P, gap = P;
@@ -6029,7 +6218,7 @@ function SoloReplayViewer({ rec, onBack }) {
             )))}
           </div>
           {!marathon && (
-            <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
+            <div className="flex flex-col items-start" style={{ gap: 2 * P }}>
               {f.hand.map((id, k) => <div key={k} className="flex items-center justify-center" style={{ width: 30 * P, height: 14 * P, ...glass(UI.line) }}><SPiece id={id} cell={3 * P} gap={P} /></div>)}
               {f.queue.map((id, k) => <Ink key={k} size={6 * P} color={S_INK_ALL[id]} />)}
             </div>
@@ -6047,6 +6236,7 @@ function SoloReplayViewer({ rec, onBack }) {
           {SPEEDS.map((s) => (
             <button key={s} onClick={() => setSpeed(s)} className="tb-t px-2" aria-pressed={speed === s} style={{ height: 32, ...(speed === s ? skFill(UI.text) : glass(UI.line)), color: UI.text }}>{s}×</button>
           ))}
+          <VideoButton rec={rec} frames={frames} onStart={() => setPlaying(false)} />
         </div>
       </div>
     </div>
@@ -6106,8 +6296,9 @@ function BlitzReplayViewer({ rec, colors, onBack }) {
     return () => cancelAnimationFrame(raf);
   }, [playing, speed, end]);
   const seek = (t) => { live.current.time = t; setTime(t); };
-  let i = 0; while (i + 1 < frames.length && frames[i + 1].t <= time) i++;
+  const i = frameAt(frames, time);
   const f = frames[i];
+  useReplaySfx(frames, i, playing, true);
   const me = rec.you || "A", them = me === "A" ? "B" : "A";
   // As big as the window allows: two boards and their strips across, the controls under them.
   const [vw, vh] = [typeof window === "undefined" ? 800 : window.innerWidth, typeof window === "undefined" ? 600 : window.innerHeight];
@@ -6134,7 +6325,7 @@ function BlitzReplayViewer({ rec, colors, onBack }) {
               </div>
             )))}
           </div>
-          <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
+          <div className="flex flex-col items-start" style={{ gap: 2 * P }}>
             {b.hand.map((id, k) => <div key={k} className="flex items-center justify-center" style={{ width: Math.round(cell * 2.2), height: Math.round(cell * 1.3), ...glass(UI.line) }}><SPiece id={id} cell={Math.max(P, Math.floor(cell / (sIsJunk(id) ? 4 : 2.4) / P) * P)} gap={P} /></div>)}
             {b.queue.map((id, k) => (
               <div key={k} className="relative flex items-center justify-center"><Ink size={Math.round(cell * 0.7)} color={inkOf(id)} />{sIsJunk(id) && <span className="absolute tb-t" style={{ color: UI.text }}>{sJunkLevel(id)}</span>}</div>
@@ -6167,6 +6358,7 @@ function BlitzReplayViewer({ rec, colors, onBack }) {
           {SPEEDS.map((sp) => (
             <button key={sp} onClick={() => setSpeed(sp)} className="tb-t px-2" aria-pressed={speed === sp} style={{ height: 32, ...(speed === sp ? skFill(UI.text) : glass(UI.line)), color: UI.text }}>{sp}×</button>
           ))}
+          <VideoButton rec={rec} frames={frames} onStart={() => setPlaying(false)} />
         </div>
       </div>
     </div>
@@ -6189,6 +6381,15 @@ function ReplayViewer({ id, theme, colors, onBack }) {
   const compact = useCompact();
   const d = useBubble(compact);
 
+  // Each turn sounds as it did in the match, while playing.
+  const heard = useRef(t);
+  useEffect(() => {
+    const from = heard.current;
+    heard.current = t;
+    if (!playing || t !== from + 1) return;
+    const pl = frames[t]?.played;
+    if (pl) revealSound([pl.moves?.A, pl.moves?.B], { contested: pl.res?.contested || [], lines: pl.res?.lines });
+  }, [t, playing, frames]);
   // Play: one turn every 900 ms at 1×.
   useEffect(() => {
     if (!playing) return;
@@ -6528,8 +6729,8 @@ export default function TurfBlocks() {
 
   // Music on the menu screens only; matches, Marathon and results are silent.
   useEffect(() => {
-    if (["MENU", "DIFFICULTY", "REPLAYS", "REPLAY", "UNRANKED", "PRIVATE", "MATCHMAKING"].includes(screen)) music.play("menu");
-    else if (screen === "RESULT") music.stop();
+    if (["MENU", "DIFFICULTY", "REPLAYS", "UNRANKED", "PRIVATE", "MATCHMAKING"].includes(screen)) music.play("menu");
+    else if (screen === "RESULT" || screen === "REPLAY") music.stop(); // a replay plays its own sounds
   }, [screen]);
 
   const shell = (
