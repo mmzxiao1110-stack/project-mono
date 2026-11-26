@@ -42,10 +42,10 @@ import {
   loadTheme, saveTheme, applyPreset, editTheme, themeVars,
 } from "./theme.js";
 import { ACTIONS, getKeys, subscribeKeys, setKey, resetKeys, actionFor, keyLabel, canBind } from "./keys.js";
-import { SPRINT_ACTIONS, getSprintKeys, subscribeSprintKeys, setSprintKey, setDas, resetSprintKeys, sprintActionFor } from "./sprintKeys.js";
+import { SPRINT_ACTIONS, getSprintKeys, subscribeSprintKeys, setSprintKey, setDas, resetSprintKeys, sprintActionFor, setSprintMode } from "./sprintKeys.js";
 import {
   SIZE as S_SIZE, GOAL as S_GOAL, NAMES as S_NAMES, newSprint, newSprintSeed, shapeOf as sShapeOf, spawn as sSpawn, cellsOf as sCellsOf,
-  shift as sShift, turn as sTurn, canPlace as sCanPlace, place as sPlace,
+  shift as sShift, turn as sTurn, canPlace as sCanPlace, place as sPlace, at as sAt,
 } from "../shared/sprint.js";
 
 /* ============================================================
@@ -4194,6 +4194,57 @@ function SprintGame({ onExit }) {
     commit({ ...cur, endAt, result, newBest, act: null });
   }, [commit]);
 
+  // Mouse mode: the piece follows the cursor, always wholly on the board, as
+  // near the cursor as it can be (past an edge it sits against that edge).
+  const boardEl = useRef(null);
+  const mouse = useRef(null); // the last cursor position, { x, y }
+  const toMouse = useCallback((a) => {
+    const el = boardEl.current, m = mouse.current;
+    if (!a || !el || !m || getSprintKeys().mode !== "mouse") return a;
+    const rect = el.getBoundingClientRect();
+    const step = rect.width / S_SIZE;
+    return sAt(a, (m.y - rect.top) / step, (m.x - rect.left) / step);
+  }, []);
+  // Places the piece in play (Space, or a click in mouse mode).
+  const placeNow = useCallback(() => {
+    const cur = live.current;
+    if (cur.result || !cur.act) return;
+    if (!sCanPlace(cur.st, cur.act)) { sfx.illegal(); return; }
+    const st = cloneSprint(cur.st);
+    const slot = cur.act.slot;
+    sPlace(st, cur.act);
+    const L = st.last;
+    sfx.lockIn("place");
+    let vanish = cur.vanish;
+    if (L.lines) {
+      sfx.reveal({ lines: L.lines });
+      vanish = { cleared: L.cleared, key: st.pieces };
+      setTimeout(() => { const c = live.current; if (c.vanish && c.vanish.key === st.pieces) commit({ ...c, vanish: null }); }, 650);
+    }
+    // With the mouse, the slot you used is picked straight back up (it now holds the forecast piece).
+    const act = getSprintKeys().mode === "mouse" && !st.over ? toMouse(sSpawn(st, slot)) : null;
+    const next = { ...cur, st, act, vanish };
+    if (st.over) finish(next, st.won ? "done" : "stuck"); else commit(next);
+  }, [commit, finish, toMouse]);
+  useEffect(() => {
+    if (editing || keys.mode !== "mouse") return undefined;
+    const move = (e) => {
+      mouse.current = { x: e.clientX, y: e.clientY };
+      const cur = live.current;
+      if (!cur.act || cur.result) return;
+      const a = toMouse(cur.act);
+      if (a.cr !== cur.act.cr || a.cc !== cur.act.cc) commit({ ...cur, act: a });
+    };
+    const down = (e) => {
+      if (e.button !== 0 || (e.target instanceof Element && e.target.closest("button, a, input, [role=dialog]"))) return;
+      e.preventDefault();
+      placeNow();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerdown", down);
+    return () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerdown", down); };
+  }, [editing, keys.mode, toMouse, commit, placeNow]);
+
   // Keyboard: every action, with DAS on the four directions.
   const held = useRef({}); // direction -> timeout
   useEffect(() => {
@@ -4213,7 +4264,7 @@ function SprintGame({ onExit }) {
       if (e.repeat) return; // holding is DAS's job, not the key repeat's
       if (a.startsWith("slot")) {
         const slot = Number(a.slice(4)) - 1;
-        commit({ ...cur, act: sSpawn(cur.st, slot), startAt: cur.startAt || performance.now() });
+        commit({ ...cur, act: toMouse(sSpawn(cur.st, slot)), startAt: cur.startAt || performance.now() });
         sfx.pick();
         return;
       }
@@ -4226,22 +4277,8 @@ function SprintGame({ onExit }) {
         if (das > 0) timers[a] = setTimeout(() => { const c = live.current; if (c.act && !c.result) commit({ ...c, act: sShift(c.act, dr, dc, true) }); }, das);
         return;
       }
-      if (a === "cw" || a === "ccw") { commit({ ...cur, act: sTurn(cur.act, a === "cw" ? 1 : -1) }); sfx.rotate(a === "cw" ? 1 : -1); return; }
-      if (a === "place") {
-        if (!sCanPlace(cur.st, cur.act)) { sfx.illegal(); return; }
-        const st = cloneSprint(cur.st);
-        sPlace(st, cur.act);
-        const L = st.last;
-        sfx.lockIn("place");
-        let vanish = cur.vanish;
-        if (L.lines) {
-          sfx.reveal({ lines: L.lines });
-          vanish = { cleared: L.cleared, key: st.pieces };
-          setTimeout(() => { const c = live.current; if (c.vanish && c.vanish.key === st.pieces) commit({ ...c, vanish: null }); }, 650);
-        }
-        const next = { ...cur, st, act: null, vanish };
-        if (st.over) finish(next, st.won ? "done" : "stuck"); else commit(next);
-      }
+      if (a === "cw" || a === "ccw") { commit({ ...cur, act: toMouse(sTurn(cur.act, a === "cw" ? 1 : -1)) }); sfx.rotate(a === "cw" ? 1 : -1); return; }
+      if (a === "place") placeNow();
     };
     const onUp = (e) => {
       const a = sprintActionFor(e.key);
@@ -4253,7 +4290,7 @@ function SprintGame({ onExit }) {
       window.removeEventListener("keydown", onDown); window.removeEventListener("keyup", onUp);
       for (const k of Object.keys(timers)) clearTimeout(timers[k]);
     };
-  }, [editing, retry, finish, commit]);
+  }, [editing, retry, finish, commit, toMouse, placeNow]);
 
   const st = r.st;
   const ms = r.startAt ? Math.max(0, (r.endAt || clock) - r.startAt) : 0;
@@ -4274,7 +4311,7 @@ function SprintGame({ onExit }) {
   const keyOf = (id) => (keys[id] ? keyLabel(keys[id]) : "—");
 
   return (
-    <div className="tb-screen tb-safe w-full flex flex-col font-mono select-none" style={{ color: UI.text }}>
+    <div className="tb-screen tb-safe w-full flex flex-col font-mono select-none" style={{ color: UI.text, cursor: keys.mode === "mouse" ? "crosshair" : undefined }}>
       <div ref={stageRef} className="tb-col relative flex-1 min-h-0 flex flex-col items-center w-full mx-auto px-3" style={{ maxWidth: 760 }}>
         <div style={{ flex: 1, minHeight: 4 * P }} />
         <GameTitle mode="SPRINT" />
@@ -4287,7 +4324,7 @@ function SprintGame({ onExit }) {
           <div className="flex flex-col items-end"><span style={{ color: UI.dim }}>BEST</span><span className="tabular-nums" style={{ color: GOLD }}>{best ? fmtClock(best) : "—"}</span></div>
         </div>
         <div className="flex items-start" style={{ gap: 6 * P }}>
-          <div className="relative" style={{ width: boardW, height: boardW }}>
+          <div ref={boardEl} className="relative" style={{ width: boardW, height: boardW }}>
             <div style={{ display: "grid", gridTemplateColumns: `repeat(${S_SIZE}, ${cell}px)`, gap: g }}>
               {st.board.map((row, ri) => row.map((v, ci) => {
                 const k = ri * S_SIZE + ci, on = actKeys.has(k);
@@ -4334,10 +4371,19 @@ function SprintGame({ onExit }) {
         </div>
         <BoardLine width={boardW + sideW} />
         <div className="tb-t text-center" style={{ width: boardW + sideW, color: UI.dim, opacity: 0.7, marginTop: 2 * P }}>
-          {keyOf("place")} PLACES · {keyOf("ccw")} / {keyOf("cw")} TURN · HOLD A DIRECTION TO SLIDE
+          {keys.mode === "mouse"
+            ? <>CLICK OR {keyOf("place")} PLACES · {keyOf("slot1")} {keyOf("slot2")} {keyOf("slot3")} PICK · {keyOf("ccw")} / {keyOf("cw")} TURN</>
+            : <>{keyOf("place")} PLACES · {keyOf("ccw")} / {keyOf("cw")} TURN · HOLD A DIRECTION TO SLIDE</>}
         </div>
         <div className="flex items-center justify-center" style={{ width: boardW + sideW, gap: 3 * P, marginTop: 2 * P }}>
           <div className="flex shrink-0" style={{ gap: 2 * P }}>
+            {/* Keyboard or mouse: try both. */}
+            <button onClick={() => setSprintMode(keys.mode === "mouse" ? "keyboard" : "mouse")} aria-label={`Controls: ${keys.mode}. Switch`}
+              className="tb-t px-3" style={{ height: 32, ...glass(UI.line), color: UI.text }}>
+              <span style={{ color: keys.mode === "keyboard" ? UI.text : UI.dim, opacity: keys.mode === "keyboard" ? 1 : 0.5 }}>KEYBOARD</span>
+              <span style={{ color: UI.dim }}> / </span>
+              <span style={{ color: keys.mode === "mouse" ? UI.text : UI.dim, opacity: keys.mode === "mouse" ? 1 : 0.5 }}>MOUSE</span>
+            </button>
             <button onClick={() => setEditing(true)} className="tb-t px-3" style={{ height: 32, ...glass(UI.line), color: UI.text }}>KEYS</button>
             <button onClick={retry} className="tb-t px-3" style={{ height: 32, ...glass(UI.line), color: UI.text }}>RETRY ({keyOf("retry")})</button>
             <button onClick={() => (r.result ? onExit() : finish(r, "forfeit"))} className="tb-t px-3" style={{ height: 32, ...glass(UI.bad), color: UI.bad }}>
