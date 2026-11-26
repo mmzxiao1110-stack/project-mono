@@ -3369,13 +3369,12 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
         )}
 
         <div className="flex gap-2 mb-2">
-          {/* Offline play takes the left half; T-TERMINAL, the player hub, the right. */}
-          {/* Your account: who you're signed in as, or a way to sign in. */}
-          <button onClick={() => setModal(authed || profile?.guest ? "ACCOUNT" : "login")} aria-label="Account"
+          {/* Replays (yellow) and T-TERMINAL, the player hub. */}
+          <button onClick={() => onPick("REPLAYS")} aria-label="Replays"
             className="flex-1 rounded flex items-center justify-center gap-2 min-w-0 px-2"
-            style={{ height: 38, ...glass(authed && !verified ? GOLD_SOFT : UI.line) }}>
-            <span style={{ color: authed && verified ? UI.text : GOLD, display: "flex" }}><UserRound /></span>
-            <span className="tb-t truncate">{authed ? (profile?.name || "ACCOUNT") : profile?.guest ? `${profile.name} (GUEST)` : "LOG IN"}</span>
+            style={{ height: 38, ...skFill(GOLD), color: UI.text }}>
+            <span style={{ color: GOLD, display: "flex" }}><Film /></span>
+            <span className="tb-t">REPLAYS</span>
           </button>
           <a href="/terminal" className="flex-1 rounded flex items-center justify-center gap-2 no-underline"
             style={{ height: 38, ...skFill(ACCENTS.terminal), color: UI.text }}>
@@ -3386,10 +3385,12 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
 
         {/* Four, evenly: theme, replays, how to play, settings. */}
         <div className="grid grid-cols-4 gap-2">
-          {[["THEME", "Theme", Palette], ["REPLAYS", "Replays", Film], ["HOWTO", "How to play", BookOpen], ["SETTINGS", "Settings", Settings2]].map(([k, label, Icon]) => (
-            <button key={k} onClick={() => (k === "REPLAYS" ? onPick("REPLAYS") : setModal(k))} aria-label={label}
-              className="rounded flex items-center justify-center" style={{ height: 38, ...glass(UI.line) }}>
-              <Icon size={16} style={{ color: UI.dim }} />
+          {/* Your account: who you're signed in as (gold until verified), or a way to sign in. */}
+          {[["THEME", "Theme", Palette], ["ACCOUNT", "Account", UserRound], ["HOWTO", "How to play", BookOpen], ["SETTINGS", "Settings", Settings2]].map(([k, label, Icon]) => (
+            <button key={k} onClick={() => (k === "ACCOUNT" ? setModal(authed || profile?.guest ? "ACCOUNT" : "login") : setModal(k))} aria-label={label}
+              title={k === "ACCOUNT" ? (authed ? profile?.name : profile?.guest ? `${profile.name} (guest)` : "Log in") : label}
+              className="rounded flex items-center justify-center" style={{ height: 38, ...glass(k === "ACCOUNT" && authed && !verified ? GOLD_SOFT : UI.line) }}>
+              <Icon size={16} style={{ color: k === "ACCOUNT" && authed && !verified ? GOLD : k === "ACCOUNT" && authed ? UI.text : UI.dim }} />
             </button>
           ))}
         </div>
@@ -3447,7 +3448,7 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
 /* ============================================================
    PLAY — every way to play, in a little underwater night sky
    ============================================================ */
-const MODE_INK = { sprint: "#6FD3E0", ultra: "#F2B880", ranked: "#E8C95A", unranked: "#A9A7B4", ai: "#B9B6AC", marathon: "#8FD694", turns: "#EC93B8", private: "#A68BF0" };
+const MODE_INK = { blitz: "#F29A4A", sprint: "#6FD3E0", ultra: "#F2B880", ranked: "#E8C95A", unranked: "#A9A7B4", ai: "#B9B6AC", marathon: "#8FD694", turns: "#EC93B8", private: "#A68BF0" };
 
 /** A mode: a pane of clear, lightly tinted glass, like a board square. Light sweeps it on hover. */
 function ModeCard({ big = false, ink, icon: Icon, title, sub, note, onClick, disabled, delay = 0, h, style }) {
@@ -3500,37 +3501,36 @@ function PlayModal({ status, authed, verified, placed, rank, tr, onPick, onClose
     // In place of the menu's buttons: just the modes.
     <InlineFrame title="PLAY" label="Play" onClose={onClose} maxW={phone ? 480 : 600}
       aside={<span className="tb-t text-right" style={{ color: UI.text, opacity: 0.6 }}>{!online ? "offline" : count ? `${count} online` : ""}</span>}>
-            {/* Two clusters, with room between them: offline on the left, online on the right. */}
+            {/* Two families: BLITZ (speed) on the left, CONTROL (thinking) on the right. */}
             <div className="flex items-start" style={{ gap: phone ? 10 : 18 }}>
               <div className="flex flex-col min-w-0" style={{ flex: 1, gap: 8 }}>
-                <span className="tb-t" style={{ color: UI.text, opacity: 0.55 }}>OFFLINE</span>
-                <ModeCard big ink={MODE_INK.marathon} icon={Stack} title="MARATHON" h={phone ? 96 : 100} delay={0}
-                  sub={open ? `resume · ${open.score.toLocaleString("en-US")}` : phone ? "solo, 7×7" : "solo high score, 7×7"}
-                  note={best ? `BEST ${best.toLocaleString("en-US")}` : null} onClick={() => onPick("MARATHON")} />
-                <div style={{ width: phone ? "100%" : "78%" }}>
-                  <ModeCard ink={MODE_INK.ai} icon={Robot} title="VS AI" sub="strength 1–10" h={phone ? 56 : 58} delay={800} onClick={() => onPick("DIFFICULTY")} />
-                </div>
-                {/* Sprint is keyboard-only: on a computer. */}
-                {!phone && (
-                  <div className="flex" style={{ gap: 8, width: "100%" }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <ModeCard ink={MODE_INK.sprint} icon={Clock} title="SPRINT" sub={sprintBest.get() ? `best ${fmtClock(sprintBest.get())}` : "40 lines, fastest"} h={58} delay={400} onClick={() => onPick("SPRINT")} />
+                {phone ? (
+                  // On a phone Marathon is the Blitz mode.
+                  <ModeCard big ink={MODE_INK.marathon} icon={Stack} title="MARATHON" h={96} delay={0}
+                    sub={open ? `resume · ${open.score.toLocaleString("en-US")}` : "solo, 7×7"}
+                    note={best ? `BEST ${best.toLocaleString("en-US")}` : null} onClick={() => onPick("MARATHON")} />
+                ) : (
+                  <>
+                    <ModeCard big ink={MODE_INK.blitz} icon={Clock} title="BLITZ" h={100} delay={0} disabled
+                      sub="ranked 1v1 · coming soon" />
+                    <div className="flex" style={{ gap: 8, width: "100%" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <ModeCard ink={MODE_INK.sprint} icon={Clock} title="SPRINT" sub={sprintBest.get() ? `best ${fmtClock(sprintBest.get())}` : "40 lines"} h={58} delay={400} onClick={() => onPick("SPRINT")} />
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <ModeCard ink={MODE_INK.ultra} icon={Flag} title="ULTRA" sub={ultraBest.get() ? `best ${ultraBest.get().toLocaleString("en-US")}` : "2 min"} h={58} delay={600} onClick={() => onPick("ULTRA")} />
+                      </div>
                     </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <ModeCard ink={MODE_INK.ultra} icon={Flag} title="ULTRA" sub={ultraBest.get() ? `best ${ultraBest.get().toLocaleString("en-US")}` : "2 min, top score"} h={58} delay={600} onClick={() => onPick("ULTRA")} />
-                    </div>
-                  </div>
+                    <ModeCard ink={MODE_INK.marathon} icon={Stack} title="MARATHON" h={58} delay={300}
+                      sub={open ? `resume · ${open.score.toLocaleString("en-US")}` : best ? `best ${best.toLocaleString("en-US")}` : "solo high score"} onClick={() => onPick("MARATHON")} />
+                  </>
                 )}
-                {/* Pass-and-play only makes sense on one phone in two hands. */}
-                {phone && <ModeCard ink={MODE_INK.turns} icon={People} title="TURN BASED" sub="1 device" h={56} delay={300} onClick={() => onPick("TURNBASED")} />}
               </div>
-              <div className="flex flex-col min-w-0 items-end" style={{ flex: 1, gap: 8, marginTop: phone ? 0 : 8 }}>
-                <span className="tb-t text-right" style={{ color: UI.text, opacity: 0.55 }}>ONLINE</span>
-                <ModeCard big ink={rankedInk} icon={Trophy} title="RANKED" h={phone ? 96 : 100} delay={500}
-                  sub={!online ? (phone ? "offline" : "needs the server") : !authed ? (phone ? "needs an account" : "account required") : !verified ? "verify your email" : placed ? (phone ? "rated 1v1" : "rated 1v1 matches") : "10 games to a rank"}
+              <div className="flex flex-col min-w-0 items-end" style={{ flex: 1, gap: 8 }}>
+                <ModeCard big ink={rankedInk} icon={Trophy} title="CONTROL" h={phone ? 96 : 100} delay={500}
+                  sub={!online ? (phone ? "offline" : "needs the server") : !authed ? (phone ? "needs an account" : "account required") : !verified ? "verify your email" : placed ? "ranked 1v1" : "10 games to a rank"}
                   note={online && authed && verified ? (placed ? `${rank.name} · ${tr}` : "UNPLACED") : null}
                   disabled={!online} onClick={() => onPick("MATCHMAKING")} />
-                {/* Phone: stacked. Wider screens: side by side under RANKED, the second one narrower. */}
                 <div className={phone ? "flex flex-col w-full" : "flex w-full"} style={{ gap: 8 }}>
                   <div style={{ flex: phone ? undefined : 1.12, minWidth: 0 }}>
                     <ModeCard ink={MODE_INK.unranked} icon={Wifi} title="UNRANKED" sub={off || (phone ? "guests too" : "anyone, guests too")} h={56} delay={200} disabled={!online} onClick={() => onPick("UNRANKED")} />
@@ -3539,6 +3539,11 @@ function PlayModal({ status, authed, verified, placed, rank, tr, onPick, onClose
                     <ModeCard ink={MODE_INK.private} icon={Lock} title="PRIVATE" sub={off || "a room code"} h={56} delay={650} disabled={!online} onClick={() => onPick("PRIVATE")} />
                   </div>
                 </div>
+                <div className="w-full">
+                  <ModeCard ink={MODE_INK.ai} icon={Robot} title="VS AI" sub="strength 1–10" h={56} delay={800} onClick={() => onPick("DIFFICULTY")} />
+                </div>
+                {/* Pass-and-play only makes sense on one phone in two hands. */}
+                {phone && <div className="w-full"><ModeCard ink={MODE_INK.turns} icon={People} title="TURN BASED" sub="1 device" h={56} delay={300} onClick={() => onPick("TURNBASED")} /></div>}
               </div>
             </div>
     </InlineFrame>
@@ -4313,11 +4318,14 @@ function SprintGame({ onExit, ultra = false }) {
   // Right: your second piece, then the next three as plain colour squares.
   const g = P;
   const availH = stage.h - (TITLE_H + 12) * P - 60;
-  const cell = Math.max(4 * P, Math.min(24 * P, Math.floor(Math.min((stage.w - 12 * P) / 15.8, availH / 12.2) / P) * P));
+
+  // Sized as a 10×10 board would be, then shared among 8 squares: the board stays the same size on screen.
+  const cell10 = Math.max(4 * P, Math.min(24 * P, Math.floor(Math.min((stage.w - 12 * P) / 15.8, availH / 12.2) / P) * P));
+  const cell = Math.floor((10 * cell10 + 2 * g) / S_SIZE / P) * P;
   const boardW = cell * S_SIZE + g * (S_SIZE - 1);
   const half = Math.max(P, Math.floor((cell + g) / 2 / P) * P - P);
-  const colW = Math.round(cell * 2.8);
-  const boxH = Math.round(cell * 1.7);
+  const colW = Math.round(cell * 2.3);
+  const boxH = Math.round(cell * 1.4);
   const actCells = r.act ? sCellsOf(r.act) : [];
   const actKeys = new Set(actCells.map(([a, b]) => a * S_SIZE + b));
   const legal = r.act ? sCanPlace(st, r.act) : false;
@@ -4334,7 +4342,7 @@ function SprintGame({ onExit, ultra = false }) {
       </div>
     );
   };
-  const sq = Math.round(cell * 0.6);
+  const sq = cell; // the forecast squares are full size
 
   return (
     <div className="tb-screen tb-safe w-full flex flex-col font-mono select-none" style={{ color: UI.text, cursor: "crosshair" }}>
@@ -4345,7 +4353,7 @@ function SprintGame({ onExit, ultra = false }) {
         <div className="flex items-start" style={{ gap: 6 * P }}>
           <div className="flex flex-col tb-t" style={{ width: colW, gap: 5 * P, marginTop: cell }}>
             {handBox(0)}
-            <div className="flex flex-col" style={{ gap: 4 * P, marginTop: 2 * cell }}>
+            <div className="flex flex-col" style={{ gap: 4 * P, marginTop: cell }}>
               {ultra && stat("COMBO", st.combo > 1 ? `×${comboMultOf(st.combo)}` : "—", st.combo > 1 ? GOLD : UI.dim)}
               {stat("PIECES", st.pieces)}
               {stat("PPS", pps.toFixed(2))}

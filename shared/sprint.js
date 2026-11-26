@@ -1,7 +1,7 @@
 /**
  * SPRINT — clear 40 lines as fast as you can. Keyboard only.
  *
- *   The 10×10 board, the seven tetrominoes from a shuffled 7-bag (each one
+ *   The 8×8 board, the seven tetrominoes from a shuffled 7-bag (each one
  *   once per bag). You hold two and see the next three: the piece you place
  *   is replaced by the first of those, and a new one joins the end from the
  *   bag. One of your two is always in play, in the middle of the board; swap
@@ -13,7 +13,7 @@
  * Every piece spawns lying flat in the middle of the board.
  */
 
-export const SIZE = 10;
+export const SIZE = 8;
 export const HAND = 2;
 export const FORECAST = 5;
 export const GOAL = 40;
@@ -32,15 +32,15 @@ export const comboMult = (combo) => 1 + 0.5 * Math.max(0, combo - 1);
 export const ALL_CLEAR = 3000;
 
 // Spawn cells on the board, [row, col]: every piece lying flat, in the
-// middle of the 10×10 board (rows 4–5, around columns 4–5).
+// middle of the 8×8 board (rows 3–4, around columns 3–4).
 const SPAWN = {
-  I: [[4, 3], [4, 4], [4, 5], [4, 6]],
-  O: [[4, 4], [4, 5], [5, 4], [5, 5]],
-  T: [[4, 3], [4, 4], [4, 5], [5, 4]],
-  S: [[4, 4], [4, 5], [5, 3], [5, 4]],
-  Z: [[4, 3], [4, 4], [5, 4], [5, 5]],
-  J: [[4, 3], [5, 3], [5, 4], [5, 5]],
-  L: [[4, 5], [5, 3], [5, 4], [5, 5]],
+  I: [[3, 2], [3, 3], [3, 4], [3, 5]],
+  O: [[3, 3], [3, 4], [4, 3], [4, 4]],
+  T: [[3, 2], [3, 3], [3, 4], [4, 3]],
+  S: [[3, 3], [3, 4], [4, 2], [4, 3]],
+  Z: [[3, 2], [3, 3], [4, 3], [4, 4]],
+  J: [[3, 2], [4, 2], [4, 3], [4, 4]],
+  L: [[3, 4], [4, 2], [4, 3], [4, 4]],
 };
 
 /** Each piece as a shape in its own box (top-left 0,0), turned 0–3 quarter turns clockwise. */
