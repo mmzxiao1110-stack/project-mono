@@ -14,6 +14,7 @@
  *             risk the opponent can cash in
  */
 import { ROWS, COLS, key, enumerateMoves, isCentre, fullLines, resolveTurn, nextMeters, isLegalDelete, isLegalPin, stampOptions } from "./engine.js";
+// (aiPickActionDeep also looks one piece ahead: the caller passes the next piece.)
 import { RULES } from "./rules.js";
 
 function frontierSize(board, owner) {
@@ -226,5 +227,71 @@ export function aiPickAction(st, piece, owner, level, levels) {
   }
   if (best && best.type === "delete" && !RULES.stamp && !isLegalDelete(b, pins, best.cells)) return null;
   if (best && best.foot) { const { foot, ...rest } = best; best = RULES.stamp ? { ...rest, cells: foot } : rest; }
+  return best;
+}
+
+/**
+ * The strongest player: it plays the turn as what it is — simultaneous.
+ * It shortlists its own best actions, predicts the opponent's likeliest
+ * replies (with the piece they really hold), and scores each of its actions
+ * by how it fares across those replies after the real turn resolution
+ * (contested squares, deletes, clears): mostly the average, partly the worst.
+ */
+export function aiPickActionDeep(st, piece, owner, oppPiece, { mine = 10, theirs = 8, caution = 0.35, w: wIn, next = null, ahead = 0.5 } = {}) {
+  const w = wIn || { ...TUNED };
+  const opp = other(owner);
+  const { board: b, pins, meters } = st;
+  const candidates = (side, pc) => {
+    const list = enumerateMoves(b, [pc], side).map((m) => ({ type: "place", cells: m.cells, blockId: m.blockId }));
+    if (RULES.pinToggle && meters[side] >= 1) for (const m of list.slice()) list.push({ ...m, pin: true });
+    const dels = RULES.stamp
+      ? stampOptions(b, pins, pc, "delete", side)
+      : shapesWhere((r, c) => b[r][c] !== null && !pins[r][c], RULES.deleteMax).map((cells) => ({ cells, hits: cells }));
+    const q = (x) => x.hits.reduce((s, [r, c]) => s + (b[r][c] === side ? -val(r, c) : val(r, c)), 0);
+    dels.sort((x, y) => q(y) - q(x));
+    for (const d of dels.slice(0, 10)) list.push({ type: "delete", cells: d.hits, foot: d.cells });
+    // 1-ply: as if the other side passed.
+    for (const m of list) {
+      const res = resolveTurn(b, side === "A" ? m : null, side === "B" ? m : null, pins);
+      const nm = nextMeters(meters, side === "A" ? m : null, side === "B" ? m : null, res.deleted);
+      m.v1 = evalState(res.board, res.pins, nm, side, w);
+    }
+    return list.sort((x, y) => y.v1 - x.v1);
+  };
+  const my = candidates(owner, piece).slice(0, mine);
+  if (!my.length) return null;
+  const their = oppPiece != null ? candidates(opp, oppPiece).slice(0, theirs) : [];
+  if (!their.length) their.push(null);
+  let best = null, bs = -Infinity;
+  for (const m of my) {
+    let sum = 0, worst = Infinity;
+    for (const o of their) {
+      const A = owner === "A" ? m : o, B = owner === "B" ? m : o;
+      const res = resolveTurn(b, A, B, pins);
+      const nm = nextMeters(meters, A, B, res.deleted);
+      let v = evalState(res.board, res.pins, nm, owner, w);
+      // One piece further: the best this leaves for your next piece.
+      if (next != null && ahead > 0) {
+        let bn = -Infinity;
+        for (const n of enumerateMoves(res.board, [next], owner)) {
+          const r2 = resolveTurn(res.board, owner === "A" ? n : null, owner === "B" ? n : null, res.pins);
+          const e = evalState(r2.board, r2.pins, nm, owner, w);
+          if (e > bn) bn = e;
+        }
+        if (bn > -Infinity) v = (1 - ahead) * v + ahead * bn;
+      }
+      sum += v; if (v < worst) worst = v;
+    }
+    const s = (1 - caution) * (sum / their.length) + caution * worst;
+    if (s > bs) { bs = s; best = m; }
+  }
+  if (best && RULES.pinIsFree && !RULES.pinToggle) {
+    const p = pickPins(st, owner, best, piece);
+    if (p && (RULES.stamp || isLegalPin(b, pins, p, owner, meters[owner]))) best = { ...best, pins: p };
+  }
+  if (best && best.type === "delete" && !RULES.stamp && !isLegalDelete(b, pins, best.cells)) return null;
+  if (best && best.foot) { const { foot, ...rest } = best; best = RULES.stamp ? { ...rest, cells: foot } : rest; }
+  // (scores used for ranking only)
+  if (best) { delete best.v1; }
   return best;
 }
