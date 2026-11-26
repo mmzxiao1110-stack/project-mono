@@ -4885,32 +4885,37 @@ function ZgClock({ run, style, left = 0 }) {
   return <span ref={el} className="tb-t tb-b tabular-nums" style={style}>{fmtClock(left)}</span>;
 }
 
-/** The other side in a TOWER game: their field (20 rows), small, their name, and what they've sent. */
-function ZgOppBoard({ view, name, cell, top, font }) {
+/**
+ * The other side in a TOWER game, the same size as yours and level with it:
+ * their field (20 rows), their name over it, what they've sent under it, and
+ * the garbage coming at them as a red bar beside it.
+ */
+function ZgOppBoard({ view, name, cell, g, top, font, side }) {
   const P = usePx();
-  const g = Math.max(1, Math.floor(P / 2));
   const rows = view ? view.board.slice(Z_TOP) : Array.from({ length: Z_VISIBLE }, () => Array(Z_W).fill(null));
   const w = Z_W * cell + (Z_W - 1) * g, h = Z_VISIBLE * cell + (Z_VISIBLE - 1) * g;
   const inc = Math.min(Z_VISIBLE, view?.incoming || 0);
   return (
-    <div className="flex flex-col items-start tb-t" style={{ marginTop: top, marginLeft: 6 * P, gap: 2 * P, fontSize: font, lineHeight: 1.25 }}>
-      <span className="tb-b" style={{ color: "var(--tb-rival)", maxWidth: 2 * w, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
-      <div className="relative" style={{ width: w, height: h, outline: `${P}px solid rgba(255,255,255,.12)`, outlineOffset: P, background: "rgba(8,6,16,.25)" }}>
+    <div className="relative tb-t" style={{ marginTop: top, marginLeft: 8 * P, fontSize: font, lineHeight: 1.25 }}>
+      <span className="absolute tb-b" style={{ bottom: "100%", left: 0, marginBottom: 2 * P, color: "var(--tb-rival)", maxWidth: w, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
+      <div className="relative" style={{ width: w, height: h }}>
         <div style={{ display: "grid", gridTemplateColumns: `repeat(${Z_W}, ${cell}px)`, gap: g }}>
           {rows.map((row, y) => row.map((v, x) => (
-            <div key={y * Z_W + x} style={{ width: cell, height: cell, background: v === null ? "rgba(255,255,255,.06)" : zInk(v) }} />
+            <div key={y * Z_W + x} style={{ width: cell, height: cell, ...(v === null ? GLASS : null) }}>{v !== null && <Ink size={cell} color={zInk(v)} />}</div>
           )))}
         </div>
-        {inc > 0 && <div className="absolute" style={{ left: -3 * P, width: 2 * P, bottom: 0, height: inc * (cell + g) - g, background: "#E0506A" }} />}
+        {inc > 0 && <div className="absolute pointer-events-none" style={{ left: -side - P, width: side + P, bottom: 0, height: inc * (cell + g) - g, background: "#E0506A", boxShadow: "0 0 8px rgba(224,80,106,.6)" }} />}
       </div>
-      <span style={{ color: UI.dim }}>{view?.sent || 0} SENT · {view?.lines || 0} LINES</span>
+      <BoardLine width={w} />
+      <div style={{ color: UI.dim, marginTop: 2 * P }}>{view?.sent || 0} SENT · {view?.lines || 0} LINES</div>
     </div>
   );
 }
 
 const zgUltraBest = { get: () => Number(store.get("tb:zgUltraBest")) || 0, set: (n) => store.set("tb:zgUltraBest", String(n)) };
 const zgBotSkill = { get: () => Math.max(1, Math.min(10, Number(store.get("tb:zgBotSkill")) || 6)), set: (n) => store.set("tb:zgBotSkill", String(n)) };
-const zInk = (v) => (v === Z_GARBAGE ? JUNK_INK : S_INK[v]);
+const ZG_GARBAGE_INK = "#4B4757"; // garbage: dark, so it reads as the floor, not as pieces
+const zInk = (v) => (v === Z_GARBAGE ? ZG_GARBAGE_INK : S_INK[v]);
 /**
  * A run. `holds` counts hold presses for the piece in play (sent with the
  * lock), `seen` the garbage messages received. In a versus game `opp` is the
@@ -5212,8 +5217,9 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
   const g = P;
   const side = 2 * P; // the small gap between the board and the panels beside it
   const availH = stage.h - 24 * P; // the whole height (one row more is kept free above the board for the floating piece)
-  const fitW = (stage.w - 24 * P - 9 * g) / (versus ? 25 : 19); // the board, both side columns (and in a versus game the opponent's board) must fit across
-  const cell = Math.max(4 * P, Math.min(40 * P, Math.floor(Math.min((availH - ZG_SHOW * g) / (ZG_SHOW + 1), fitW) / P) * P));
+  const fitW = (stage.w - 24 * P - 9 * g) / (versus ? 31 : 19); // the board, both side columns (and in a versus game the opponent's board) must fit across
+  // In a versus game the two boards sit side by side, so each is a little smaller.
+  const cell = Math.max(4 * P, Math.min(40 * P, Math.floor(Math.min((availH - ZG_SHOW * g) / (ZG_SHOW + 1) * (versus ? 0.86 : 1), fitW) / P) * P));
   // Text and buttons grow with the board.
   const zoom = Math.max(1, cell / (8 * P));
   const font = Math.round(8 * P * Math.min(zoom, 1.6));
@@ -5342,7 +5348,7 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
             </div>
           </div>
           {/* The opponent: their board, smaller, with the garbage coming at them. */}
-          {versus && <ZgOppBoard view={oppView} name={oppName} cell={Math.max(2 * P, Math.floor(cell * 0.5 / P) * P)} top={sideTop} font={font} />}
+          {versus && <ZgOppBoard view={oppView} name={oppName} cell={cell} g={g} top={sideTop} font={font} side={side} />}
         </div>
         <div style={{ flex: 1, minHeight: 2 * P }} />
       </div>
