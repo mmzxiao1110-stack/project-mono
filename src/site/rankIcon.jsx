@@ -10,7 +10,7 @@ import { RANKS } from "../../shared/glicko.js";
 const GLYPH = {
   F: ["11111111", "11111111", "111.....", "111.....", "1111111.", "1111111.", "111.....", "111.....", "111.....", "111....."],
   C: [".1111111", "11111111", "111.....", "111.....", "111.....", "111.....", "111.....", "111.....", "11111111", ".1111111"],
-  B: ["111111..", "1111111.", "111..111", "111..111", "1111111.", "1111111.", "111..111", "111..111", "1111111.", "111111.."],
+  B: ["111111..", "1111111.", "111..111", "111..111", "1111111.", "1111111.", "111..111", "111..111", "1111111.", "1111111."],
   A: [".111111.", "11111111", "111..111", "111..111", "111..111", "11111111", "11111111", "111..111", "111..111", "111..111"],
   S: [".1111111", "11111111", "111.....", "111.....", "1111111.", ".1111111", ".....111", ".....111", "11111111", "1111111."],
   X: ["111..111", "111..111", "111..111", ".111111.", "..1111..", "..1111..", ".111111.", "111..111", "111..111", "111..111"],
@@ -31,7 +31,14 @@ function build(name, color) {
   if (cache.has(key)) return cache.get(key);
   const letter = GLYPH[name[0]] || GLYPH["?"], mod = MOD[name[1]] || null;
   const cells = new Map(); // "x,y" -> band index
-  letter.forEach((row, y) => [...row].forEach((b, x) => { if (b === "1") cells.set(`${x + slant(y) + 1},${y + 2}`, y); }));
+  if (name[0] === "X") {
+    // X is two straight slanted strokes, drawn as lines (slanting an upright X row by row goes wonky).
+    for (let y = 0; y < ROWS; y++) {
+      const off = (ROWS - 1 - y) / 3;                       // the italic lean
+      const a = (2 * y) / 3 + off, b = 6 - (2 * y) / 3 + off; // the two strokes' left edges
+      for (const e of [a, b]) for (let dx = 0; dx < 3; dx++) cells.set(`${Math.round(e) + dx + 1},${y + 2}`, y);
+    }
+  } else letter.forEach((row, y) => [...row].forEach((b, x) => { if (b === "1") cells.set(`${x + slant(y) + 1},${y + 2}`, y); }));
   // The mark as a superscript, top right, banded on its own.
   if (mod) mod.forEach((row, y) => [...row].forEach((b, x) => { if (b === "1") cells.set(`${x + 14},${y + (mod.length === 2 ? 4 : 2)}`, Math.min(ROWS - 1, Math.round((y / (mod.length - 1 || 1)) * (ROWS - 1)))); }));
   const base = hexRgb(color);

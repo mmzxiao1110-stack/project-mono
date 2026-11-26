@@ -145,13 +145,11 @@ function Tag({ n, ink }) {
 const Mini = ({ card, world, at, label, big, lead, tag, sub, size = 1, style, boxRef }) => {
   const ink = CARD_INKS[card.accent];
   return (
-    <div ref={boxRef} className="relative" style={{ ...style, filter: `drop-shadow(${px(2)} ${px(2)} 0 rgba(0,0,0,.45))` }}>
+    <div ref={boxRef} className="relative" style={{ ...style, filter: `drop-shadow(${px(3)} ${px(3)} 0 rgba(0,0,0,.5))` }}>
       <div className="relative" style={{ clipPath: STEP(1) }}>
       {world && at && <CardSky card={card} world={world} at={at} />}
       <div className="relative flex flex-col items-center text-center" style={{
         padding: `${px(3 + 2 * size)} ${px(3)}`, gap: px(1 + size), minWidth: 0,
-        // A pixel border: lit top and left, in shadow bottom and right.
-        boxShadow: `inset 0 0 0 ${px(1)} color-mix(in srgb, ${ink} 70%, white), inset ${px(2)} ${px(2)} 0 color-mix(in srgb, ${ink} 30%, transparent), inset ${px(-2)} ${px(-2)} 0 rgba(0,0,0,.3)`,
       }}>
         <span className="tb-t" style={{ color: "rgba(255,255,255,.65)", letterSpacing: px(1) }}>{label}</span>
         <div className="flex items-center justify-center flex-wrap" style={{ gap: px(2) }}>
@@ -216,16 +214,16 @@ export function ProfileCard({ p, compact = false, href = null, onEdit = null }) 
   const cRank = p.rank ? RANKS.find((r) => r.name === p.rank) : null;
   const k = compact ? 0.8 : 1;
   const av = Math.round(64 * k);
-  const SIDE = 3, BOTTOM = 4; // how far (in pixels of --p) the side cards and the picture hang out: a little
+  const SIDE = 3, BOTTOM = 0; // how far (in pixels of --p) the picture hangs over the left edge: a little
   // Where the card and each mini-card sit, so they can all show the same sky.
-  const root = useRef(null), body = useRef(null), m0 = useRef(null), m1 = useRef(null), m2 = useRef(null);
+  const root = useRef(null), body = useRef(null), m0 = useRef(null), m1 = useRef(null), m2 = useRef(null), m3 = useRef(null);
   const [geo, setGeo] = useState(null);
   useEffect(() => {
     const el = root.current; if (!el) return undefined;
     const measure = () => {
       const r = el.getBoundingClientRect();
       const at = (x) => { const b = x.current?.getBoundingClientRect(); return b ? { x: b.left - r.left, y: b.top - r.top } : null; };
-      setGeo({ world: { w: Math.round(r.width), h: Math.round(r.height) }, body: at(body), minis: [at(m0), at(m1), at(m2)] });
+      setGeo({ world: { w: Math.round(r.width), h: Math.round(r.height) }, body: at(body), minis: [at(m0), at(m1), at(m2), at(m3)] });
     };
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
     ro?.observe(el);
@@ -256,15 +254,18 @@ export function ProfileCard({ p, compact = false, href = null, onEdit = null }) 
             <span className="tb-t" style={{ color: "rgba(255,255,255,.75)" }}>{hours(p.played ?? p.seconds)} PLAYED</span>
           </div>
         </div>
-        {/* The three modes: Blitz biggest in the middle, Sprint and Ultra lower, over the bottom corners. */}
-        <div className="grid items-end" style={{ margin: `${px(6)} ${px(-6 - SIDE)} ${px(-BOTTOM)}`, gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr)", gap: px(compact ? 5 : 8) }}>
-          <Mini boxRef={m0} card={card} world={geo?.world} at={geo?.minis[0]} label="SPRINT · 40L" style={{ marginBottom: 0 }}
+        {/* Four modes scattered like pieces on a board: Sprint and Marathon stacked and offset
+            on the left, Blitz tall in the middle, Ultra sitting low on the right. All inside the card. */}
+        <div className="grid" style={{ margin: `${px(6)} 0 ${px(7)}`, gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr)", gridTemplateRows: "auto auto", columnGap: px(compact ? 5 : 8), rowGap: px(compact ? 4 : 6) }}>
+          <Mini boxRef={m0} card={card} world={geo?.world} at={geo?.minis[0]} label="SPRINT · 40L" style={{ gridColumn: 1, gridRow: 1, width: "88%", justifySelf: "start" }}
             big={p.sprint ? clock(p.sprint.best) : "—"} tag={p.sprint?.position} sub={p.sprint?.at ? timeAgo(p.sprint.at).toUpperCase() : "no run yet"} />
-          <Mini boxRef={m1} card={card} world={geo?.world} at={geo?.minis[1]} label="BLITZ" size={compact ? 1 : 2} style={{ marginBottom: px(BOTTOM - 2) }}
+          <Mini boxRef={m3} card={card} world={geo?.world} at={geo?.minis[3]} label="MARATHON" style={{ gridColumn: 1, gridRow: 2, width: "88%", justifySelf: "end" }}
+            big={p.marathon ? p.marathon.best.toLocaleString("en-US") : "—"} tag={p.marathon?.position} sub={p.marathon?.at ? timeAgo(p.marathon.at).toUpperCase() : "no game yet"} />
+          <Mini boxRef={m1} card={card} world={geo?.world} at={geo?.minis[1]} label="BLITZ" size={compact ? 1 : 2} style={{ gridColumn: 2, gridRow: "1 / span 2", alignSelf: "center" }}
             lead={bz ? <RankIcon rank={bRank} size={px(compact ? 14 : 22)} /> : null}
             big={bz ? bz.rating : "—"} tag={bz?.position}
             sub={bz ? (bz.pps != null ? `${bz.apm?.toFixed(1)} APM · ${bz.pps.toFixed(2)} PPS · ${bz.vs?.toFixed(1)} VS` : `${bz.games} games`) : "unplayed"} />
-          <Mini boxRef={m2} card={card} world={geo?.world} at={geo?.minis[2]} label="ULTRA · 2 MIN" style={{ marginBottom: px(1) }}
+          <Mini boxRef={m2} card={card} world={geo?.world} at={geo?.minis[2]} label="ULTRA · 2 MIN" style={{ gridColumn: 3, gridRow: "1 / span 2", alignSelf: "end", marginBottom: px(compact ? 2 : 4) }}
             big={p.ultra ? p.ultra.best.toLocaleString("en-US") : "—"} tag={p.ultra?.position} sub={p.ultra?.at ? timeAgo(p.ultra.at).toUpperCase() : "no run yet"} />
         </div>
       </div>

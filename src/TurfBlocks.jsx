@@ -1762,7 +1762,7 @@ function ProfilePopup({ name, guest = false, onClose }) {
   }, [who, isGuest]);
   const loading = !isGuest && res.who !== who;
   return (
-    <Popup title="PLAYER" onClose={onClose} maxW={640}>
+    <Popup title="PLAYER" onClose={onClose} maxW={820}>
       <div className="pt-4 pb-1 flex flex-col" style={{ gap: 4 * P }}>
         {who !== name && (
           <button onClick={() => setWho(name)} className="tb-t text-left flex items-center gap-1" style={{ color: UI.dim }}>
@@ -1779,7 +1779,7 @@ function ProfilePopup({ name, guest = false, onClose }) {
           <div className="tb-t" style={{ color: UI.dim }}>{res.error}</div>
         ) : (
           <>
-            <ProfileCard p={res.data} compact href={`/terminal#/player/${encodeURIComponent(who)}`} />
+            <ProfileCard p={res.data} href={`/terminal#/player/${encodeURIComponent(who)}`} />
             <PlayerRecord p={res.data} onOpen={setWho} />
           </>
         )}
@@ -4802,6 +4802,7 @@ function BlitzGame({ onExit, online = false, colors, onRequeue }) {
   const [now, setNow] = useState(() => performance.now());
   const [chatM, setChatM] = useState(joining);
   const [showEnd, setShowEnd] = useState(false);
+  const [profileOf, setProfileOf] = useState(null); // a player's card, opened from their name
   const boardEl = useRef(null);
   const mouse = useRef(null);
   const toMouse = useCallback((a) => {
@@ -5038,7 +5039,10 @@ function BlitzGame({ onExit, online = false, colors, onRequeue }) {
         <div className="flex flex-col items-center" style={{ gap: 2 * P }}>
           {/* Who this board is, and the spike building on it. */}
           <div className="flex items-center justify-between tb-t" style={{ width: boardW, height: cell - 2 * P }}>
-            <span className="truncate" style={{ color: mine ? "var(--tb-you)" : "var(--tb-rival)" }}>{mine ? myName : oppName}</span>
+            {(mine ? net.profile?.name : online && chatM?.opponent?.name)
+              ? <button onClick={() => setProfileOf(mine ? { name: net.profile.name } : { name: chatM.opponent.name, guest: !!chatM.opponent.guest })} className="truncate tb-t text-left"
+                  title="See their profile" style={{ color: mine ? "var(--tb-you)" : "var(--tb-rival)", textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 3 }}>{mine ? myName : oppName}</button>
+              : <span className="truncate" style={{ color: mine ? "var(--tb-you)" : "var(--tb-rival)" }}>{mine ? myName : oppName}</span>}
             {spiking ? <span className="tb-b" style={{ color: GOLD }}>SPIKE {st.spike}</span> : null}
           </div>
           <div ref={mine ? boardEl : undefined} className="relative" style={{ width: boardW, height: boardW }}>
@@ -5114,6 +5118,7 @@ function BlitzGame({ onExit, online = false, colors, onRequeue }) {
         {g && !online && !g.result && <Countdown key={g.startAt} goAt={g.startAt} block={false} />}
       </div>
       {online && g && chatM && <ChatDock m={{ chat: chatM.chat || [], you: chatM.you, opponent: chatM.opponent, chatError: chatM.chatError }} colors={colors} />}
+      {profileOf && <ProfilePopup name={profileOf.name} guest={profileOf.guest} onClose={() => setProfileOf(null)} />}
     </div>
   );
 }
