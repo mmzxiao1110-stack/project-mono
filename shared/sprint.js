@@ -257,11 +257,17 @@ function junkShape(id, rot) {
  * clear nothing in between don't break it). Each clear adds its lines to the
  * level. When the spike ends, one junk piece of that level goes to the
  * opponent, into their forecast right after the five they can see.
+ * Levels add up linearly: a 4-line clear is 4, another 4 in the same
+ * spike makes 8. An ALL CLEAR (the board left empty) counts as 10 on its
+ * own, or adds 10 to the spike it ends. Single lines send single squares
+ * ("cheese"): legal, but weak, and they can help the opponent.
  */
 export const SPIKE_MS = 500;
-export function noteClear(st, lines, now) {
+export const ALL_CLEAR_LEVELS = 10;
+export function noteClear(st, lines, now, allClear = false) {
   if (!lines) return;
-  st.spike = st.spike && now - st.lastClearAt <= SPIKE_MS ? st.spike + lines : lines;
+  const add = allClear ? ALL_CLEAR_LEVELS : lines;
+  st.spike = st.spike && now - st.lastClearAt <= SPIKE_MS ? st.spike + add : add;
   st.lastClearAt = now;
 }
 /** The junk level to send now (and resets the spike), or 0. */

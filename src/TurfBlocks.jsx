@@ -4513,7 +4513,7 @@ function BlitzGame({ onExit }) {
     const st = { ...c[who], board: c[who].board.map((row) => row.slice()), hand: c[who].hand.slice(), queue: c[who].queue.slice(), bag: c[who].bag.slice() };
     if (!sPlace(st, a)) return null;
     const t = performance.now();
-    sNoteClear(st, st.last.lines, t);
+    sNoteClear(st, st.last.lines, t, st.last.allClear);
     const vanish = st.last.lines ? { ...c.vanish, [who]: { cleared: st.last.cleared, key: `${who}${st.pieces}` } } : c.vanish;
     let next = { ...c, [who]: st, vanish };
     if (st.over) next = { ...next, result: who === "me" ? "lose" : "win" };
