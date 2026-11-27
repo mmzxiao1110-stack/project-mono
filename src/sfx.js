@@ -321,11 +321,17 @@ function arp(c, t, notes, { wave = "p25", step = 0.045, vol = 0.1, d = 0.25, pan
    The game's sounds
    ------------------------------------------------------------------ */
 
+let asOpp = false; // playing the opponent's sounds: their own throttles, so theirs and yours never cut each other off
 function play(name, ms, fn) {
   const c = ready();
   if (!c) return;
-  if (ms && !throttle(name, ms)) return;
+  if (ms && !throttle(asOpp ? `${name}:opp` : name, ms)) return;
   fn(c, c.currentTime + 0.005);
+}
+/** Plays `fn`'s sounds as the opponent's: the same sounds, same volume, same place; only their repeat limits are separate. */
+export function opponentSounds(fn) {
+  asOpp = true;
+  try { fn(); } finally { asOpp = false; }
 }
 
 /* ------------------------------------------------------------------

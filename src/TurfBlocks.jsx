@@ -38,7 +38,7 @@ import { net, SERVER_URL, IS_SECURE, GOOGLE_CLIENT_ID } from "./net.js";
 import { FX } from "./tuning.js";
 import { SkyCanvas, sky, rgbOf, mixRgb, BAYER } from "./sky.jsx";
 import { VERSION_LABEL } from "./version.js";
-import { sfx, setVolume, installUiSounds, core, unlock } from "./sfx.js";
+import { sfx, setVolume, installUiSounds, core, unlock, opponentSounds } from "./sfx.js";
 import { music } from "./music.js";
 import { RULES } from "../shared/rules.js";
 import {
@@ -5005,6 +5005,22 @@ function freshZg(mode, seed = undefined, goAt = 0) {
   return { out: [], log: [], mode, st, startAt: 0, endAt: 0, result: null, newBest: false, flash: null, pop: null, score: 0, holds: 0, seen: 0, sent: 0, given: 0, opp, goAt: versus ? goAt : 0, ratings: null };
 }
 
+/** The sounds of one of the opponent's moves (same as yours): a shift, a turn, a hold, a soft drop, or a lock and what it cleared. */
+function oppMoveSound(code, L, comboBefore, landed) {
+  opponentSounds(() => {
+    if (code === "l" || code === "r") sfx.zgMove();
+    else if (code === "c" || code === "w" || code === "f") sfx.zgRotate(code === "c" ? 1 : code === "w" ? -1 : 2);
+    else if (code === "h") sfx.zgHold();
+    else if (code === "d") sfx.zgLand();
+    else if ((code === "H" || code === "P") && L) {
+      sfx.zgDrop();
+      if (L.lines || L.spin) sfx.zgClear({ lines: L.lines, spin: L.spin, combo: Math.max(0, L.combo), b2b: L.b2b, allClear: L.allClear });
+      if (!L.lines && comboBefore >= 4) sfx.zgComboEnd(comboBefore + 1);
+      if (landed > 0) sfx.zgGarbageLand(landed);
+    }
+  });
+}
+
 /** Shows a clear on the opponent's side: its name, combo and back-to-back, and the rows flashing. */
 function oppClear(o, L, key) {
   o.pop = { name: L.name, piece: L.piece?.id ?? L.piece, combo: L.combo, b2b: L.b2b, allClear: L.allClear, key };
@@ -5108,6 +5124,7 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
       else if (atk > 0) {
         const g = { n: atk, hole: Math.floor(Math.random() * Z_W), i: r.opp.given++ };
         r.opp.st.incoming.push(g);
+        opponentSounds(() => sfx.zgGarbageIn(g.n));
         r.log.push([logAt(), "B", "G", g.n, g.hole, g.i]);
       }
     }
@@ -5190,14 +5207,15 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
         const o = r.opp, at = performance.now() - r.goAt - 120;
         let any = false;
         while (o.q.length && (o.q[0][0] <= at || o.q.length > 60)) {
-          const op = o.q.shift(), before = o.st.pieces;
+          const op = o.q.shift(), before = o.st.pieces, combo0 = o.st.combo;
           if (!zApplyOp(o.st, op)) continue;
           any = true;
           if (op[1] === "H" && o.st.pieces > before) {
-            const L = o.st.last;
+            const L = o.st.last, waiting0 = zIncoming(o.st);
             o.sent += zTowerLock(o.st, L, op[2]);
             if (L.lines || L.spin) oppClear(o, L, o.st.pieces);
-          }
+            oppMoveSound("H", L, combo0, L.lines ? 0 : waiting0 - zIncoming(o.st));
+          } else oppMoveSound(op[1]);
         }
         if (any) bump();
       }
@@ -5233,7 +5251,17 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
       } else t = setTimeout(tick, 200);
     };
     t = setTimeout(tick, 200);
-    return () => clearTimeout(t);
+    // The opponent's alarm, on its own clock (it starts when they get into danger).
+    let u;
+    const oppTick = () => {
+      const r = run.current, room = r.opp ? zgRoom(r.opp.st.board) : -1;
+      if (!r.result && r.startAt && room >= 0) {
+        opponentSounds(() => sfx.zgAlarm());
+        u = setTimeout(oppTick, 333 + (2000 - 333) * Math.min(1, room / 4));
+      } else u = setTimeout(oppTick, 200);
+    };
+    u = setTimeout(oppTick, 200);
+    return () => { clearTimeout(t); clearTimeout(u); };
   }, []);
 
   // ULTRA: two minutes from the first move.
@@ -5253,13 +5281,14 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
         const r = run.current;
         if (r !== c) return;
         if (r.result || performance.now() < r.goAt) { if (!r.result) next(); return; }
-        const o = r.opp, m = zBotLock(o.st);
+        const o = r.opp, m = zBotLock(o.st), combo0 = o.st.combo, waiting0 = zIncoming(o.st);
         const L = m && zApplyLock(o.st, m);
         if (!L) { finish("won"); return; }
         r.log.push([logAt(), "B", "P", m]);
         const atk = zTowerLock(o.st, L);
         o.sent = (o.sent || 0) + atk;
         if (L.lines || L.spin) oppClear(o, L, o.st.pieces);
+        oppMoveSound("P", L, combo0, L.lines ? 0 : waiting0 - zIncoming(o.st));
         if (atk > 0) {
           const g = { n: atk, hole: Math.floor(Math.random() * Z_W), i: r.seen++ };
           r.st.incoming.push(g);
@@ -5289,7 +5318,7 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
       net.on("towerStart", (m) => { if (m.resume) { run.current = { ...freshZg(mode, m.seed, performance.now()), startAt: performance.now() }; bump(); } }),
       net.on("towerGarbage", (m) => { const r = run.current; r.st.incoming.push({ n: m.n, hole: m.hole, i: m.i }); r.seen = Math.max(r.seen, m.i + 1); sfx.zgGarbageIn(m.n); bump(); }),
       net.on("towerOps", (m) => { const r = run.current; if (m.side !== net.tower?.you && r.opp) r.opp.q.push(...m.ops); }),
-      net.on("towerOppGarbage", (m) => { const o = run.current.opp; if (o) o.st.incoming.push({ n: m.n, hole: m.hole, i: m.i }); }),
+      net.on("towerOppGarbage", (m) => { const o = run.current.opp; if (o) { o.st.incoming.push({ n: m.n, hole: m.hole, i: m.i }); opponentSounds(() => sfx.zgGarbageIn(m.n)); } }),
       // After a reconnect: both games as the server has them.
       net.on("towerBoard", (m) => {
         const r = run.current;
