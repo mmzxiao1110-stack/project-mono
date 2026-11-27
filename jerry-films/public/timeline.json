@@ -1,0 +1,56 @@
+{
+  "title": "What if you swallowed a rubber duck?",
+  "fps": 30,
+  "total": 26.329,
+  "scenes": [
+    {
+      "id": "hook",
+      "text": "What happens if you accidentally swallow a rubber duck?",
+      "start": 0.3,
+      "voiceDur": 3.093,
+      "dur": 3.443
+    },
+    {
+      "id": "throat",
+      "text": "First, it slides down your throat, squeaking the entire way down.",
+      "start": 3.743,
+      "voiceDur": 4.117,
+      "dur": 4.468
+    },
+    {
+      "id": "acid",
+      "text": "Then it lands in your stomach, a pool of acid strong enough to eat through a razor blade.",
+      "start": 8.211,
+      "voiceDur": 5.141,
+      "dur": 5.491
+    },
+    {
+      "id": "float",
+      "text": "But rubber ducks float. So it just... bobs there.",
+      "start": 13.702,
+      "voiceDur": 3.051,
+      "dur": 3.401
+    },
+    {
+      "id": "squeeze1",
+      "text": "Your stomach squeezes to crush it.",
+      "start": 17.103,
+      "voiceDur": 1.792,
+      "dur": 2.142
+    },
+    {
+      "id": "squeeze2",
+      "text": "It squeezes harder.",
+      "start": 19.245,
+      "voiceDur": 1.365,
+      "dur": 1.715
+    },
+    {
+      "id": "hiccup",
+      "text": "So for the next three days, every time you hiccup... you squeak.",
+      "start": 20.96,
+      "voiceDur": 3.819,
+      "dur": 5.369
+    }
+  ]
+}
