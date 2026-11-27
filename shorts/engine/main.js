@@ -201,7 +201,7 @@ function placeCamera(b, lt, u, t) {
     }
     const off = pos.clone().sub(look);
     if (cam.move === 'push') off.multiplyScalar(lerp(1.08, 0.86, e));
-    if (cam.move === 'pullback') { off.multiplyScalar(lerp(0.75, 2.6, e)); off.y += e * 4; }
+    if (cam.move === 'pullback') { off.multiplyScalar(lerp(1.15, 2.8, e)); off.y += e * 4; }
     if (cam.move === 'orbit') off.applyAxisAngle(new THREE.Vector3(0, 1, 0), lerp(-12, 12, u) * D2R);
     pos = look.clone().add(off);
   } else {
@@ -281,7 +281,7 @@ window.renderAt = (t) => {
     }
   }
   const look = placeCamera(b, lt, u, t);
-  clearOccluders(look, b.cam ? [b.cam.on, b.cam.look].filter(k => typeof k === 'string') : []);
+  clearOccluders(look, b.cam && b.cam.shot ? [b.cam.on, b.cam.look].filter(k => typeof k === 'string') : Object.keys(b.actors || {}));
   fill.position.copy(camera.position); fill.intensity = P.night * 45;
   // keep the shadow camera on what we are looking at
   sun.position.set(look.x + P.sunPos[0], P.sunPos[1], look.z + P.sunPos[2]); sun.target.position.copy(look);
