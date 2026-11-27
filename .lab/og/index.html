@@ -1,0 +1,88 @@
+<!doctype html>
+<!-- The link preview (public/og.png, 1200×630): the menu's pixel sky, the title, a little stack.
+     Render: node .lab/og/render.mjs (with `npx vite --port 8896` running). -->
+<html><head><meta charset="utf-8">
+<style>
+@font-face { font-family: "Silkscreen"; font-weight: 700; src: url("/src/assets/fonts/silkscreen-700-latin.woff2") format("woff2"); }
+@font-face { font-family: "Silkscreen"; font-weight: 400; src: url("/src/assets/fonts/silkscreen-400-latin.woff2") format("woff2"); }
+html, body { margin: 0; background: #1B1A21; }
+#card { position: relative; width: 1200px; height: 630px; overflow: hidden; }
+canvas { position: absolute; inset: 0; width: 1200px; height: 630px; image-rendering: pixelated; }
+.t { position: absolute; font-family: "Silkscreen", monospace; color: #fff; white-space: nowrap; -webkit-font-smoothing: none; }
+#title { left: 66px; top: 186px; font-weight: 700; font-size: 112px; line-height: 1; letter-spacing: 6px; text-shadow: 8px 8px 0 rgba(0,0,0,.5); }
+#sub { left: 72px; top: 328px; font-size: 30px; letter-spacing: 3px; color: #ABA1CF; }
+#chips { left: 72px; top: 402px; display: flex; gap: 18px; }
+.chip { font-family: "Silkscreen", monospace; font-weight: 700; font-size: 26px; letter-spacing: 3px; color: #fff; padding: 12px 20px;
+  clip-path: polygon(0 12px, 6px 12px, 6px 6px, 12px 6px, 12px 0, calc(100% - 12px) 0, calc(100% - 12px) 6px, calc(100% - 6px) 6px, calc(100% - 6px) 12px, 100% 12px, 100% calc(100% - 12px), calc(100% - 6px) calc(100% - 12px), calc(100% - 6px) calc(100% - 6px), calc(100% - 12px) calc(100% - 6px), calc(100% - 12px) 100%, 12px 100%, 12px calc(100% - 6px), 6px calc(100% - 6px), 6px calc(100% - 12px), 0 calc(100% - 12px)); }
+#url { left: 72px; top: 540px; font-size: 22px; letter-spacing: 3px; color: rgba(242,232,210,.55); }
+</style></head>
+<body><div id="card">
+<canvas id="cv" width="200" height="105"></canvas>
+<div class="t" id="title">TESELLA</div>
+<div class="t" id="sub">PIXEL BLOCKS · 1V1 · RANKED</div>
+<div class="t" id="chips"></div>
+<div class="t" id="url">PLAY FREE IN YOUR BROWSER</div>
+</div>
+<script>
+const P = 6, W = 200, H = 105;
+const cv = document.getElementById("cv"), ctx = cv.getContext("2d"), img = ctx.createImageData(W, H), d = img.data;
+const rgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+const mix = (a, b, t) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
+const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map((v) => (v + 0.5) / 16);
+// The sky: the menu's aquarium palette, dark at the top to a teal-lavender haze, flat bands dithered at the seams.
+const g = rgb("#1B1A21"), pa = rgb("#2B2932"), yo = rgb("#7CC7BF"), sp = rgb("#B4A3EE");
+const BANDS = [g, mix(g, pa, 0.5), pa, mix(pa, sp, 0.18), mix(pa, sp, 0.3), mix(mix(pa, yo, 0.35), sp, 0.2), mix(mix(pa, yo, 0.5), sp, 0.25)];
+const set = (x, y, c) => { if (x < 0 || y < 0 || x >= W || y >= H) return; const o = (y * W + x) * 4; d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = 255; };
+for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+  const th = BAYER[(y & 3) * 4 + (x & 3)];
+  const t = Math.min(0.999, Math.pow(y / H, 1.3) * 0.85 + (x / W) * 0.15), f = t * (BANDS.length - 1), i = Math.floor(f);
+  set(x, y, BANDS[f - i > th ? Math.min(BANDS.length - 1, i + 1) : i]);
+}
+// A few stars, a couple of drifting bubbles.
+let s = 11; const rnd = () => ((s = (s * 16807) % 2147483647) / 2147483647);
+for (let k = 0; k < 40; k++) { const x = Math.floor(rnd() * W), y = Math.floor(rnd() * H * 0.55); set(x, y, mix(BANDS[1], [242, 232, 210], 0.25 + rnd() * 0.4)); }
+// Blocks: the game's pixel tile (dark outer ring, bright inner ring, a highlight top left, flat fill), 6 pixels a square.
+const S = 6;
+const tile = (cx, cy, hex) => {
+  const c = rgb(hex), dark = mix(c, [10, 8, 20], 0.55), lite = mix(c, [255, 255, 255], 0.45);
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const X = cx * S + x, Y = cy * S + y;
+    const edge = x === 0 || y === 0 || x === S - 1 || y === S - 1;
+    const inner = !edge && (x === 1 || y === 1 || x === S - 2 || y === S - 2);
+    let col = edge ? dark : inner ? mix(c, [255, 255, 255], 0.18) : c;
+    if ((x === 2 && y === 2) || (x === 3 && y === 2) || (x === 2 && y === 3)) col = lite;
+    set(X, Y, col);
+  }
+};
+const INK = { I: "#6FD3E0", O: "#EAD6A4", T: "#B4A3EE", S: "#A3D98C", Z: "#E88FB4", J: "#6FA8FF", L: "#F2B880" };
+// A 10-wide well on the right (squares 21..30 across, rows down to 16), stacked with a gap for the falling I.
+const ox = 21, floor = 16;
+const well = [
+  "..........",
+  "..........",
+  "......TTT.",
+  "OO.....T..",
+  "OOZZ..LLL.",
+  "SZZLJ.LSS.",
+  "SSLLJ.SSIT",
+  "JSLOO.ZZIT",
+  "JJTOO..ZZI".replace(/\./g, "."),
+];
+// Board backdrop: a dark glass pane behind the stack.
+for (let y = 2 * S; y < (floor + 1) * S; y++) for (let x = ox * S - 2; x < (ox + 10) * S + 2; x++) {
+  const o = (y * W + x) * 4; if (x < 0 || y < 0 || x >= W || y >= H) continue;
+  const edge = x === ox * S - 2 || x === (ox + 10) * S + 1;
+  const c = edge ? [74, 70, 86] : mix([d[o], d[o + 1], d[o + 2]], [20, 18, 28], 0.6);
+  d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2];
+}
+well.forEach((row, r) => [...row].forEach((ch, x) => { if (INK[ch]) tile(ox + x, floor - well.length + 1 + r, INK[ch]); }));
+// The falling I (vertical) above its slot, with a ghost dotted below.
+for (let k = 0; k < 4; k++) tile(ox + 5, 3 + k, INK.I);
+for (let k = 0; k < 4; k++) { const cy = floor - 3 + k; for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) if ((x === 0 || y === 0 || x === S - 1 || y === S - 1) && ((x + y) & 1)) set((ox + 5) * S + x, cy * S + y, [111, 211, 224]); }
+ctx.putImageData(img, 0, 0);
+// Mode chips, each in its colour.
+const chips = [["BLITZ", "#7CC7BF"], ["TOWER", "#B4A3EE"], ["CONTROL", "#EAD6A4"]];
+document.getElementById("chips").innerHTML = chips.map(([t, c]) =>
+  `<span class="chip" style="background: color-mix(in srgb, ${c} 32%, rgba(27,26,33,.6)); box-shadow: inset 0 6px 0 color-mix(in srgb, ${c} 60%, white), inset 0 -6px 0 color-mix(in srgb, ${c} 50%, black)">${t}</span>`).join("");
+document.fonts.ready.then(() => { window.__ready = true; });
+</script></body></html>
