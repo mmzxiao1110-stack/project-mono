@@ -5630,7 +5630,10 @@ function BlitzGame({ onExit, online = false, colors, onRequeue }) {
   const startBot = useCallback(() => { blitzSkill.set(skill); setShowEnd(false); commit(fresh(newSprintSeed(), BLITZ_COUNTDOWN * 1000)); }, [skill, commit]);
   const findMatch = useCallback(() => { onRequeue?.(); }, [onRequeue]);
   const oppName = online ? (chatM?.opponent?.name || "OPPONENT") : `BOT · SKILL ${blitzSkill.get()}`;
-  const myName = net.profile?.name || "YOU";
+  // window.__labMyName: the lab's bot-vs-bot recordings name the left player.
+  const myName = (typeof window !== "undefined" && window.__labMyName) || net.profile?.name || "YOU";
+  // For the lab's recordings: the game and the board, to read (and play the left side like a person would).
+  useEffect(() => { window.__blitz = { live, boardEl }; return () => { if (window.__blitz?.live === live) delete window.__blitz; }; }, []);
 
   // Online: the server's messages.
   useEffect(() => {
