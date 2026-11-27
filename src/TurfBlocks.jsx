@@ -6675,19 +6675,25 @@ function Wipe({ theme, onMiddle, onDone }) {
    END SCREEN — shared by ranked results and local matches
    ============================================================ */
 /** One side of the final score: name over a big pixel number, in a pane of glass. */
-function EndSide({ name, score, ink, won }) {
+/** One side's result on the end screen: its name small, its number big. The winner's is lit. */
+function EndSide({ name, score, ink, won, big = false, align = "center" }) {
   const P = usePx();
   return (
-    <div className="flex-1 min-w-0 flex flex-col items-center tb-rise" style={{
-      padding: `${4 * P}px ${3 * P}px`, gap: 3 * P, ...GLASS, clipPath: CLIP,
-      background: `color-mix(in srgb, ${ink} ${won ? 22 : 10}%, color-mix(in srgb, var(--tb-text) 6%, transparent))`,
-    }}>
-      <div className="tb-t truncate max-w-full" style={{ color: ink }}>{name}</div>
-      <NumBox value={score} color={ink} label={`${name}: ${score}`} />
+    <div className="flex-1 min-w-0 flex flex-col tb-rise" style={{ alignItems: align === "center" ? "center" : align === "left" ? "flex-start" : "flex-end", gap: 2 * P, opacity: won === false ? 0.6 : 1 }}>
+      <div className="tb-t truncate max-w-full" style={{ color: UI.dim, letterSpacing: 2 * P }}>{name}</div>
+      <div className="tabular-nums truncate max-w-full" aria-label={`${name}: ${score}`} style={{
+        fontFamily: '"Silkscreen", monospace', fontWeight: 700, lineHeight: 1, color: ink,
+        fontSize: big ? 22 * P : 13 * P, textShadow: `${P}px ${P}px 0 rgba(0,0,0,.45)${won ? `, 0 0 ${8 * P}px color-mix(in srgb, ${ink} 45%, transparent)` : ""}`,
+      }}>{score}</div>
     </div>
   );
 }
 
+/**
+ * The end of a game, every mode. A big verdict, the result large (one number for a solo run, both sides
+ * for a match), the stats as a grid of tiles, then the buttons. Laid on a soft dark pool over the sky.
+ *   note: "43 lines · 111 pieces · 11.62 PPS" -> tiles (the number first, its label under it)
+ */
 function EndScreen({ verdict, ink, note, left, right, special = 0, children, actions, sound = null, compare = true }) {
   const P = usePx();
   useEffect(() => {
@@ -6696,37 +6702,66 @@ function EndScreen({ verdict, ink, note, left, right, special = 0, children, act
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  const stats = [
+    // "43 lines" or "max combo 3": the number, whichever side it's on, and its label.
+    ...(note ? note.split(" · ").map((part) => {
+      const t = part.trim(), a = t.match(/^([\d.,:%+]+)\s+(.+)$/), b = t.match(/^(.+?)\s+([\d.,:%+]+)$/);
+      return a ? { v: a[1], l: a[2] } : b ? { v: b[2], l: b[1] } : { v: t, l: "" };
+    }) : []),
+    ...(special > 0 ? [{ v: String(special), l: "special" }] : []),
+  ];
+  // Who won: the game says so when it knows (a match's result); otherwise the bigger number.
+  const leftWon = typeof left.won === "boolean" ? left.won : compare ? left.score > right.score : false;
+  const rightWon = typeof right.won === "boolean" ? right.won : compare ? right.score > left.score : false;
   return (
-    <div className="tb-screen tb-safe w-full flex flex-col items-center justify-center px-6 font-mono" style={{ color: UI.text }}>
-      <Scaled className="relative w-full" style={{ maxWidth: 400 }}>
-        <div className="flex flex-col items-center text-center tb-rise" style={{
-          gap: 6 * P, padding: `${10 * P}px ${8 * P}px`,
-          // See-through, like the game's buttons: tinted glass over the sky.
-          background: "color-mix(in srgb, var(--tb-text) 6%, color-mix(in srgb, var(--tb-panel-solid) 22%, transparent))",
-          boxShadow: `inset 0 ${P}px 0 color-mix(in srgb, var(--tb-text) 30%, transparent), inset 0 -${P}px 0 rgba(0,0,0,.3), inset ${P}px 0 0 color-mix(in srgb, var(--tb-text) 12%, transparent), inset -${P}px 0 0 rgba(0,0,0,.2)`,
-          clipPath: CLIP,
-        }}>
-          <div className="flex items-center tb-bob" style={{ gap: 4 * P }}>
-            <Ink size={6 * P} color={ink} />
-            <div className="tb-t tb-b" style={{ color: ink, letterSpacing: P, textShadow: `${P}px ${P}px 0 rgba(0,0,0,.5)` }}>{verdict}</div>
-            <Ink size={6 * P} color={ink} />
+    <div className="tb-screen tb-safe relative w-full flex flex-col items-center justify-center px-6 font-mono" style={{ color: UI.text }}>
+      {/* A dark pool of light under everything, so it reads over any sky. */}
+      <div aria-hidden="true" className="absolute inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse 60% 55% at 50% 50%, rgba(8,8,14,.62), rgba(8,8,14,.28) 55%, transparent 80%)" }} />
+      <Scaled className="relative w-full" style={{ maxWidth: 460 }}>
+        <div className="flex flex-col items-center text-center" style={{ gap: 7 * P }}>
+          {/* The verdict. */}
+          <div className="flex flex-col items-center tb-rise" style={{ gap: 3 * P }}>
+            <div style={{ height: P, width: 40 * P, background: `linear-gradient(90deg, transparent, ${ink}, transparent)` }} />
+            <div style={{ fontFamily: '"Silkscreen", monospace', fontWeight: 700, fontSize: 17 * P, lineHeight: 1.05, letterSpacing: 2 * P, color: ink,
+              textShadow: `${P}px ${P}px 0 rgba(0,0,0,.55), 0 0 ${10 * P}px color-mix(in srgb, ${ink} 40%, transparent)` }}>{verdict}</div>
+            <div style={{ height: P, width: 40 * P, background: `linear-gradient(90deg, transparent, ${ink}, transparent)` }} />
           </div>
-          <PixelRule />
-          <div className="flex items-stretch w-full" style={{ gap: 3 * P }}>
-            <EndSide {...left} won={compare ? left.score > right.score : !!left.won} />
-            <div className="flex items-center tb-t" style={{ color: UI.dim }}>{compare ? "vs" : "·"}</div>
-            <EndSide {...right} won={compare ? right.score > left.score : !!right.won} />
-          </div>
-          {(note || special > 0) && (
-            <div className="tb-t tb-rise" style={{ color: GOLD, animationDelay: "120ms" }}>
-              {note}{note && special > 0 ? " · " : ""}{special > 0 ? `${special} special` : ""}
+
+          {/* The result. A match: both sides. A solo run: the number, big, and the best beside it. */}
+          {compare ? (
+            <div className="flex items-end w-full" style={{ gap: 4 * P }}>
+              <EndSide {...left} won={leftWon} align="right" />
+              <div className="tb-t tb-b shrink-0" style={{ color: UI.dim, paddingBottom: 2 * P }}>VS</div>
+              <EndSide {...right} won={rightWon} align="left" />
+            </div>
+          ) : (
+            <div className="flex flex-col items-center w-full" style={{ gap: 3 * P }}>
+              <EndSide {...left} won={leftWon || undefined} big />
+              <div className="tb-t tb-rise" style={{ color: UI.dim, animationDelay: "80ms" }}>
+                {right.name} <span className="tb-b tabular-nums" style={{ color: right.ink }}>{right.score}</span>
+              </div>
             </div>
           )}
-          {children}
-          <div className="flex w-full tb-rise" style={{ gap: 3 * P, animationDelay: "320ms" }}>
+
+          {/* The stats, as tiles. */}
+          {stats.length > 0 && (
+            <div className="grid w-full tb-rise" style={{ gridTemplateColumns: `repeat(${stats.length <= 4 ? stats.length : 3}, minmax(0, 1fr))`, gap: 2 * P, animationDelay: "140ms" }}>
+              {stats.map((st, i) => (
+                <div key={i} className="flex flex-col items-center justify-center" style={{ padding: `${3 * P}px ${2 * P}px`, gap: P, ...glass(UI.line) }}>
+                  <span className="tb-b tabular-nums" style={{ fontFamily: '"Silkscreen", monospace', fontSize: 9 * P, lineHeight: 1, color: UI.text }}>{st.v}</span>
+                  {st.l && <span className="tb-t truncate max-w-full" style={{ color: UI.dim }}>{st.l.toUpperCase()}</span>}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {children && <div className="w-full flex flex-col items-center tb-rise" style={{ gap: 3 * P, animationDelay: "200ms" }}>{children}</div>}
+
+          {/* What next: the main action wide and lit, the other quiet. */}
+          <div className="flex w-full tb-rise" style={{ gap: 3 * P, animationDelay: "280ms" }}>
             {actions.map((a) => (
-              <button key={a.label} onClick={a.onClick} className="tb-t"
-                style={{ height: 48, flex: a.main ? 1.5 : 1, ...(a.main ? skFill(UI.text) : sk(UI.line)), color: a.main ? UI.text : UI.dim }}>
+              <button key={a.label} onClick={a.onClick} className="tb-t tb-b"
+                style={{ height: 50, flex: a.main ? 1.6 : 1, letterSpacing: P, ...(a.main ? skFill("var(--tb-you)") : glass(UI.line)), color: a.main ? UI.text : UI.dim }}>
                 {a.label}
               </button>
             ))}
