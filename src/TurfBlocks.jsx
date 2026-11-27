@@ -3386,9 +3386,11 @@ function HowToModal({ colors, loadout, onClose }) {
 /** The title: TESELLA in the game's font, bold capitals. */
 
 function PixelLogo({ small = false }) {
+  const phone = useCompact();
   return (
     <div className={small ? "flex justify-center" : "flex justify-center tb-bob"}>
-      <PixelWord text="TESELLA" from="var(--tb-you)" to="var(--tb-rival)" scale={small ? 2 : 3} />
+      {/* On a phone the big size runs edge to edge: one step smaller. */}
+      <PixelWord text="TESELLA" from="var(--tb-you)" to="var(--tb-rival)" scale={small || phone ? 2 : 3} />
     </div>
   );
 }
@@ -3503,7 +3505,7 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
           {status === "online" && online !== null ? (
             <span className="tb-t" style={{ color: UI.dim }}>{online === 1 ? "just you online right now" : `${online} people online`}</span>
           ) : (
-            <span className="tb-t" style={{ color: UI.dim }}>{status === "connecting" ? "connecting…" : "offline: marathon and turn based still work"}</span>
+            <span className="tb-t" style={{ color: UI.dim }}>{status === "connecting" ? "connecting…" : "offline · solo modes work"}</span>
           )}
         </button>
 
@@ -3662,7 +3664,23 @@ function PlayModal({ status, authed, verified, profile, onPick, onClose }) {
     // In place of the menu's buttons: just the modes.
     <InlineFrame title="PLAY" label="Play" onClose={onClose} maxW={phone ? 480 : 900}
       aside={<span className="tb-t text-right" style={{ color: UI.text, opacity: 0.6 }}>{!online ? "offline" : count ? `${count} online` : ""}</span>}>
-            {/* Blitz on the left, TOWER in the middle, Control on the right; set well below the header. */}
+            {phone ? (
+              // A phone: one column, every card full width (the keyboard modes, Blitz and TOWER, stay on computers).
+              <div className="flex flex-col" style={{ gap: 8, marginTop: 14 }}>
+                <ModeCard big ink={MODE_INK.marathon} title="ENDLESS" h={88} delay={0} disabled={lock()}
+                  sub={open ? `resume · ${open.score.toLocaleString("en-US")}` : "solo, 7×7"}
+                  note={best ? `BEST ${best.toLocaleString("en-US")}` : null} onClick={() => onPick("MARATHON")} />
+                <ModeCard big ink={MODE_INK.ranked} title="CONTROL" h={88} delay={100}
+                  sub={rc.sub} note={rc.note} noteInk={rc.noteInk}
+                  disabled={!online || lock("control")} onClick={() => onPick("MATCHMAKING")} />
+                {half(
+                  <ModeCard ink={MODE_INK.ai} title="VS AI" sub="strength 1–10" h={56} delay={200} disabled={lock()} onClick={() => onPick("DIFFICULTY")} />,
+                  <ModeCard ink={MODE_INK.turns} title="TURN BASED" sub="1 device" h={56} delay={300} disabled={lock()} onClick={() => onPick("TURNBASED")} />,
+                )}
+                <ModeCard ink={MODE_INK.private} icon={Lock} title="PRIVATE" sub={off || "play a friend"} h={56} delay={400} disabled={!online || lock()} onClick={() => onPick("PRIVATE")} />
+              </div>
+            ) : (
+            /* Blitz on the left, TOWER in the middle, Control on the right; set well below the header. */
             <div className="flex items-start" style={{ gap: phone ? 10 : 18, marginTop: phone ? 18 : 44 }}>
               <div className="flex flex-col min-w-0" style={{ flex: 1, gap: 8 }}>
                 {phone ? (
@@ -3711,9 +3729,9 @@ function PlayModal({ status, authed, verified, profile, onPick, onClose }) {
                 {/* A room with a friend: Control, Blitz or TOWER, picked in the room. */}
                 <div className="w-full"><ModeCard ink={MODE_INK.private} icon={Lock} title="PRIVATE" sub={off || "play a friend · any mode"} h={56} delay={650} disabled={!online || lock()} onClick={() => onPick("PRIVATE")} /></div>
                 {/* Pass-and-play only makes sense on one phone in two hands. */}
-                {phone && <div className="w-full"><ModeCard ink={MODE_INK.turns} title="TURN BASED" sub="1 device" h={56} delay={300} disabled={lock()} onClick={() => onPick("TURNBASED")} /></div>}
               </div>
             </div>
+            )}
     </InlineFrame>
   );
 }
@@ -4304,9 +4322,9 @@ function MarathonGame({ theme, onExit }) {
               <div className="flex items-end justify-between tb-t" style={{ width: compact ? boardW : boardW + slotPx + 3 * P, gap: 3 * P }}>
                 <div className="flex flex-col"><span style={{ color: UI.dim }}>SCORE</span><span className="tb-b tabular-nums" style={{ color: "var(--tb-you)" }}>{st.score.toLocaleString("en-US")}</span></div>
                 <div className="flex flex-col items-center">
-                  <span style={{ color: UI.text }}>LEVEL {mLevelOf(st.lines)}{mLevelOf(st.lines) > 1 && <span style={{ color: GOLD }}> ×{(1 + M_TUNING.levelBonus * (mLevelOf(st.lines) - 1)).toFixed(1)}</span>}</span>
+                  <span className="whitespace-nowrap" style={{ color: UI.text }}>LEVEL {mLevelOf(st.lines)}{mLevelOf(st.lines) > 1 && <span style={{ color: GOLD }}> ×{(1 + M_TUNING.levelBonus * (mLevelOf(st.lines) - 1)).toFixed(1)}</span>}</span>
                   {/* Always a near goal in view. */}
-                  <span className="tabular-nums" style={{ color: UI.dim }}>NEXT IN {M_TUNING.levelLines - (st.lines % M_TUNING.levelLines)} {M_TUNING.levelLines - (st.lines % M_TUNING.levelLines) === 1 ? "LINE" : "LINES"}</span>
+                  <span className="tabular-nums whitespace-nowrap" style={{ color: UI.dim }}>{compact ? "" : "NEXT IN "}{M_TUNING.levelLines - (st.lines % M_TUNING.levelLines)} {M_TUNING.levelLines - (st.lines % M_TUNING.levelLines) === 1 ? "LINE" : "LINES"}{compact ? " TO GO" : ""}</span>
                 </div>
                 <div className="flex flex-col items-end"><span style={{ color: UI.dim }}>BEST</span><span className="tb-b tabular-nums" style={{ color: GOLD }}>{Math.max(best, st.score).toLocaleString("en-US")}</span></div>
               </div>
@@ -7972,8 +7990,9 @@ export default function TurfBlocks() {
       .tb-safe {
         padding-top: env(safe-area-inset-top, 0px);
         padding-bottom: env(safe-area-inset-bottom, 0px);
-        padding-left: env(safe-area-inset-left, 0px);
-        padding-right: env(safe-area-inset-right, 0px);
+        /* Never less than a 16px gutter at the sides (this rule replaced each screen's own side padding). */
+        padding-left: max(env(safe-area-inset-left, 0px), 16px);
+        padding-right: max(env(safe-area-inset-right, 0px), 16px);
       }
       .tb-scroll { -webkit-overflow-scrolling: touch; scrollbar-width: none; }
       .tb-scroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
