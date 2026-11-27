@@ -3732,6 +3732,10 @@ function PlayModal({ status, authed, verified, profile, onPick, onClose }) {
               </div>
             </div>
             )}
+            {/* A note from the developer, at the bottom. */}
+            <p className="tb-t text-center" style={{ color: UI.dim, opacity: 0.75, marginTop: phone ? 18 : 28, lineHeight: 1.7, textWrap: "balance" }}>
+              * since tetr.io already exists I might remove the tetris mode since it's kinda pointless, but it has cool sfx! play blitz mode if you like osu tho
+            </p>
     </InlineFrame>
   );
 }
@@ -5629,7 +5633,7 @@ function BlitzGame({ onExit, online = false, colors, onRequeue }) {
   const playing = (c) => c && !c.result && performance.now() >= c.startAt;
   const startBot = useCallback(() => { blitzSkill.set(skill); setShowEnd(false); commit(fresh(newSprintSeed(), BLITZ_COUNTDOWN * 1000)); }, [skill, commit]);
   const findMatch = useCallback(() => { onRequeue?.(); }, [onRequeue]);
-  const oppName = online ? (chatM?.opponent?.name || "OPPONENT") : `BOT · SKILL ${blitzSkill.get()}`;
+  const oppName = online ? (chatM?.opponent?.name || "OPPONENT") : (typeof window !== "undefined" && window.__labOppName) || `BOT · SKILL ${blitzSkill.get()}`;
   // window.__labMyName: the lab's bot-vs-bot recordings name the left player.
   const myName = (typeof window !== "undefined" && window.__labMyName) || net.profile?.name || "YOU";
   // For the lab's recordings: the game and the board, to read (and play the left side like a person would).
