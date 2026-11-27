@@ -4997,6 +4997,8 @@ const zInk = (v) => (v === Z_GARBAGE ? ZG_GARBAGE_INK : S_INK[v]);
  * other side: a local bot's game, or the latest view of the online opponent.
  */
 function freshZg(mode, seed = undefined, goAt = 0) {
+  // For the lab's recordings: a script can set the next solo run's piece order (window.__zgNextSeed, used once).
+  if (seed === undefined && mode !== "tower" && typeof window !== "undefined" && Number.isInteger(window.__zgNextSeed)) { seed = window.__zgNextSeed; delete window.__zgNextSeed; }
   const st = zNewGame(seed, mode === "sprint" ? Z_GOAL : Infinity);
   st.incoming = [];
   const versus = mode === "tower" || mode === "towerbot";
