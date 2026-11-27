@@ -593,6 +593,8 @@ export const sfx = {
       } else if (lines >= 4) {
         // The quad: a fast staccato chip run straight up the scale to the high A.
         for (let i = 0; i <= 7; i++) chip(c, t + i * 0.035, za(i, A5), { vol: 0.026, d: i === 7 ? 0.6 : 0.08, duty: "p12", pan: spread(i, 8) * 0.6 });
+        // A quad inside a combo (or back to back) lands with the crisp stab on top of the run.
+        if (combo >= 1 || b2b > 0) stab(c, t + 0.29, { vol: 0.04 });
         harp(c, t + 0.25, za(0, 33), { vol: 0.07, d: 2.2 });
       } else if (lines) {
         chip(c, land, note, { vol: 0.032, d: 0.55 });

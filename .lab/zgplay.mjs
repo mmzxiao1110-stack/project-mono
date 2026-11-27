@@ -65,11 +65,11 @@ const t0 = Date.now();
 await p.goto("http://localhost:8896");
 await p.waitForTimeout(1500); await p.mouse.click(5, 5);
 await p.getByRole("button", { name: /^PLAY/ }).first().click({ force: true }); await p.waitForTimeout(800);
-await p.getByText("ZERO-G", { exact: true }).first().click({ force: true });
+await p.getByText("SPRINT", { exact: true }).nth(1).click({ force: true }); // TOWER's Sprint (the middle column)
 await p.waitForFunction(() => window.__zg && window.__zg.current.st.cur, null, { timeout: 15000 });
 const tStart = Date.now();
 await p.waitForTimeout(1200);
-const key = (k) => p.keyboard.press(k, { delay: 12 });
+const key = (k) => p.keyboard.press(k);
 let n = 0;
 while (n < 400) {
   const s = await p.evaluate(() => { const r = window.__zg.current; const st = r.st; return r.result ? null : { board: st.board, cur: st.cur, hold: st.hold, held: st.held, queue: st.queue, lines: st.lines, pieces: st.pieces, combo: st.combo, b2b: st.b2b, goal: st.goal, stats: st.stats, over: st.over }; });

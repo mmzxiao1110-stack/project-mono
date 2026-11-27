@@ -345,6 +345,7 @@ export function syncTo(seed, fix, goal = Infinity) {
    change a player makes, timed in ms from GO.
      [t, "l"] [t, "r"]   one column left / right
      [t, "d"]            soft drop: straight to the floor (no lock)
+     [t, "g"]            gravity: one row down
      [t, "c"] [t, "w"] [t, "f"]   turn clockwise / counter-clockwise / 180
      [t, "h"]            hold (swap with the held piece)
      [t, "H", seen]      hard drop; `seen`: garbage messages received so far
@@ -352,7 +353,7 @@ export function syncTo(seed, fix, goal = Infinity) {
    server checks every piece by playing it, and the other player (and a
    replay) sees it exactly as it was played.
    ------------------------------------------------------------------ */
-export const OPS = "lrdcwfhH";
+export const OPS = "lrdcwfhHg";
 /** Applies one move to `st`. True if it changed anything (a hard drop always does); `st.last` after "H". */
 export function applyOp(st, op) {
   if (!st.cur || !Array.isArray(op)) return false;
@@ -360,6 +361,7 @@ export function applyOp(st, op) {
     case "l": return shift(st, -1);
     case "r": return shift(st, 1);
     case "d": { let moved = false; while (down(st)) moved = true; return moved; }
+    case "g": return down(st); // gravity: one row down
     case "c": return rotate(st, 1);
     case "w": return rotate(st, -1);
     case "f": return rotate(st, 2);
@@ -375,3 +377,13 @@ export function cleanOp(op) {
   const t = Math.max(0, Math.round(op[0]));
   return op[1] === "H" ? [t, "H", Number.isInteger(op[2]) && op[2] >= 0 ? op[2] : 0] : [t, op[1]];
 }
+
+/**
+ * Gravity: rows a second, by the minute of the run. It starts slow and gets
+ * faster every minute. A piece resting on something locks after LOCK_MS
+ * (moving or turning it on the ground restarts that, up to LOCK_RESETS times).
+ */
+const GRAVITY = [1, 1.6, 2.5, 4, 6, 9, 14, 20, 30, 45];
+export const gravityAt = (ms) => GRAVITY[Math.min(GRAVITY.length - 1, Math.max(0, Math.floor(ms / 60000)))];
+export const LOCK_MS = 600;
+export const LOCK_RESETS = 15;

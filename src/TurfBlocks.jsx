@@ -50,7 +50,7 @@ import { ZG_ACTIONS, HANDLING, zgSubscribe, getZgKeys, getZgHandling, setZgKey, 
 import {
   W as Z_W, TOP as Z_TOP, VISIBLE as Z_VISIBLE, NEXT as Z_NEXT, GOAL as Z_GOAL, NAMES as Z_NAMES, newGame as zNewGame, shapeCells as zShapeCells,
   cellsOf as zCellsOf, dropped as zDropped, shift as zShift, down as zDown, rotate as zRotate, hold as zHold, hardDrop as zHardDrop,
-  ULTRA_MS as Z_ULTRA_MS, scoreOf as zScoreOf, towerLock as zTowerLock, incomingRows as zIncoming, applyLock as zApplyLock, syncTo as zSyncTo, GARBAGE as Z_GARBAGE, applyOp as zApplyOp,
+  ULTRA_MS as Z_ULTRA_MS, scoreOf as zScoreOf, towerLock as zTowerLock, incomingRows as zIncoming, applyLock as zApplyLock, syncTo as zSyncTo, GARBAGE as Z_GARBAGE, applyOp as zApplyOp, fits as zFits, gravityAt as zGravity, LOCK_MS as Z_LOCK_MS, LOCK_RESETS as Z_LOCK_RESETS,
 } from "../shared/zerog.js";
 import { botLock as zBotLock, zgBotPps } from "../shared/zgbot.js";
 import { SPRINT_ACTIONS, getSprintKeys, subscribeSprintKeys, setSprintKey, resetSprintKeys, sprintActionFor, mouseName, mouseLabel } from "./sprintKeys.js";
@@ -3275,12 +3275,12 @@ function HowToModal({ colors, loadout, onClose }) {
     {
       title: "TOWER: HEAD TO HEAD",
       art: <MiniBoard w={10} h={8} size={9} ink={sInk} cells={{ "7,0": "J", "7,1": "J", "7,2": "J", "6,0": "J", "7,3": "O", "7,4": "O", "6,3": "O", "6,4": "O", "7,5": "T", "7,6": "T", "7,7": "T", "6,6": "T", "7,8": "L", "6,8": "L", "5,8": "L", "5,9": "L" }} />,
-      body: "Falling-block rules on a 10-wide board, with no gravity: a piece stays where it is until you move it. You and your opponent get the same pieces. Clear lines to send garbage rows at them; the first to top out loses.",
+      body: "Falling-block rules on a 10-wide board. Pieces fall slowly at first and faster every minute; one resting on something locks after 0.6 s. You and your opponent get the same pieces. Clear lines to send garbage rows at them; the first to top out loses.",
     },
     {
       title: "THE CONTROLS",
       art: keyRow([["move", "← →"], ["soft drop", "↓ (instant, no lock)"], ["hard drop", "SPACE"], ["turn", "↑ · Z · A (180)"], ["hold", "C (any time)"]]),
-      body: "Soft drop sends the piece straight to the floor without locking it; hold it down to slide and turn along the floor. Hard drop locks it. Hold swaps with the held piece as often as you like. DAS, ARR and every key are in Settings.",
+      body: "Soft drop sends the piece straight to the floor; it locks 0.6 s later, and sliding or turning it there buys a little more time. Hard drop locks it at once. Hold swaps with the held piece as often as you like. DAS, ARR and every key are in Settings.",
     },
     {
       title: "SPINS",
@@ -3603,7 +3603,7 @@ const MENU_GREEN = "#1E6B45", MENU_BLUE = "#2B4E8C"; // PLAY, the three ranked m
 const MODE_INK = { blitz: "#F29A4A", ranked: MENU_GREEN, ai: "#A9A7B4", sprint: "#F2D45C", ultra: "#F0606A", marathon: "#5C9DF2", turns: "#EC93B8", private: "#A68BF0", zerog: "#7FE3F0" };
 
 /** A mode: a pane of clear, lightly tinted glass, like a board square. Light sweeps it on hover. */
-function ModeCard({ big = false, ink, icon: Icon, title, sub, note, noteInk, onClick, disabled, delay = 0, h, style }) {
+function ModeCard({ big = false, ink, icon: Icon, title, sub, note, onClick, disabled, delay = 0, h, style }) {
   const tint = (n) => `color-mix(in srgb, ${ink} ${n}%, transparent)`;
   return (
     <button onClick={onClick} disabled={disabled} aria-label={title}
@@ -3620,20 +3620,20 @@ function ModeCard({ big = false, ink, icon: Icon, title, sub, note, noteInk, onC
       {big ? (
         <>
           <span className="flex justify-between items-start gap-2">
-            <Icon style={{ color: ink, width: "calc(var(--p) * 13)", height: "calc(var(--p) * 13)" }} />
-            {note && <span className="tb-t tb-b text-right" style={{ color: noteInk || ink }}>{note}</span>}
+            <Icon style={{ color: UI.text, width: "calc(var(--p) * 13)", height: "calc(var(--p) * 13)" }} />
+            {note && <span className="tb-t tb-b text-right" style={{ color: UI.text }}>{note}</span>}
           </span>
           <span className="flex-1" />
-          <PixelWord text={title} from="var(--tb-text)" to={ink} scale={1.6} />
+          <PixelWord text={title} from="var(--tb-text)" to="var(--tb-text)" scale={1.6} />
         </>
       ) : (
         // Small cards: the icon sits beside the title, one line saved.
         <>
           <span className="flex-1" />
-          <span className="flex items-center gap-2"><Icon style={{ color: ink, flexShrink: 0 }} /><span className="tb-t" style={{ color: ink }}>{title}</span></span>
+          <span className="flex items-center gap-2"><Icon style={{ color: UI.text, flexShrink: 0 }} /><span className="tb-t" style={{ color: UI.text }}>{title}</span></span>
         </>
       )}
-      <span className="tb-t" style={{ color: UI.text, opacity: 0.8 }}>{sub}</span>
+      <span className="tb-t" style={{ color: UI.text, opacity: 0.85 }}>{sub}</span>
     </button>
   );
 }
@@ -3676,7 +3676,7 @@ function PlayModal({ status, authed, verified, profile, onPick, onClose }) {
               <div className="flex flex-col min-w-0" style={{ flex: 1, gap: 8 }}>
                 {phone ? (
                   // On a phone Marathon is the Blitz mode.
-                  <ModeCard big ink={MODE_INK.marathon} icon={Stack} title="MARATHON" h={96} delay={0} disabled={lock()}
+                  <ModeCard big ink={MODE_INK.marathon} icon={Stack} title="ENDLESS" h={96} delay={0} disabled={lock()}
                     sub={open ? `resume · ${open.score.toLocaleString("en-US")}` : "solo, 7×7"}
                     note={best ? `BEST ${best.toLocaleString("en-US")}` : null} onClick={() => onPick("MARATHON")} />
                 ) : (
@@ -3686,12 +3686,12 @@ function PlayModal({ status, authed, verified, profile, onPick, onClose }) {
                       disabled={!online || lock("blitz")} onClick={() => onPick("BLITZ")} />
                     {half(
                       <ModeCard ink={MODE_INK.ai} icon={Robot} title="VS BOT" sub="skill 1–10" h={56} delay={200} disabled={lock()} onClick={() => onPick("BLITZBOT")} />,
-                      <ModeCard ink={MODE_INK.marathon} icon={Stack} title="MARATHON" h={56} delay={300} disabled={lock()}
-                        sub={open ? `resume · ${open.score.toLocaleString("en-US")}` : best ? `best ${best.toLocaleString("en-US")}` : "no timer"} onClick={() => onPick("MARATHON")} />,
+                      <ModeCard ink={MODE_INK.marathon} icon={Stack} title="ENDLESS" h={56} delay={300} disabled={lock()}
+                        sub={open ? "resume" : "no timer"} onClick={() => onPick("MARATHON")} />,
                     )}
                     {half(
-                      <ModeCard ink={MODE_INK.sprint} icon={Clock} title="SPRINT" sub={sprintBest.get() ? `best ${fmtClock(sprintBest.get())}` : "40 lines"} h={56} delay={400} disabled={lock()} onClick={() => onPick("SPRINT")} />,
-                      <ModeCard ink={MODE_INK.ultra} icon={Flag} title="ULTRA" sub={ultraBest.get() ? `best ${ultraBest.get().toLocaleString("en-US")}` : "2 min"} h={56} delay={600} disabled={lock()} onClick={() => onPick("ULTRA")} />,
+                      <ModeCard ink={MODE_INK.sprint} icon={Clock} title="SPRINT" sub="40 lines" h={56} delay={400} disabled={lock()} onClick={() => onPick("SPRINT")} />,
+                      <ModeCard ink={MODE_INK.ultra} icon={Flag} title="ULTRA" sub="2 min" h={56} delay={600} disabled={lock()} onClick={() => onPick("ULTRA")} />,
                     )}
                   </>
                 )}
@@ -3704,11 +3704,11 @@ function PlayModal({ status, authed, verified, profile, onPick, onClose }) {
                     disabled={!online || lock("tower")} onClick={() => onPick("TOWER")} />
                   {half(
                     <ModeCard ink={MODE_INK.ai} icon={Robot} title="VS BOT" sub="skill 1–10" h={56} delay={250} disabled={lock()} onClick={() => onPick("TOWERBOT")} />,
-                    <ModeCard ink={MODE_INK.zerog} icon={Stack} title="MARATHON" sub={zgMarathonBest.get() ? `best ${zgMarathonBest.get().toLocaleString("en-US")}` : "no timer"} h={56} delay={350} disabled={lock()} onClick={() => onPick("ZEROGMARATHON")} />,
+                    <ModeCard ink={MODE_INK.marathon} icon={Stack} title="ENDLESS" sub="no timer" h={56} delay={350} disabled={lock()} onClick={() => onPick("ZEROGMARATHON")} />,
                   )}
                   {half(
-                    <ModeCard ink={MODE_INK.zerog} icon={Clock} title="SPRINT" sub={zgBest.get() ? `best ${fmtClock(zgBest.get())}` : "40 lines"} h={56} delay={450} disabled={lock()} onClick={() => onPick("ZEROG")} />,
-                    <ModeCard ink={MODE_INK.zerog} icon={Flag} title="ULTRA" sub={zgUltraBest.get() ? `best ${zgUltraBest.get().toLocaleString("en-US")}` : "2 min"} h={56} delay={550} disabled={lock()} onClick={() => onPick("ZEROGULTRA")} />,
+                    <ModeCard ink={MODE_INK.sprint} icon={Clock} title="SPRINT" sub="40 lines" h={56} delay={450} disabled={lock()} onClick={() => onPick("ZEROG")} />,
+                    <ModeCard ink={MODE_INK.ultra} icon={Flag} title="ULTRA" sub="2 min" h={56} delay={550} disabled={lock()} onClick={() => onPick("ZEROGULTRA")} />,
                   )}
                 </div>
               )}
@@ -4814,7 +4814,7 @@ function ZPiece({ id, cell, gap, dim = false }) {
   return (
     <div className="relative" style={{ width: w * cell + (w - 1) * gap, height: h * cell + (h - 1) * gap, opacity: dim ? 0.35 : 1 }}>
       {cells.map(([x, y]) => (
-        <div key={`${x},${y}`} className="absolute" style={{ left: (x - x0) * (cell + gap), top: (y - y0) * (cell + gap) }}><Ink size={cell} color={S_INK[id]} style={{ borderRadius: Math.max(2, Math.round(cell * 0.12)) }} /></div>
+        <div key={`${x},${y}`} className="absolute" style={{ left: (x - x0) * (cell + gap), top: (y - y0) * (cell + gap) }}><Ink size={cell} color={S_INK[id]} style={{ clipPath: CLIP1 }} /></div>
       ))}
     </div>
   );
@@ -4912,8 +4912,8 @@ function ZgField({ L, st, stats, pop, bottom, incoming = 0, flash = null, overla
   const landed = !!land && land.y === st.cur.y;
   const at = new Set(land ? zCellsOf(land).map(([x, y]) => y * Z_W + x) : []);
   const flashRows = flash ? flash.rows : [];
-  // Squares are rounded a touch, whatever the block style.
-  const round = { borderRadius: Math.max(2, Math.round(cell * 0.12)) };
+  // Squares get pixel-stepped corners (like every other mode's), whatever the block style.
+  const round = { clipPath: CLIP1 };
   return (
     <div className="flex items-start">
       {/* Left: hold, then the stats, the last clear, and the clock at the bottom. */}
@@ -5102,6 +5102,9 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
     if (r.log.length < 60000) r.log.push([t, "A", ...op.slice(1)]);
     if (online) r.out.push(op);
   }, [online]);
+  // On the ground, a move or turn restarts the lock delay (a limited number of times per piece).
+  const nudge = useCallback(() => { const r = run.current; if (r.lockAt && (r.resets || 0) < Z_LOCK_RESETS) { r.lockAt = performance.now() + Z_LOCK_MS; r.resets = (r.resets || 0) + 1; } }, []);
+  const newPiece = useCallback(() => { const r = run.current; r.lockAt = 0; r.resets = 0; hold.current.gAt = performance.now(); }, []);
   const logAt = () => { const r = run.current; return Math.max(0, Math.round(performance.now() - (r.goAt || r.startAt || performance.now()))); };
   const flush = useCallback(() => { const r = run.current; if (online && r.out.length) { net.send({ t: "towerOps", ops: r.out }); r.out = []; } }, [online]);
 
@@ -5113,6 +5116,7 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
     rec("H", r.seen);
     const L = zHardDrop(st);
     r.holds = 0;
+    newPiece();
     if (scored) r.score += zScoreOf(L);
     if (versus) {
       const waiting0 = zIncoming(st);
@@ -5147,7 +5151,7 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
       else finish(st.won ? "done" : versus ? "lost" : "stuck");
     }
     bump();
-  }, [bump, finish, versus, online, waiting, rec, flush, scored]);
+  }, [bump, finish, versus, online, waiting, rec, flush, scored, newPiece]);
 
   const press = useCallback((a) => {
     if (a === "retry") { retry(); return; }
@@ -5159,7 +5163,7 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
       h[a] = true; h.dir = a === "left" ? -1 : 1; h.dasAt = now; h.step = 0;
       if (waiting()) return; // held through the countdown, it slides as soon as it's GO
       start();
-      if (zShift(st, h.dir)) { rec(h.dir < 0 ? "l" : "r"); sfx.zgMove(); bump(); }
+      if (zShift(st, h.dir)) { rec(h.dir < 0 ? "l" : "r"); nudge(); sfx.zgMove(); bump(); }
       return;
     }
     if (a === "soft") {
@@ -5177,14 +5181,14 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
     if (a === "cw" || a === "ccw" || a === "r180") {
       start();
       const dir = a === "cw" ? 1 : a === "ccw" ? -1 : 2;
-      if (zRotate(st, dir)) { rec(dir === 1 ? "c" : dir === -1 ? "w" : "f"); sfx.zgRotate(dir); h.dcd = now + getZgHandling().dcd; bump(); }
+      if (zRotate(st, dir)) { rec(dir === 1 ? "c" : dir === -1 ? "w" : "f"); nudge(); sfx.zgRotate(dir); h.dcd = now + getZgHandling().dcd; bump(); }
       return;
     }
     if (a === "hold") {
       start();
-      if (zHold(st)) { r.holds++; rec("h"); sfx.zgHold(); h.dcd = now + getZgHandling().dcd; if (st.over && !online) finish(versus ? "lost" : "stuck"); bump(); }
+      if (zHold(st)) { r.holds++; rec("h"); newPiece(); sfx.zgHold(); h.dcd = now + getZgHandling().dcd; if (st.over && !online) finish(versus ? "lost" : "stuck"); bump(); }
     }
-  }, [retry, finish, doHard, bump, waiting, online, versus, rec]);
+  }, [retry, finish, doHard, bump, waiting, online, versus, rec, newPiece, nudge]);
 
   const release = useCallback((a) => {
     const h = hold.current;
@@ -5225,19 +5229,32 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
       if (versus && !r.startAt) { r.startAt = r.goAt; bump(); }
       let moved = false;
       if (h.dir && now - h.dasAt >= hd.das && now >= h.dcd) {
-        if (hd.arr <= 0) { while (zShift(st, h.dir)) { moved = true; rec(h.dir < 0 ? "l" : "r"); } }
+        if (hd.arr <= 0) { let slid = false; while (zShift(st, h.dir)) { moved = slid = true; rec(h.dir < 0 ? "l" : "r"); } if (slid) nudge(); }
         else {
           if (!h.step) h.step = h.dasAt + hd.das - hd.arr;
-          for (let i = 0; i < 10 && now - h.step >= hd.arr; i++) { h.step += hd.arr; if (zShift(st, h.dir)) { moved = true; rec(h.dir < 0 ? "l" : "r"); } else { h.step = now; break; } }
+          for (let i = 0; i < 10 && now - h.step >= hd.arr; i++) { h.step += hd.arr; if (zShift(st, h.dir)) { moved = true; rec(h.dir < 0 ? "l" : "r"); nudge(); } else { h.step = now; break; } }
         }
         if (moved) sfx.zgMove();
       }
       if (h.soft) { let down = false; while (zDown(st)) down = true; if (down) { moved = true; rec("d"); } }
+      // Gravity, faster every minute; and a piece resting on something locks after a moment.
+      if (r.startAt && st.cur) {
+        const every = 1000 / zGravity(now - r.startAt);
+        if (!h.gAt) h.gAt = now;
+        for (let i = 0; i < 20 && now - h.gAt >= every; i++) {
+          h.gAt += every;
+          if (zDown(st)) { moved = true; rec("g"); } else { h.gAt = now; break; }
+        }
+        if (!zFits(st.board, { ...st.cur, y: st.cur.y + 1 })) {
+          if (!r.lockAt) r.lockAt = now + Z_LOCK_MS;
+          else if (now >= r.lockAt) { doHard(); return; }
+        } else r.lockAt = 0;
+      }
       if (moved) bump();
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [bump, versus, online, rec]);
+  }, [bump, versus, online, rec, doHard, nudge]);
 
   // Danger (your stack within 5 rows of the top): a low stab, every 2 seconds at 5 rows of room,
   // faster as it climbs, 3 a second once it touches the top.
@@ -5426,9 +5443,10 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
   const top0 = Z_TOP - 2;
   const L = { cell, g, side, font, pad, boxW, colW, sideTop, sideH, boardW, boardH, top0 };
   // In a versus game each stat is one line (label and value), so two sides' worth fit.
-  const stat = (label, value, ink = UI.text) => (versus
-    ? <div key={label} className="flex items-baseline justify-end" style={{ gap: 3 * P, whiteSpace: "nowrap" }}><span style={{ color: UI.dim }}>{label}</span><span className="tb-b tabular-nums" style={{ color: ink }}>{value}</span></div>
-    : <div key={label} className="flex flex-col items-end" style={{ gap: P }}><span style={{ color: UI.dim }}>{label}</span><span className="tb-b tabular-nums" style={{ color: ink }}>{value}</span></div>);
+  // Each stat on one line (label and value), so the clock and lines always fit at the bottom of the column.
+  const stat = (label, value, ink = UI.text) => (
+    <div key={label} className="flex items-baseline justify-end" style={{ gap: 3 * P, whiteSpace: "nowrap" }}><span style={{ color: UI.dim }}>{label}</span><span className="tb-b tabular-nums" style={{ color: ink }}>{value}</span></div>
+  );
   const apmOf = (sent) => (ms > 0 ? sent / (ms / 60000) : 0).toFixed(1);
   const ppsOf = (n) => (ms > 0 ? n / (ms / 1000) : 0).toFixed(2);
   const myStats = [
@@ -5461,7 +5479,7 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
       {!versus && !r.startAt && !r.result && (
         <div className="absolute inset-x-0 flex justify-center pointer-events-none" style={{ top: 5 * (cell + g) }}>
           <span className="tb-t" style={{ color: UI.text, padding: `${P}px ${3 * P}px`, background: "color-mix(in srgb, var(--tb-panel-solid) 80%, transparent)" }}>
-            {mode === "ultra" ? "2 MINUTES · THE CLOCK STARTS ON YOUR FIRST MOVE" : mode === "marathon" ? "NO TIMER · PLAY UNTIL YOU TOP OUT" : "NO GRAVITY · THE CLOCK STARTS ON YOUR FIRST MOVE"}
+            {mode === "ultra" ? "2 MINUTES · THE CLOCK STARTS ON YOUR FIRST MOVE" : mode === "marathon" ? "NO TIMER · PLAY UNTIL YOU TOP OUT" : "40 LINES · THE CLOCK STARTS ON YOUR FIRST MOVE"}
           </span>
         </div>
       )}
