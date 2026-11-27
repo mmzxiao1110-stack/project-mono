@@ -46,14 +46,15 @@ function plan(s) {
 }
 
 const b = await chromium.launch({ args: ["--autoplay-policy=no-user-gesture-required"] });
-const ctx = await b.newContext({ viewport: { width: 1280, height: 800 }, recordVideo: { dir: out, size: { width: 1280, height: 800 } } });
+// Full HD; frames are captured straight from the browser (see below), not with the low-bitrate built-in recorder.
+const ctx = await b.newContext({ viewport: { width: 1920, height: 1080 } });
 // Tee everything the page plays to a recorder, so the video can have the game's sound.
 await ctx.addInitScript(() => {
   const orig = AudioNode.prototype.connect;
   AudioNode.prototype.connect = function (dest, ...rest) {
     if (dest instanceof AudioDestinationNode) {
       const c = this.context;
-      if (!c.__tap) { c.__tap = c.createMediaStreamDestination(); const rec = new MediaRecorder(c.__tap.stream, { mimeType: "audio/webm" }); const parts = []; rec.ondataavailable = (e) => parts.push(e.data); rec.start(250); window.__audio = { rec, parts, t0: performance.now() }; }
+      if (!c.__tap) { c.__tap = c.createMediaStreamDestination(); const rec = new MediaRecorder(c.__tap.stream, { mimeType: "audio/webm" }); const parts = []; rec.ondataavailable = (e) => parts.push(e.data); window.__audio = { rec, parts, t0: 0 }; window.__audioStart = () => { window.__audio.t0 = performance.now(); rec.start(250); }; }
       orig.call(this, c.__tap);
     }
     return orig.call(this, dest, ...rest);
@@ -63,14 +64,26 @@ await ctx.addInitScript(() => {
 const p = await ctx.newPage();
 const t0 = Date.now();
 await p.goto("http://localhost:8896");
-await p.evaluate((st) => { const t = JSON.parse(localStorage.getItem("tb:theme:v8") || "{}"); t.stroke = st; localStorage.setItem("tb:theme:v8", JSON.stringify(t)); }, stroke);
+// The block style, and no music: just the game's sound effects.
+await p.evaluate((st) => { const t = JSON.parse(localStorage.getItem("tb:theme:v8") || "{}"); t.stroke = st; t.music = 0; localStorage.setItem("tb:theme:v8", JSON.stringify(t)); }, stroke);
 await p.reload();
 await p.waitForTimeout(1500); await p.mouse.click(5, 5);
 await p.getByRole("button", { name: /^PLAY/ }).first().click({ force: true }); await p.waitForTimeout(800);
 await p.getByText("SPRINT", { exact: true }).nth(1).click({ force: true }); // TOWER's Sprint (the middle column)
 await p.waitForFunction(() => window.__zg && window.__zg.current.st.cur, null, { timeout: 15000 });
 const tStart = Date.now();
-await p.waitForTimeout(1200);
+await p.waitForTimeout(2500); // the wave settles; then the recording starts, right as the run does
+// Capture: every frame the page paints (JPEG, quality 95) with its time, and the game's audio from the same moment.
+fs.mkdirSync(`${out}/frames`, { recursive: true });
+const cdp = await ctx.newCDPSession(p);
+const frames = [];
+cdp.on("Page.screencastFrame", async (f) => {
+  frames.push(f.metadata.timestamp);
+  fs.writeFileSync(`${out}/frames/${String(frames.length).padStart(6, "0")}.jpg`, Buffer.from(f.data, "base64"));
+  cdp.send("Page.screencastFrameAck", { sessionId: f.sessionId }).catch(() => {});
+});
+await cdp.send("Page.startScreencast", { format: "jpeg", quality: 95, maxWidth: 1920, maxHeight: 1080, everyNthFrame: 1 });
+await p.evaluate(() => window.__audioStart?.());
 // A fast player at the keyboard: no pauses to think, just a quick, slightly uneven stream of taps. Every
 // step sideways is its own tap (nothing slides into the wall at once), every key is held for a moment.
 // The page plays each piece's taps itself, on a timer (so the browser automation adds no lag): every key
@@ -102,12 +115,22 @@ while (s && s.cur && n < 400) {
 }
 await p.waitForTimeout(500);
 const res = await p.evaluate(() => { const r = window.__zg?.current; return r && { result: r.result, ms: r.endAt - r.startAt, st: { lines: r.st.lines, pieces: r.st.pieces, stats: r.st.stats } }; });
-await p.waitForTimeout(4000); // the wave and the end screen
+await p.waitForTimeout(3500); // the wave and the end screen
+await cdp.send("Page.stopScreencast");
 const audio = await p.evaluate(() => window.__stopAudio());
-const vid = p.video();
 await ctx.close(); await b.close();
-const vpath = await vid.path();
-fs.renameSync(vpath, `${out}/zerog.webm`);
 if (audio) { fs.writeFileSync(`${out}/zerog-audio.webm`, Buffer.from(audio.b64, "base64")); }
+// The frames with how long each was on screen, for ffmpeg; then encode at 60 fps, high quality, with the sound.
+const lines = [];
+for (let i = 0; i < frames.length; i++) {
+  lines.push(`file 'frames/${String(i + 1).padStart(6, "0")}.jpg'`);
+  lines.push(`duration ${Math.max(0.001, (frames[i + 1] ?? frames[i] + 0.04) - frames[i]).toFixed(4)}`);
+}
+lines.push(`file 'frames/${String(frames.length).padStart(6, "0")}.jpg'`);
+fs.writeFileSync(`${out}/frames.txt`, lines.join("\n"));
+const { execFileSync } = await import("node:child_process");
+execFileSync("ffmpeg", ["-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", `${out}/frames.txt`, ...(audio ? ["-i", `${out}/zerog-audio.webm`] : []),
+  "-vf", "fps=60,format=yuv420p", "-c:v", "libx264", "-preset", "slow", "-crf", "14", "-tune", "animation",
+  ...(audio ? ["-c:a", "aac", "-b:a", "192k", "-shortest"] : []), "-movflags", "+faststart", `${out}/tower-sprint.mp4`]);
 fs.writeFileSync(`${out}/zerog.json`, JSON.stringify({ res, audioOffsetMs: audio ? Math.round(audio.t0) : null, navMs: tStart - t0 }, null, 1));
 console.log(JSON.stringify(res));

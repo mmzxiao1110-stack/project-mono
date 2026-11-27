@@ -4,7 +4,7 @@ import {
   Wifi, WifiOff, UserRound, LogOut,
   Palette, Lock, MailCheck, ShieldAlert, BookOpen, ChevronRight, Eraser, Pin, Film, Play, Pause, First,
   Chat, Terminal as TerminalIcon,
-  Trophy, Stack, People, Robot, Clock, RefreshCw, Flag,
+  Clock, RefreshCw, Flag,
 } from "./pixelIcons.jsx";
 import { PlayerRecord } from "./site/terminal.jsx";
 import { apiGet } from "./site/api.js";
@@ -3499,7 +3499,7 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
         <button onClick={() => setModal("PLAY")}
           className="w-full rounded flex flex-col items-center justify-center gap-1.5 mb-2"
           style={{ height: 86, paddingTop: 4, ...skFill(MENU_GREEN) }}>
-          <PixelWord text="PLAY" from="var(--tb-text)" to="#3FA872" />
+          <PixelWord text="PLAY" from="var(--tb-text)" to="var(--tb-text)" />
           {status === "online" && online !== null ? (
             <span className="tb-t" style={{ color: UI.dim }}>{online === 1 ? "just you online right now" : `${online} people online`}</span>
           ) : (
@@ -3541,15 +3541,6 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
           ))}
         </div>
 
-        {/* The site: each page in its own colour. */}
-        <div className="grid grid-cols-4 gap-2 mt-2">
-          {[["about", "ABOUT"], ["news", "NEWS"], ["download", "APP"], ["help", "HELP"]].map(([k, label]) => (
-            <a key={k} href={`/${k}`} className="rounded flex items-center justify-center no-underline"
-              style={{ height: 38, ...glass(UI.line), color: UI.dim }}>
-              <span className="tb-t">{label}</span>
-            </a>
-          ))}
-        </div>
         </div>
         </div>
       </Scaled>
@@ -3599,7 +3590,7 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
    PLAY — every way to play, in a little underwater night sky
    ============================================================ */
 // Ranked: dark green. The AIs: grey. Sprint yellow, Ultra red, Marathon blue, private purple.
-const MENU_GREEN = "#1E6B45", MENU_BLUE = "#2B4E8C"; // PLAY, the three ranked modes / T-TERMINAL
+const MENU_GREEN = "var(--tb-you)", MENU_BLUE = "#2B4E8C"; // PLAY and the three ranked modes: the theme's colour / T-TERMINAL
 const MODE_INK = { blitz: "#F29A4A", ranked: MENU_GREEN, ai: "#A9A7B4", sprint: "#F2D45C", ultra: "#F0606A", marathon: "#5C9DF2", turns: "#EC93B8", private: "#A68BF0", zerog: "#7FE3F0" };
 
 /** A mode: a pane of clear, lightly tinted glass, like a board square. Light sweeps it on hover. */
@@ -3620,7 +3611,7 @@ function ModeCard({ big = false, ink, icon: Icon, title, sub, note, onClick, dis
       {big ? (
         <>
           <span className="flex justify-between items-start gap-2">
-            <Icon style={{ color: UI.text, width: "calc(var(--p) * 13)", height: "calc(var(--p) * 13)" }} />
+            {Icon ? <Icon style={{ color: UI.text, width: "calc(var(--p) * 13)", height: "calc(var(--p) * 13)" }} /> : <span />}
             {note && <span className="tb-t tb-b text-right" style={{ color: UI.text }}>{note}</span>}
           </span>
           <span className="flex-1" />
@@ -3630,7 +3621,7 @@ function ModeCard({ big = false, ink, icon: Icon, title, sub, note, onClick, dis
         // Small cards: the icon sits beside the title, one line saved.
         <>
           <span className="flex-1" />
-          <span className="flex items-center gap-2"><Icon style={{ color: UI.text, flexShrink: 0 }} /><span className="tb-t" style={{ color: UI.text }}>{title}</span></span>
+          <span className="flex items-center gap-2">{Icon && <Icon style={{ color: UI.text, flexShrink: 0 }} />}<span className="tb-t" style={{ color: UI.text }}>{title}</span></span>
         </>
       )}
       <span className="tb-t" style={{ color: UI.text, opacity: 0.85 }}>{sub}</span>
@@ -3671,22 +3662,22 @@ function PlayModal({ status, authed, verified, profile, onPick, onClose }) {
     // In place of the menu's buttons: just the modes.
     <InlineFrame title="PLAY" label="Play" onClose={onClose} maxW={phone ? 480 : 900}
       aside={<span className="tb-t text-right" style={{ color: UI.text, opacity: 0.6 }}>{!online ? "offline" : count ? `${count} online` : ""}</span>}>
-            {/* Two families: BLITZ (speed) on the left, CONTROL (thinking) on the right. */}
-            <div className="flex items-start" style={{ gap: phone ? 10 : 18 }}>
+            {/* Blitz on the left, TOWER in the middle, Control on the right; set well below the header. */}
+            <div className="flex items-start" style={{ gap: phone ? 10 : 18, marginTop: phone ? 18 : 44 }}>
               <div className="flex flex-col min-w-0" style={{ flex: 1, gap: 8 }}>
                 {phone ? (
                   // On a phone Marathon is the Blitz mode.
-                  <ModeCard big ink={MODE_INK.marathon} icon={Stack} title="ENDLESS" h={96} delay={0} disabled={lock()}
+                  <ModeCard big ink={MODE_INK.marathon} title="ENDLESS" h={96} delay={0} disabled={lock()}
                     sub={open ? `resume · ${open.score.toLocaleString("en-US")}` : "solo, 7×7"}
                     note={best ? `BEST ${best.toLocaleString("en-US")}` : null} onClick={() => onPick("MARATHON")} />
                 ) : (
                   <>
-                    <ModeCard big ink={MODE_INK.ranked} icon={Clock} title="BLITZ" h={100} delay={0}
+                    <ModeCard big ink={MODE_INK.ranked} title="BLITZ" h={100} delay={0}
                       sub={rb.sub} note={rb.note} noteInk={rb.noteInk}
                       disabled={!online || lock("blitz")} onClick={() => onPick("BLITZ")} />
                     {half(
-                      <ModeCard ink={MODE_INK.ai} icon={Robot} title="VS BOT" sub="skill 1–10" h={56} delay={200} disabled={lock()} onClick={() => onPick("BLITZBOT")} />,
-                      <ModeCard ink={MODE_INK.marathon} icon={Stack} title="ENDLESS" h={56} delay={300} disabled={lock()}
+                      <ModeCard ink={MODE_INK.ai} title="VS BOT" sub="skill 1–10" h={56} delay={200} disabled={lock()} onClick={() => onPick("BLITZBOT")} />,
+                      <ModeCard ink={MODE_INK.marathon} title="ENDLESS" h={56} delay={300} disabled={lock()}
                         sub={open ? "resume" : "no timer"} onClick={() => onPick("MARATHON")} />,
                     )}
                     {half(
@@ -3699,12 +3690,12 @@ function PlayModal({ status, authed, verified, profile, onPick, onClose }) {
               {/* ZERO-G in the middle (keyboard only, so not on a phone): TOWER ranked, its bot, Sprint and Ultra. */}
               {!phone && (
                 <div className="flex flex-col min-w-0" style={{ flex: 1, gap: 8 }}>
-                  <ModeCard big ink={MODE_INK.ranked} icon={Stack} title="TOWER" h={100} delay={100}
+                  <ModeCard big ink={MODE_INK.ranked} title="TOWER" h={100} delay={100}
                     sub={rt.sub} note={rt.note} noteInk={rt.noteInk}
                     disabled={!online || lock("tower")} onClick={() => onPick("TOWER")} />
                   {half(
-                    <ModeCard ink={MODE_INK.ai} icon={Robot} title="VS BOT" sub="skill 1–10" h={56} delay={250} disabled={lock()} onClick={() => onPick("TOWERBOT")} />,
-                    <ModeCard ink={MODE_INK.marathon} icon={Stack} title="ENDLESS" sub="no timer" h={56} delay={350} disabled={lock()} onClick={() => onPick("ZEROGMARATHON")} />,
+                    <ModeCard ink={MODE_INK.ai} title="VS BOT" sub="skill 1–10" h={56} delay={250} disabled={lock()} onClick={() => onPick("TOWERBOT")} />,
+                    <ModeCard ink={MODE_INK.marathon} title="ENDLESS" sub="no timer" h={56} delay={350} disabled={lock()} onClick={() => onPick("ZEROGMARATHON")} />,
                   )}
                   {half(
                     <ModeCard ink={MODE_INK.sprint} icon={Clock} title="SPRINT" sub="40 lines" h={56} delay={450} disabled={lock()} onClick={() => onPick("ZEROG")} />,
@@ -3713,14 +3704,14 @@ function PlayModal({ status, authed, verified, profile, onPick, onClose }) {
                 </div>
               )}
               <div className="flex flex-col min-w-0 items-end" style={{ flex: 1, gap: 8 }}>
-                <ModeCard big ink={MODE_INK.ranked} icon={Trophy} title="CONTROL" h={phone ? 96 : 100} delay={500}
+                <ModeCard big ink={MODE_INK.ranked} title="CONTROL" h={phone ? 96 : 100} delay={500}
                   sub={rc.sub} note={rc.note} noteInk={rc.noteInk}
                   disabled={!online || lock("control")} onClick={() => onPick("MATCHMAKING")} />
-                <div className="w-full"><ModeCard ink={MODE_INK.ai} icon={Robot} title="VS AI" sub="strength 1–10" h={56} delay={800} disabled={lock()} onClick={() => onPick("DIFFICULTY")} /></div>
+                <div className="w-full"><ModeCard ink={MODE_INK.ai} title="VS AI" sub="strength 1–10" h={56} delay={800} disabled={lock()} onClick={() => onPick("DIFFICULTY")} /></div>
                 {/* A room with a friend: Control, Blitz or TOWER, picked in the room. */}
                 <div className="w-full"><ModeCard ink={MODE_INK.private} icon={Lock} title="PRIVATE" sub={off || "play a friend · any mode"} h={56} delay={650} disabled={!online || lock()} onClick={() => onPick("PRIVATE")} /></div>
                 {/* Pass-and-play only makes sense on one phone in two hands. */}
-                {phone && <div className="w-full"><ModeCard ink={MODE_INK.turns} icon={People} title="TURN BASED" sub="1 device" h={56} delay={300} disabled={lock()} onClick={() => onPick("TURNBASED")} /></div>}
+                {phone && <div className="w-full"><ModeCard ink={MODE_INK.turns} title="TURN BASED" sub="1 device" h={56} delay={300} disabled={lock()} onClick={() => onPick("TURNBASED")} /></div>}
               </div>
             </div>
     </InlineFrame>
@@ -4997,6 +4988,8 @@ const zInk = (v) => (v === Z_GARBAGE ? ZG_GARBAGE_INK : S_INK[v]);
  * other side: a local bot's game, or the latest view of the online opponent.
  */
 function freshZg(mode, seed = undefined, goAt = 0) {
+  // For the lab's recordings: a script can set the next solo run's piece order (window.__zgNextSeed, used once).
+  if (seed === undefined && mode !== "tower" && typeof window !== "undefined" && Number.isInteger(window.__zgNextSeed)) { seed = window.__zgNextSeed; delete window.__zgNextSeed; }
   const st = zNewGame(seed, mode === "sprint" ? Z_GOAL : Infinity);
   st.incoming = [];
   const versus = mode === "tower" || mode === "towerbot";
@@ -5062,6 +5055,14 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
   const [opts, setOpts] = useState(false);
   // Held keys: which way the piece slides, since when, and the soft drop.
   const hold = useRef({ left: false, right: false, dir: 0, dasAt: 0, step: 0, soft: false, dcd: 0 });
+  // Everything held, let go (see the key handlers below): held actions are remembered by physical key.
+  const heldKeys = useRef(new Map()); // e.code -> action
+  const letGo = useCallback(() => {
+    const h = hold.current;
+    h.left = h.right = h.soft = false; h.dir = 0; h.step = 0;
+    heldKeys.current.clear();
+  }, []);
+
 
   // How a run ends: done (40 lines), time (Ultra), stuck (topped out), won/lost (TOWER), forfeit.
   const finish = useCallback((result) => {
@@ -5089,8 +5090,8 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
   }, [bump, wipe, mode, online, record, scored, versus]);
   const retry = useCallback(() => {
     if (online) return; // a ranked match isn't retried; queue again from the end screen
-    run.current = freshZg(mode, undefined, versus ? goTime() : 0); setShowEnd(false); sfx.pick(); bump();
-  }, [bump, mode, online, versus]);
+    run.current = freshZg(mode, undefined, versus ? goTime() : 0); letGo(); setShowEnd(false); sfx.pick(); bump();
+  }, [bump, mode, online, versus, letGo]);
   const start = () => { const r = run.current; if (!r.startAt) r.startAt = r.goAt || performance.now(); };
   const waiting = useCallback(() => versus && performance.now() < run.current.goAt, [versus]);
   // Every change you make is a move (see shared/zerog.js), timed from GO (or your first move): kept for the
@@ -5353,7 +5354,12 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
     return () => offs.forEach((f) => f());
   }, [online, mode, bump, finish]);
 
+  // Keys. A held key's action is remembered by the physical key that started it (e.code), so its release
+  // always ends it, even if the key's name changed in between (Shift, Num Lock, a numpad arrow). And every
+  // time a release could have been missed (the window or tab loses focus, a popup takes the keys, this
+  // screen starts or ends), everything held is let go.
   useEffect(() => {
+    letGo();
     if (opts) return undefined;
     const typing = (e) => e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA");
     const down = (e) => {
@@ -5361,15 +5367,25 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
       const a = zgActionFor(e.key);
       if (!a) return;
       e.preventDefault();
+      if (e.code) heldKeys.current.set(e.code, a);
       if (!e.repeat) press(a);
     };
-    const up = (e) => { const a = zgActionFor(e.key); if (a) release(a); };
-    const blur = () => { const h = hold.current; h.left = h.right = h.soft = false; h.dir = 0; };
+    const up = (e) => {
+      const a = (e.code && heldKeys.current.get(e.code)) || zgActionFor(e.key);
+      if (e.code) heldKeys.current.delete(e.code);
+      if (a) release(a);
+    };
+    const hidden = () => { if (document.hidden) letGo(); };
     window.addEventListener("keydown", down);
-    window.addEventListener("keyup", up);
-    window.addEventListener("blur", blur);
-    return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); window.removeEventListener("blur", blur); };
-  }, [press, release, opts]);
+    window.addEventListener("keyup", up, true); // capture: nothing else on the page can swallow a release
+    window.addEventListener("blur", letGo);
+    document.addEventListener("visibilitychange", hidden);
+    return () => {
+      window.removeEventListener("keydown", down); window.removeEventListener("keyup", up, true);
+      window.removeEventListener("blur", letGo); document.removeEventListener("visibilitychange", hidden);
+      letGo();
+    };
+  }, [press, release, opts, letGo]);
   // For the playtest bot (and anyone curious): the run, read-only.
   useEffect(() => { window.__zg = run; window.__zgSfx = sfx; window.__setMinor = setZgMinor; return () => { if (window.__zg === run) { delete window.__zg; delete window.__zgSfx; } }; }, []);
 
@@ -6659,19 +6675,25 @@ function Wipe({ theme, onMiddle, onDone }) {
    END SCREEN — shared by ranked results and local matches
    ============================================================ */
 /** One side of the final score: name over a big pixel number, in a pane of glass. */
-function EndSide({ name, score, ink, won }) {
+/** One side's result on the end screen: its name small, its number big. The winner's is lit. */
+function EndSide({ name, score, ink, won, big = false, align = "center" }) {
   const P = usePx();
   return (
-    <div className="flex-1 min-w-0 flex flex-col items-center tb-rise" style={{
-      padding: `${4 * P}px ${3 * P}px`, gap: 3 * P, ...GLASS, clipPath: CLIP,
-      background: `color-mix(in srgb, ${ink} ${won ? 22 : 10}%, color-mix(in srgb, var(--tb-text) 6%, transparent))`,
-    }}>
-      <div className="tb-t truncate max-w-full" style={{ color: ink }}>{name}</div>
-      <NumBox value={score} color={ink} label={`${name}: ${score}`} />
+    <div className="flex-1 min-w-0 flex flex-col tb-rise" style={{ alignItems: align === "center" ? "center" : align === "left" ? "flex-start" : "flex-end", gap: 2 * P, opacity: won === false ? 0.6 : 1 }}>
+      <div className="tb-t truncate max-w-full" style={{ color: UI.dim, letterSpacing: 2 * P }}>{name}</div>
+      <div className="tabular-nums truncate max-w-full" aria-label={`${name}: ${score}`} style={{
+        fontFamily: '"Silkscreen", monospace', fontWeight: 700, lineHeight: 1, color: ink,
+        fontSize: big ? 22 * P : 13 * P, textShadow: `${P}px ${P}px 0 rgba(0,0,0,.45)${won ? `, 0 0 ${8 * P}px color-mix(in srgb, ${ink} 45%, transparent)` : ""}`,
+      }}>{score}</div>
     </div>
   );
 }
 
+/**
+ * The end of a game, every mode. A big verdict, the result large (one number for a solo run, both sides
+ * for a match), the stats as a grid of tiles, then the buttons. Laid on a soft dark pool over the sky.
+ *   note: "43 lines · 111 pieces · 11.62 PPS" -> tiles (the number first, its label under it)
+ */
 function EndScreen({ verdict, ink, note, left, right, special = 0, children, actions, sound = null, compare = true }) {
   const P = usePx();
   useEffect(() => {
@@ -6680,38 +6702,67 @@ function EndScreen({ verdict, ink, note, left, right, special = 0, children, act
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  const stats = [
+    // "43 lines" or "max combo 3": the number, whichever side it's on, and its label.
+    ...(note ? note.split(" · ").map((part) => {
+      const t = part.trim(), a = t.match(/^([\d.,:%+]+)\s+(.+)$/), b = t.match(/^(.+?)\s+([\d.,:%+]+)$/);
+      return a ? { v: a[1], l: a[2] } : b ? { v: b[2], l: b[1] } : { v: t, l: "" };
+    }) : []),
+    ...(special > 0 ? [{ v: String(special), l: "special" }] : []),
+  ];
+  // Who won: the game says so when it knows (a match's result); otherwise the bigger number.
+  const leftWon = typeof left.won === "boolean" ? left.won : compare ? left.score > right.score : false;
+  const rightWon = typeof right.won === "boolean" ? right.won : compare ? right.score > left.score : false;
   return (
-    <div className="tb-screen tb-safe w-full flex flex-col items-center justify-center px-6 font-mono" style={{ color: UI.text }}>
-      <Scaled className="relative w-full" style={{ maxWidth: 400 }}>
-        <div className="flex flex-col items-center text-center tb-rise" style={{
-          gap: 6 * P, padding: `${10 * P}px ${8 * P}px`,
-          // See-through, like the game's buttons: tinted glass over the sky.
-          background: "color-mix(in srgb, var(--tb-text) 6%, color-mix(in srgb, var(--tb-panel-solid) 22%, transparent))",
-          boxShadow: `inset 0 ${P}px 0 color-mix(in srgb, var(--tb-text) 30%, transparent), inset 0 -${P}px 0 rgba(0,0,0,.3), inset ${P}px 0 0 color-mix(in srgb, var(--tb-text) 12%, transparent), inset -${P}px 0 0 rgba(0,0,0,.2)`,
-          clipPath: CLIP,
-        }}>
-          <div className="flex items-center tb-bob" style={{ gap: 4 * P }}>
-            <Ink size={6 * P} color={ink} />
-            <div className="tb-t tb-b" style={{ color: ink, letterSpacing: P, textShadow: `${P}px ${P}px 0 rgba(0,0,0,.5)` }}>{verdict}</div>
-            <Ink size={6 * P} color={ink} />
+    <div className="tb-screen tb-safe relative w-full flex flex-col items-center justify-center px-6 font-mono" style={{ color: UI.text }}>
+      {/* A dark pool of light under everything, so it reads over any sky. */}
+      <div aria-hidden="true" className="absolute inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse 60% 55% at 50% 50%, rgba(8,8,14,.62), rgba(8,8,14,.28) 55%, transparent 80%)" }} />
+      <Scaled className="relative w-full" style={{ maxWidth: 460 }}>
+        <div className="flex flex-col items-center text-center" style={{ gap: 7 * P }}>
+          {/* The verdict. */}
+          <div className="flex flex-col items-center tb-rise" style={{ gap: 3 * P }}>
+            <div style={{ height: P, width: 40 * P, background: `linear-gradient(90deg, transparent, ${ink}, transparent)` }} />
+            <div style={{ fontFamily: '"Silkscreen", monospace', fontWeight: 700, fontSize: 17 * P, lineHeight: 1.05, letterSpacing: 2 * P, color: ink,
+              textShadow: `${P}px ${P}px 0 rgba(0,0,0,.55), 0 0 ${10 * P}px color-mix(in srgb, ${ink} 40%, transparent)` }}>{verdict}</div>
+            <div style={{ height: P, width: 40 * P, background: `linear-gradient(90deg, transparent, ${ink}, transparent)` }} />
           </div>
-          <PixelRule />
-          <div className="flex items-stretch w-full" style={{ gap: 3 * P }}>
-            <EndSide {...left} won={compare ? left.score > right.score : !!left.won} />
-            <div className="flex items-center tb-t" style={{ color: UI.dim }}>{compare ? "vs" : "·"}</div>
-            <EndSide {...right} won={compare ? right.score > left.score : !!right.won} />
-          </div>
-          {(note || special > 0) && (
-            <div className="tb-t tb-rise" style={{ color: GOLD, animationDelay: "120ms" }}>
-              {note}{note && special > 0 ? " · " : ""}{special > 0 ? `${special} special` : ""}
+
+          {/* The result. A match: both sides. A solo run: the number, big, and the best beside it. */}
+          {compare ? (
+            <div className="flex items-end w-full" style={{ gap: 4 * P }}>
+              <EndSide {...left} won={leftWon} align="right" />
+              <div className="tb-t tb-b shrink-0" style={{ color: UI.dim, paddingBottom: 2 * P }}>VS</div>
+              <EndSide {...right} won={rightWon} align="left" />
+            </div>
+          ) : (
+            <div className="flex flex-col items-center w-full" style={{ gap: 3 * P }}>
+              <EndSide {...left} won={leftWon || undefined} big />
+              <div className="tb-t tb-rise" style={{ color: UI.dim, animationDelay: "80ms" }}>
+                {right.name} <span className="tb-b tabular-nums" style={{ color: right.ink }}>{right.score}</span>
+              </div>
             </div>
           )}
-          {children}
-          <div className="flex w-full tb-rise" style={{ gap: 3 * P, animationDelay: "320ms" }}>
+
+          {/* The stats, as tiles. */}
+          {stats.length > 0 && (
+            <div className="grid w-full tb-rise" style={{ gridTemplateColumns: `repeat(${stats.length <= 4 ? stats.length : 3}, minmax(0, 1fr))`, gap: 2 * P, animationDelay: "140ms" }}>
+              {stats.map((st, i) => (
+                <div key={i} className="flex flex-col items-center justify-center" style={{ padding: `${3 * P}px ${2 * P}px`, gap: P, ...glass(UI.line) }}>
+                  <span className="tb-b tabular-nums" style={{ fontFamily: '"Silkscreen", monospace', fontSize: 9 * P, lineHeight: 1, color: UI.text }}>{st.v}</span>
+                  {st.l && <span className="tb-t truncate max-w-full" style={{ color: UI.dim }}>{st.l.toUpperCase()}</span>}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {children && <div className="w-full flex flex-col items-center tb-rise" style={{ gap: 3 * P, animationDelay: "200ms" }}>{children}</div>}
+
+          {/* What next: the main action wide and lit, the other quiet. */}
+          <div className="flex w-full tb-rise" style={{ gap: 3 * P, animationDelay: "280ms" }}>
             {actions.map((a) => (
-              <button key={a.label} onClick={a.onClick} className="tb-t"
-                style={{ height: 48, flex: a.main ? 1.5 : 1, ...(a.main ? skFill(UI.text) : sk(UI.line)), color: a.main ? UI.text : UI.dim }}>
-                {a.label}
+              <button key={a.label} onClick={a.onClick} className="tb-t tb-b"
+                style={{ height: 50, flex: a.main ? 1.6 : 1, letterSpacing: P, ...(a.main ? skFill("var(--tb-you)") : glass(UI.line)), color: a.main ? UI.text : UI.dim }}>
+                {a.label.replace(/\s*\([^)]*\)$/, "") /* no key hints: "RETRY (R)" reads RETRY */}
               </button>
             ))}
           </div>
