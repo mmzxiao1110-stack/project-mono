@@ -5,9 +5,11 @@
  *   terminal.* hosts, at their root → T-Terminal's page
  *   /music/*      → the song, in byte ranges (so a song can start mid-track)
  *   /.well-known/assetlinks.json → proves the Android app is ours (no browser bar in it)
+ *   /, /terminal  → the page, with its link-preview URLs made absolute
  *   everything else is the built site (dist/), served by Cloudflare's static
  *   assets without running this code at all.
  */
+/* global HTMLRewriter -- a Workers runtime global */
 export { Game } from "./game.js";
 import assetLinks from "../public/.well-known/assetlinks.json";
 
@@ -19,8 +21,9 @@ export default {
     }
     // terminal.tesella.io (or any terminal.* host) opens T-Terminal at its root.
     if (url.pathname === "/" && url.hostname.startsWith("terminal.")) {
-      return env.ASSETS.fetch(new Request(new URL("/terminal", url), req));
+      return withLinkCard(await env.ASSETS.fetch(new Request(new URL("/terminal", url), req)), url);
     }
+    if (url.pathname === "/" || url.pathname === "/terminal") return withLinkCard(await env.ASSETS.fetch(req), url);
     if (url.pathname.startsWith("/music/")) return ranged(req, env);
     // Served from here, not left to static assets: a dot-folder may be skipped on upload.
     if (url.pathname === "/.well-known/assetlinks.json") {
@@ -29,6 +32,21 @@ export default {
     return env.ASSETS.fetch(req);
   },
 };
+
+/**
+ * A shared link's preview card: link previewers (Discord, iMessage, WhatsApp,
+ * X...) want absolute URLs, so the page's og:image / og:url / twitter:image
+ * are filled in with whatever host the page was served from.
+ */
+function withLinkCard(res, url) {
+  if (!res.ok || !(res.headers.get("content-type") || "").includes("text/html")) return res;
+  const abs = (attr) => ({ element(el) { const v = el.getAttribute(attr); if (v && v.startsWith("/")) el.setAttribute(attr, new URL(v, url.origin).href); } });
+  return new HTMLRewriter()
+    .on('meta[property="og:image"]', abs("content"))
+    .on('meta[name="twitter:image"]', abs("content"))
+    .on('meta[property="og:url"]', { element(el) { el.setAttribute("content", url.origin + url.pathname); } })
+    .transform(res);
+}
 
 /**
  * Static assets answer a Range request with the whole file; the music player
