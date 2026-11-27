@@ -4,7 +4,7 @@ import {
   Wifi, WifiOff, UserRound, LogOut,
   Palette, Lock, MailCheck, ShieldAlert, BookOpen, ChevronRight, Eraser, Pin, Film, Play, Pause, First,
   Chat, Terminal as TerminalIcon,
-  Trophy, Stack, People, Robot, Clock, RefreshCw, Flag,
+  Clock, RefreshCw, Flag,
 } from "./pixelIcons.jsx";
 import { PlayerRecord } from "./site/terminal.jsx";
 import { apiGet } from "./site/api.js";
@@ -3499,7 +3499,7 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
         <button onClick={() => setModal("PLAY")}
           className="w-full rounded flex flex-col items-center justify-center gap-1.5 mb-2"
           style={{ height: 86, paddingTop: 4, ...skFill(MENU_GREEN) }}>
-          <PixelWord text="PLAY" from="var(--tb-text)" to="#3FA872" />
+          <PixelWord text="PLAY" from="var(--tb-text)" to="var(--tb-text)" />
           {status === "online" && online !== null ? (
             <span className="tb-t" style={{ color: UI.dim }}>{online === 1 ? "just you online right now" : `${online} people online`}</span>
           ) : (
@@ -3541,15 +3541,6 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
           ))}
         </div>
 
-        {/* The site: each page in its own colour. */}
-        <div className="grid grid-cols-4 gap-2 mt-2">
-          {[["about", "ABOUT"], ["news", "NEWS"], ["download", "APP"], ["help", "HELP"]].map(([k, label]) => (
-            <a key={k} href={`/${k}`} className="rounded flex items-center justify-center no-underline"
-              style={{ height: 38, ...glass(UI.line), color: UI.dim }}>
-              <span className="tb-t">{label}</span>
-            </a>
-          ))}
-        </div>
         </div>
         </div>
       </Scaled>
@@ -3599,7 +3590,7 @@ function Menu({ onPick, loadout, colors, profile, status, name, rename, onLogout
    PLAY — every way to play, in a little underwater night sky
    ============================================================ */
 // Ranked: dark green. The AIs: grey. Sprint yellow, Ultra red, Marathon blue, private purple.
-const MENU_GREEN = "#1E6B45", MENU_BLUE = "#2B4E8C"; // PLAY, the three ranked modes / T-TERMINAL
+const MENU_GREEN = "var(--tb-you)", MENU_BLUE = "#2B4E8C"; // PLAY and the three ranked modes: the theme's colour / T-TERMINAL
 const MODE_INK = { blitz: "#F29A4A", ranked: MENU_GREEN, ai: "#A9A7B4", sprint: "#F2D45C", ultra: "#F0606A", marathon: "#5C9DF2", turns: "#EC93B8", private: "#A68BF0", zerog: "#7FE3F0" };
 
 /** A mode: a pane of clear, lightly tinted glass, like a board square. Light sweeps it on hover. */
@@ -3620,7 +3611,7 @@ function ModeCard({ big = false, ink, icon: Icon, title, sub, note, onClick, dis
       {big ? (
         <>
           <span className="flex justify-between items-start gap-2">
-            <Icon style={{ color: UI.text, width: "calc(var(--p) * 13)", height: "calc(var(--p) * 13)" }} />
+            {Icon ? <Icon style={{ color: UI.text, width: "calc(var(--p) * 13)", height: "calc(var(--p) * 13)" }} /> : <span />}
             {note && <span className="tb-t tb-b text-right" style={{ color: UI.text }}>{note}</span>}
           </span>
           <span className="flex-1" />
@@ -3630,7 +3621,7 @@ function ModeCard({ big = false, ink, icon: Icon, title, sub, note, onClick, dis
         // Small cards: the icon sits beside the title, one line saved.
         <>
           <span className="flex-1" />
-          <span className="flex items-center gap-2"><Icon style={{ color: UI.text, flexShrink: 0 }} /><span className="tb-t" style={{ color: UI.text }}>{title}</span></span>
+          <span className="flex items-center gap-2">{Icon && <Icon style={{ color: UI.text, flexShrink: 0 }} />}<span className="tb-t" style={{ color: UI.text }}>{title}</span></span>
         </>
       )}
       <span className="tb-t" style={{ color: UI.text, opacity: 0.85 }}>{sub}</span>
@@ -3676,17 +3667,17 @@ function PlayModal({ status, authed, verified, profile, onPick, onClose }) {
               <div className="flex flex-col min-w-0" style={{ flex: 1, gap: 8 }}>
                 {phone ? (
                   // On a phone Marathon is the Blitz mode.
-                  <ModeCard big ink={MODE_INK.marathon} icon={Stack} title="ENDLESS" h={96} delay={0} disabled={lock()}
+                  <ModeCard big ink={MODE_INK.marathon} title="ENDLESS" h={96} delay={0} disabled={lock()}
                     sub={open ? `resume · ${open.score.toLocaleString("en-US")}` : "solo, 7×7"}
                     note={best ? `BEST ${best.toLocaleString("en-US")}` : null} onClick={() => onPick("MARATHON")} />
                 ) : (
                   <>
-                    <ModeCard big ink={MODE_INK.ranked} icon={Clock} title="BLITZ" h={100} delay={0}
+                    <ModeCard big ink={MODE_INK.ranked} title="BLITZ" h={100} delay={0}
                       sub={rb.sub} note={rb.note} noteInk={rb.noteInk}
                       disabled={!online || lock("blitz")} onClick={() => onPick("BLITZ")} />
                     {half(
-                      <ModeCard ink={MODE_INK.ai} icon={Robot} title="VS BOT" sub="skill 1–10" h={56} delay={200} disabled={lock()} onClick={() => onPick("BLITZBOT")} />,
-                      <ModeCard ink={MODE_INK.marathon} icon={Stack} title="ENDLESS" h={56} delay={300} disabled={lock()}
+                      <ModeCard ink={MODE_INK.ai} title="VS BOT" sub="skill 1–10" h={56} delay={200} disabled={lock()} onClick={() => onPick("BLITZBOT")} />,
+                      <ModeCard ink={MODE_INK.marathon} title="ENDLESS" h={56} delay={300} disabled={lock()}
                         sub={open ? "resume" : "no timer"} onClick={() => onPick("MARATHON")} />,
                     )}
                     {half(
@@ -3699,12 +3690,12 @@ function PlayModal({ status, authed, verified, profile, onPick, onClose }) {
               {/* ZERO-G in the middle (keyboard only, so not on a phone): TOWER ranked, its bot, Sprint and Ultra. */}
               {!phone && (
                 <div className="flex flex-col min-w-0" style={{ flex: 1, gap: 8 }}>
-                  <ModeCard big ink={MODE_INK.ranked} icon={Stack} title="TOWER" h={100} delay={100}
+                  <ModeCard big ink={MODE_INK.ranked} title="TOWER" h={100} delay={100}
                     sub={rt.sub} note={rt.note} noteInk={rt.noteInk}
                     disabled={!online || lock("tower")} onClick={() => onPick("TOWER")} />
                   {half(
-                    <ModeCard ink={MODE_INK.ai} icon={Robot} title="VS BOT" sub="skill 1–10" h={56} delay={250} disabled={lock()} onClick={() => onPick("TOWERBOT")} />,
-                    <ModeCard ink={MODE_INK.marathon} icon={Stack} title="ENDLESS" sub="no timer" h={56} delay={350} disabled={lock()} onClick={() => onPick("ZEROGMARATHON")} />,
+                    <ModeCard ink={MODE_INK.ai} title="VS BOT" sub="skill 1–10" h={56} delay={250} disabled={lock()} onClick={() => onPick("TOWERBOT")} />,
+                    <ModeCard ink={MODE_INK.marathon} title="ENDLESS" sub="no timer" h={56} delay={350} disabled={lock()} onClick={() => onPick("ZEROGMARATHON")} />,
                   )}
                   {half(
                     <ModeCard ink={MODE_INK.sprint} icon={Clock} title="SPRINT" sub="40 lines" h={56} delay={450} disabled={lock()} onClick={() => onPick("ZEROG")} />,
@@ -3713,14 +3704,14 @@ function PlayModal({ status, authed, verified, profile, onPick, onClose }) {
                 </div>
               )}
               <div className="flex flex-col min-w-0 items-end" style={{ flex: 1, gap: 8 }}>
-                <ModeCard big ink={MODE_INK.ranked} icon={Trophy} title="CONTROL" h={phone ? 96 : 100} delay={500}
+                <ModeCard big ink={MODE_INK.ranked} title="CONTROL" h={phone ? 96 : 100} delay={500}
                   sub={rc.sub} note={rc.note} noteInk={rc.noteInk}
                   disabled={!online || lock("control")} onClick={() => onPick("MATCHMAKING")} />
-                <div className="w-full"><ModeCard ink={MODE_INK.ai} icon={Robot} title="VS AI" sub="strength 1–10" h={56} delay={800} disabled={lock()} onClick={() => onPick("DIFFICULTY")} /></div>
+                <div className="w-full"><ModeCard ink={MODE_INK.ai} title="VS AI" sub="strength 1–10" h={56} delay={800} disabled={lock()} onClick={() => onPick("DIFFICULTY")} /></div>
                 {/* A room with a friend: Control, Blitz or TOWER, picked in the room. */}
                 <div className="w-full"><ModeCard ink={MODE_INK.private} icon={Lock} title="PRIVATE" sub={off || "play a friend · any mode"} h={56} delay={650} disabled={!online || lock()} onClick={() => onPick("PRIVATE")} /></div>
                 {/* Pass-and-play only makes sense on one phone in two hands. */}
-                {phone && <div className="w-full"><ModeCard ink={MODE_INK.turns} icon={People} title="TURN BASED" sub="1 device" h={56} delay={300} disabled={lock()} onClick={() => onPick("TURNBASED")} /></div>}
+                {phone && <div className="w-full"><ModeCard ink={MODE_INK.turns} title="TURN BASED" sub="1 device" h={56} delay={300} disabled={lock()} onClick={() => onPick("TURNBASED")} /></div>}
               </div>
             </div>
     </InlineFrame>
