@@ -1,7 +1,7 @@
 /**
  * The profile card, after tetr.io's: the picture breaking out over the top
- * edge, the name, and big mini-cards for Blitz, Sprint and Ultra breaking
- * out over the bottom edge. The card is a little dithered sky in the colours
+ * edge, the name with TOWER / CONTROL / BLITZ tabs (opening on the player's
+ * best), and big mini-cards for that mode breaking out over the bottom edge. The card is a little dithered sky in the colours
  * the player picked (see shared/card.js): waves, stars, bubbles or a grid
  * drifting across it. `p` is the shape /api/player returns.
  */
@@ -206,12 +206,36 @@ function CardOptions({ card, onChange, onClose }) {
 const PENCIL = ["......11", ".....111", "....111.", "...111..", "..111...", ".111....", "111.....", "11......"];
 const hours = (sec) => (!sec ? "0 HOURS" : sec < 3600 ? `${Math.max(1, Math.round(sec / 60))} MIN` : `${Math.round(sec / 3600).toLocaleString("en-US")} HOURS`);
 
+/**
+ * The mode the card opens on: the one the player is best at. Placed ratings
+ * beat unplaced ones; then the highest rating (all three are on one scale).
+ * Nothing played: Blitz.
+ */
+function bestMode(p) {
+  const opts = [
+    ["blitz", p.blitz?.games ? p.blitz.rating : null, (p.blitz?.games || 0) >= PLACEMENT_GAMES],
+    ["tower", p.tower?.games ? p.tower.rating : null, (p.tower?.games || 0) >= PLACEMENT_GAMES],
+    ["control", p.tr ?? null, p.tr != null],
+  ].filter(([, r]) => r != null);
+  if (!opts.length) return "blitz";
+  opts.sort((a, b) => (b[2] - a[2]) || (b[1] - a[1]));
+  return opts[0][0];
+}
+const MODES = [["tower", "TOWER"], ["control", "CONTROL"], ["blitz", "BLITZ"]];
+const pct = (w, g) => (g ? `${Math.round((100 * w) / g)}%` : "—");
+
 export function ProfileCard({ p, compact = false, href = null, onEdit = null }) {
   const card = cleanCard(p.card);
   const [editing, setEditing] = useState(false);
-  const bz = p.blitz;
+  // The tab picked on this player's card; until then (or for another player), their best.
+  const [pick, setPick] = useState(null);
+  const mode = pick && pick.name === p.name ? pick.k : bestMode(p);
+  const setMode = (k) => setPick({ name: p.name, k });
+  const bz = p.blitz, tw = p.tower;
   const bRank = bz && bz.games >= PLACEMENT_GAMES ? RANKS[rankIndexFor(bz.rating)] : null;
+  const tRank = tw && tw.games >= PLACEMENT_GAMES ? RANKS[rankIndexFor(tw.rating)] : null;
   const cRank = p.rank ? RANKS.find((r) => r.name === p.rank) : null;
+  const ink = CARD_INKS[card.accent];
   const k = compact ? 0.8 : 1;
   const av = Math.round(64 * k);
   const SIDE = 3, BOTTOM = 0; // how far (in pixels of --p) the picture hangs over the left edge: a little
@@ -229,7 +253,31 @@ export function ProfileCard({ p, compact = false, href = null, onEdit = null }) 
     ro?.observe(el);
     const raf = requestAnimationFrame(measure);
     return () => { ro?.disconnect(); cancelAnimationFrame(raf); };
-  }, []);
+  }, [mode]);
+  // The four mini-cards for the chosen mode: left, middle (the rating, biggest), right, and top right.
+  const rates = (x) => (x?.pps != null ? `${x.apm?.toFixed(1)} APM · ${x.pps.toFixed(2)} PPS${x.vs != null ? ` · ${x.vs.toFixed(1)} VS` : ""}` : null);
+  const minis = {
+    blitz: [
+      { label: "SPRINT · 40L", big: p.sprint ? clock(p.sprint.best) : "—", tag: p.sprint?.position, sub: p.sprint?.at ? timeAgo(p.sprint.at).toUpperCase() : "no run yet" },
+      { label: "BLITZ", lead: bz ? <RankIcon rank={bRank} size={px(compact ? 14 : 22)} /> : null, big: bz ? bz.rating : "—", tag: bz?.position, sub: bz ? rates(bz) || `${bz.games} games` : "unplayed" },
+      { label: "ULTRA · 2 MIN", big: p.ultra ? p.ultra.best.toLocaleString("en-US") : "—", tag: p.ultra?.position, sub: p.ultra?.at ? timeAgo(p.ultra.at).toUpperCase() : "no run yet" },
+      { label: "MARATHON", big: p.marathon ? p.marathon.best.toLocaleString("en-US") : "—", tag: p.marathon?.position, sub: p.marathon?.at ? timeAgo(p.marathon.at).toUpperCase() : "no game yet" },
+    ],
+    tower: [
+      { label: "WIN RATE", big: tw ? pct(tw.wins, tw.games) : "—", sub: tw ? `${tw.wins} / ${tw.games} WON` : "no match yet" },
+      { label: "TOWER", lead: tw ? <RankIcon rank={tRank} size={px(compact ? 14 : 22)} /> : null, big: tw ? tw.rating : "—", tag: tw?.position,
+        sub: tw ? rates(tw) || `${tw.games} games` : "unplayed" },
+      { label: "BEST SENT", big: tw?.best ? tw.best : "—", sub: tw?.best ? "rows in a match" : "no match yet" },
+      { label: "MATCHES", big: tw ? tw.games : "—", sub: tw ? (tw.games < PLACEMENT_GAMES ? `${tw.games}/${PLACEMENT_GAMES} placement` : `±${tw.rd ?? "—"} RD`) : "none yet" },
+    ],
+    control: [
+      { label: "WIN RATE", big: p.games ? pct(p.wins, p.games) : "—", sub: p.games ? `${p.wins} / ${p.games} WON` : "no match yet" },
+      { label: "CONTROL", lead: cRank ? <RankIcon rank={cRank} size={px(compact ? 14 : 22)} /> : null, big: p.tr != null ? p.tr : "—", tag: p.position,
+        sub: p.tr != null ? (p.rd != null ? `±${p.rd} RD` : "ranked") : p.placementLeft != null ? `${PLACEMENT_GAMES - p.placementLeft}/${PLACEMENT_GAMES} placement` : "unplayed" },
+      { label: "PEAK", big: p.peakTr ?? "—", sub: p.peakRank ? `RANK ${p.peakRank}` : p.peakTr != null ? "HIGHEST TR" : "not placed yet" },
+      { label: "BEST STREAK", big: p.bestStreak ?? "—", sub: p.streak ? `${p.streak} in a row now` : "wins in a row" },
+    ],
+  }[mode];
   return (
     <div className="w-full font-mono">
     <div ref={root} className="relative w-full tb-pcard" style={{ padding: `0 ${px(SIDE)} ${px(BOTTOM)}` }}>
@@ -247,27 +295,27 @@ export function ProfileCard({ p, compact = false, href = null, onEdit = null }) 
           </div>
           <div className="flex flex-col items-center text-center min-w-0" style={{ gridColumn: 2, gridRow: 1, gap: px(2), paddingBottom: px(2) }}>
             <span className="truncate max-w-full" style={{ ...BIG, fontSize: px(compact ? 15 : 22), textShadow: `${px(1)} ${px(1)} 0 rgba(0,0,0,.55)` }}>{p.name}</span>
-            <span className="tb-t flex items-center" style={{ gap: px(2), color: "rgba(255,255,255,.7)" }}>
-              CONTROL {cRank ? <RankIcon rank={cRank} size={px(10)} /> : null}
-              <span className="tb-b" style={{ color: "#fff" }}>{p.tr != null ? p.tr : p.placementLeft != null ? `${PLACEMENT_GAMES - p.placementLeft}/${PLACEMENT_GAMES} placement` : "—"}</span>
-            </span>
           </div>
           <div className="flex flex-col min-w-0" style={{ gridColumn: 3, gridRow: 1, gap: px(3) }}>
             <div className="flex flex-col items-end text-right" style={{ gap: px(1), marginRight: onEdit ? px(12) : 0 }}>
               {p.joined && <span className="tb-t" style={{ color: "rgba(255,255,255,.75)" }}>JOINED {timeAgo(p.joined).toUpperCase()}</span>}
               <span className="tb-t" style={{ color: "rgba(255,255,255,.75)" }}>{hours(p.played ?? p.seconds)} PLAYED</span>
             </div>
-            <Mini boxRef={m3} card={card} world={geo?.world} at={geo?.minis[3]} label="MARATHON"
-              big={p.marathon ? p.marathon.best.toLocaleString("en-US") : "—"} tag={p.marathon?.position} sub={p.marathon?.at ? timeAgo(p.marathon.at).toUpperCase() : "no game yet"} />
+            <Mini boxRef={m3} card={card} world={geo?.world} at={geo?.minis[3]} {...minis[3]} />
           </div>
-          <Mini boxRef={m0} card={card} world={geo?.world} at={geo?.minis[0]} label="SPRINT · 40L" style={{ gridColumn: 1, gridRow: 2, alignSelf: "start", marginTop: px(compact ? 3 : 5) }}
-            big={p.sprint ? clock(p.sprint.best) : "—"} tag={p.sprint?.position} sub={p.sprint?.at ? timeAgo(p.sprint.at).toUpperCase() : "no run yet"} />
-          <Mini boxRef={m1} card={card} world={geo?.world} at={geo?.minis[1]} label="BLITZ" size={compact ? 1 : 2} style={{ gridColumn: 2, gridRow: 2, alignSelf: "start" }}
-            lead={bz ? <RankIcon rank={bRank} size={px(compact ? 14 : 22)} /> : null}
-            big={bz ? bz.rating : "—"} tag={bz?.position}
-            sub={bz ? (bz.pps != null ? `${bz.apm?.toFixed(1)} APM · ${bz.pps.toFixed(2)} PPS · ${bz.vs?.toFixed(1)} VS` : `${bz.games} games`) : "unplayed"} />
-          <Mini boxRef={m2} card={card} world={geo?.world} at={geo?.minis[2]} label="ULTRA · 2 MIN" style={{ gridColumn: 3, gridRow: 2, alignSelf: "start", marginTop: px(compact ? 2 : 3) }}
-            big={p.ultra ? p.ultra.best.toLocaleString("en-US") : "—"} tag={p.ultra?.position} sub={p.ultra?.at ? timeAgo(p.ultra.at).toUpperCase() : "no run yet"} />
+          {/* The three game families: the card shows one; it opens on the player's best. */}
+          <div role="tablist" aria-label="Mode" className="flex justify-center" style={{ gridColumn: "1 / 4", gridRow: 2, gap: px(3) }}>
+            {MODES.map(([k, label]) => (
+              <button key={k} role="tab" aria-selected={mode === k} onClick={(e) => { e.stopPropagation(); setMode(k); }} className="tb-t tb-b"
+                style={{ padding: `${px(1.5)} ${px(compact ? 4 : 6)}`, letterSpacing: px(0.5), clipPath: STEP(0.5),
+                  color: mode === k ? "#fff" : "rgba(255,255,255,.6)",
+                  background: mode === k ? `color-mix(in srgb, ${ink} 50%, transparent)` : "rgba(255,255,255,.08)",
+                  boxShadow: mode === k ? `inset ${px(1)} ${px(1)} 0 rgba(255,255,255,.3), inset ${px(-1)} ${px(-1)} 0 rgba(0,0,0,.3)` : "none" }}>{label}</button>
+            ))}
+          </div>
+          <Mini boxRef={m0} card={card} world={geo?.world} at={geo?.minis[0]} {...minis[0]} style={{ gridColumn: 1, gridRow: 3, alignSelf: "start", marginTop: px(compact ? 3 : 5) }} />
+          <Mini boxRef={m1} card={card} world={geo?.world} at={geo?.minis[1]} {...minis[1]} size={compact ? 1 : 2} style={{ gridColumn: 2, gridRow: 3, alignSelf: "start" }} />
+          <Mini boxRef={m2} card={card} world={geo?.world} at={geo?.minis[2]} {...minis[2]} style={{ gridColumn: 3, gridRow: 3, alignSelf: "start", marginTop: px(compact ? 2 : 3) }} />
         </div>
       </div>
       {onEdit && (
