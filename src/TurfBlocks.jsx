@@ -3662,8 +3662,8 @@ function PlayModal({ status, authed, verified, profile, onPick, onClose }) {
     // In place of the menu's buttons: just the modes.
     <InlineFrame title="PLAY" label="Play" onClose={onClose} maxW={phone ? 480 : 900}
       aside={<span className="tb-t text-right" style={{ color: UI.text, opacity: 0.6 }}>{!online ? "offline" : count ? `${count} online` : ""}</span>}>
-            {/* Two families: BLITZ (speed) on the left, CONTROL (thinking) on the right. */}
-            <div className="flex items-start" style={{ gap: phone ? 10 : 18 }}>
+            {/* Blitz on the left, TOWER in the middle, Control on the right; set well below the header. */}
+            <div className="flex items-start" style={{ gap: phone ? 10 : 18, marginTop: phone ? 18 : 44 }}>
               <div className="flex flex-col min-w-0" style={{ flex: 1, gap: 8 }}>
                 {phone ? (
                   // On a phone Marathon is the Blitz mode.
@@ -6762,7 +6762,7 @@ function EndScreen({ verdict, ink, note, left, right, special = 0, children, act
             {actions.map((a) => (
               <button key={a.label} onClick={a.onClick} className="tb-t tb-b"
                 style={{ height: 50, flex: a.main ? 1.6 : 1, letterSpacing: P, ...(a.main ? skFill("var(--tb-you)") : glass(UI.line)), color: a.main ? UI.text : UI.dim }}>
-                {a.label}
+                {a.label.replace(/\s*\([^)]*\)$/, "") /* no key hints: "RETRY (R)" reads RETRY */}
               </button>
             ))}
           </div>
