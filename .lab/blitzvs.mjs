@@ -108,9 +108,12 @@ const playPiece = (plan) => p.evaluate((plan) => new Promise((done) => {
 const read = () => p.evaluate(() => { const c = window.__blitz.live.current; return c.result ? null : { board: c.me.board, hand: c.me.hand, queue: c.me.queue, pieces: c.me.pieces, act: c.act }; });
 let s = await read();
 const tStart = Date.now();
+const lag = await p.evaluate(() => { const c = window.__blitz.live.current; return { late: Math.round(performance.now() - c.startAt), right: c.bot.pieces }; });
+if (lag.late > 1000) { console.error(`the left side started ${lag.late} ms late: not a fair recording, run it again`); process.exit(2); }
 let comboOpen = false, n = 0, misses = 0;
 const turnKey = { 1: "d", 3: "s", 2: "a" };
-while (s && n < 2000) {
+const LIMIT = Number(process.env.LIMIT) || 2000;
+while (s && n < LIMIT) {
   const st = { board: s.board, hand: s.hand, queue: s.queue, pieces: s.pieces, botComboOpen: comboOpen };
   const m = botMoveOP(st);
   if (!m) break;
