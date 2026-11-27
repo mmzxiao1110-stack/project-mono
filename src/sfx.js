@@ -321,11 +321,17 @@ function arp(c, t, notes, { wave = "p25", step = 0.045, vol = 0.1, d = 0.25, pan
    The game's sounds
    ------------------------------------------------------------------ */
 
+let asOpp = false; // playing the opponent's sounds: their own throttles, so theirs and yours never cut each other off
 function play(name, ms, fn) {
   const c = ready();
   if (!c) return;
-  if (ms && !throttle(name, ms)) return;
+  if (ms && !throttle(asOpp ? `${name}:opp` : name, ms)) return;
   fn(c, c.currentTime + 0.005);
+}
+/** Plays `fn`'s sounds as the opponent's: the same sounds, same volume, same place; only their repeat limits are separate. */
+export function opponentSounds(fn) {
+  asOpp = true;
+  try { fn(); } finally { asOpp = false; }
 }
 
 /* ------------------------------------------------------------------
@@ -587,6 +593,8 @@ export const sfx = {
       } else if (lines >= 4) {
         // The quad: a fast staccato chip run straight up the scale to the high A.
         for (let i = 0; i <= 7; i++) chip(c, t + i * 0.035, za(i, A5), { vol: 0.026, d: i === 7 ? 0.6 : 0.08, duty: "p12", pan: spread(i, 8) * 0.6 });
+        // A quad inside a combo (or back to back) lands with the crisp stab on top of the run.
+        if (combo >= 1 || b2b > 0) stab(c, t + 0.29, { vol: 0.04 });
         harp(c, t + 0.25, za(0, 33), { vol: 0.07, d: 2.2 });
       } else if (lines) {
         chip(c, land, note, { vol: 0.032, d: 0.55 });
