@@ -7,7 +7,37 @@
 // (default 40-70) it plays a few sloppy pieces, and again every 30 s until someone tops out.
 //   SLIP=left node .lab/blitzvs.mjs outdir [name]     (with `npx vite --port 8896` running)
 import { createRequire } from "node:module"; import fs from "node:fs";
-import { botMove, botMoveOP } from "../shared/blitzbot.js";
+import { botMoveOP } from "../shared/blitzbot.js";
+import { shapeOf, SIZE } from "../shared/sprint.js";
+
+/**
+ * A real blunder: a spot that fits but leaves the board worse: covered holes, no clear, a bump in the
+ * middle. One of the few worst, so it isn't always the same mistake.
+ */
+function blunder(st) {
+  const all = [];
+  for (let slot = 0; slot < 2; slot++) for (let rot = 0; rot < 4; rot++) {
+    const sh = shapeOf(st.hand[slot], rot);
+    for (let r = 0; r + sh.h <= SIZE; r++) for (let c = 0; c + sh.w <= SIZE; c++) {
+      if (!sh.cells.every(([dr, dc]) => st.board[r + dr][c + dc] === null)) continue;
+      const b = st.board.map((row) => row.map((v) => v !== null));
+      for (const [dr, dc] of sh.cells) b[r + dr][c + dc] = true;
+      let full = 0; for (let i = 0; i < SIZE; i++) { if (b[i].every(Boolean)) full++; if (b.every((row) => row[i])) full++; }
+      if (full) continue; // a blunder clears nothing
+      let holes = 0;
+      for (let i = 0; i < SIZE; i++) for (let j = 0; j < SIZE; j++) if (!b[i][j]) {
+        const k = [[i - 1, j], [i + 1, j], [i, j - 1], [i, j + 1]].filter(([y, x]) => y < 0 || x < 0 || y >= SIZE || x >= SIZE || b[y][x]).length;
+        if (k >= 3) holes++;
+      }
+      const mid = Math.abs(r + sh.h / 2 - SIZE / 2) + Math.abs(c + sh.w / 2 - SIZE / 2);
+      all.push({ v: holes * 3 - mid, slot, rot, cr: r + sh.h / 2, cc: c + sh.w / 2 });
+    }
+  }
+  if (!all.length) return null;
+  all.sort((a, b) => b.v - a.v);
+  const m = all[Math.floor(Math.random() * Math.min(3, all.length))];
+  return { slot: m.slot, id: st.hand[m.slot], rot: m.rot, cr: m.cr, cc: m.cc };
+}
 const { chromium } = createRequire(import.meta.url)("playwright");
 const [out = ".", name = "blitz-bots"] = process.argv.slice(2);
 const PPS = 3;
@@ -114,7 +144,7 @@ let s = await read();
 const tStart = Date.now();
 const lag = await p.evaluate(() => { const c = window.__blitz.live.current; return { late: Math.round(performance.now() - c.startAt), right: c.bot.pieces }; });
 if (lag.late > 1000) { console.error(`the left side started ${lag.late} ms late: not a fair recording, run it again`); process.exit(2); }
-let comboOpen = false, n = 0, misses = 0, sloppyLeft = 0;
+let comboOpen = false, n = 0, misses = 0, sloppyLeft = 0, slips = 0;
 const turnKey = { 1: "d", 3: "s", 2: "a" };
 const LIMIT = Number(process.env.LIMIT) || 2000;
 while (s && n < LIMIT) {
@@ -124,11 +154,12 @@ while (s && n < LIMIT) {
   if (Date.now() - tStart >= slipAt) {
     slipAt += 30000;
     console.log(`${((Date.now() - tStart) / 1000).toFixed(1)} s: ${SLIP} slips`);
-    if (SLIP === "left") sloppyLeft = 3 + Math.floor(Math.random() * 3);
-    else await p.evaluate(() => { localStorage.setItem("tb:botSkill", "2"); setTimeout(() => localStorage.setItem("tb:botSkill", "10"), 2600); });
+    slips++;
+    if (SLIP === "left") sloppyLeft = 3 + slips; // each slip worse than the last
+    else await p.evaluate((ms) => { localStorage.setItem("tb:botSkill", "1"); setTimeout(() => localStorage.setItem("tb:botSkill", "10"), ms); }, 3000 + slips * 1500);
   }
   if (sloppyLeft > 0) { sloppyLeft--; sloppy = 1; }
-  const m = sloppy ? botMove(st, 2) : botMoveOP(st);
+  const m = (sloppy && blunder(st)) || botMoveOP(st);
   if (!m) break;
   comboOpen = st.botComboOpen;
   // The rhythm: a target time per piece at 3 a second, each piece's beats a little uneven.
