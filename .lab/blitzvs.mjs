@@ -3,12 +3,16 @@
 // Left: the same bot, played like a person at the mouse and keyboard: the cursor
 // glides to each spot on a curved, slightly overshooting path, a right click swaps,
 // S / D / A turn, a left click places; about 3 pieces a second, never metronomic.
-//   node .lab/blitzvs.mjs outdir [name]     (with `npx vite --port 8896` running)
+// Two equal bots can trade for minutes, so one slips (SLIP=left|right): from SLIP_AT seconds
+// (default 40-70) it plays a few sloppy pieces, and again every 30 s until someone tops out.
+//   SLIP=left node .lab/blitzvs.mjs outdir [name]     (with `npx vite --port 8896` running)
 import { createRequire } from "node:module"; import fs from "node:fs";
-import { botMoveOP } from "../shared/blitzbot.js";
+import { botMove, botMoveOP } from "../shared/blitzbot.js";
 const { chromium } = createRequire(import.meta.url)("playwright");
 const [out = ".", name = "blitz-bots"] = process.argv.slice(2);
 const PPS = 3;
+const SLIP = process.env.SLIP || "left";
+let slipAt = (Number(process.env.SLIP_AT) || 40 + Math.random() * 30) * 1000;
 
 const b = await chromium.launch({ args: ["--autoplay-policy=no-user-gesture-required"] });
 const ctx = await b.newContext({ viewport: { width: 1920, height: 1080 } });
@@ -38,7 +42,7 @@ await p.goto("http://localhost:8896");
 await p.evaluate(() => { const t = JSON.parse(localStorage.getItem("tb:theme:v8") || "{}"); t.music = 0; localStorage.setItem("tb:theme:v8", JSON.stringify(t)); localStorage.setItem("tb:botSkill", "10"); });
 await p.reload();
 await p.waitForTimeout(1500); await p.mouse.click(5, 5);
-await p.evaluate(() => { window.__labMyName = "BOT · SKILL 10"; });
+await p.evaluate(() => { window.__labMyName = "BOT · SKILL 10"; window.__labOppName = "BOT · SKILL 10"; });
 await p.getByRole("button", { name: /^PLAY/ }).first().click({ force: true }); await p.waitForTimeout(900);
 await p.getByText("VS BOT", { exact: true }).first().click({ force: true }); // Blitz's VS BOT (the left column)
 await p.waitForFunction(() => window.__blitz, null, { timeout: 15000 });
@@ -110,12 +114,21 @@ let s = await read();
 const tStart = Date.now();
 const lag = await p.evaluate(() => { const c = window.__blitz.live.current; return { late: Math.round(performance.now() - c.startAt), right: c.bot.pieces }; });
 if (lag.late > 1000) { console.error(`the left side started ${lag.late} ms late: not a fair recording, run it again`); process.exit(2); }
-let comboOpen = false, n = 0, misses = 0;
+let comboOpen = false, n = 0, misses = 0, sloppyLeft = 0;
 const turnKey = { 1: "d", 3: "s", 2: "a" };
 const LIMIT = Number(process.env.LIMIT) || 2000;
 while (s && n < LIMIT) {
   const st = { board: s.board, hand: s.hand, queue: s.queue, pieces: s.pieces, botComboOpen: comboOpen };
-  const m = botMoveOP(st);
+  // A slip: a few sloppy pieces (the left side plays them; the right side's bot is turned down for a moment).
+  let sloppy = 0;
+  if (Date.now() - tStart >= slipAt) {
+    slipAt += 30000;
+    console.log(`${((Date.now() - tStart) / 1000).toFixed(1)} s: ${SLIP} slips`);
+    if (SLIP === "left") sloppyLeft = 3 + Math.floor(Math.random() * 3);
+    else await p.evaluate(() => { localStorage.setItem("tb:botSkill", "2"); setTimeout(() => localStorage.setItem("tb:botSkill", "10"), 2600); });
+  }
+  if (sloppyLeft > 0) { sloppyLeft--; sloppy = 1; }
+  const m = sloppy ? botMove(st, 2) : botMoveOP(st);
   if (!m) break;
   comboOpen = st.botComboOpen;
   // The rhythm: a target time per piece at 3 a second, each piece's beats a little uneven.
