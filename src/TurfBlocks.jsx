@@ -5055,6 +5055,14 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
   const [opts, setOpts] = useState(false);
   // Held keys: which way the piece slides, since when, and the soft drop.
   const hold = useRef({ left: false, right: false, dir: 0, dasAt: 0, step: 0, soft: false, dcd: 0 });
+  // Everything held, let go (see the key handlers below): held actions are remembered by physical key.
+  const heldKeys = useRef(new Map()); // e.code -> action
+  const letGo = useCallback(() => {
+    const h = hold.current;
+    h.left = h.right = h.soft = false; h.dir = 0; h.step = 0;
+    heldKeys.current.clear();
+  }, []);
+
 
   // How a run ends: done (40 lines), time (Ultra), stuck (topped out), won/lost (TOWER), forfeit.
   const finish = useCallback((result) => {
@@ -5082,8 +5090,8 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
   }, [bump, wipe, mode, online, record, scored, versus]);
   const retry = useCallback(() => {
     if (online) return; // a ranked match isn't retried; queue again from the end screen
-    run.current = freshZg(mode, undefined, versus ? goTime() : 0); setShowEnd(false); sfx.pick(); bump();
-  }, [bump, mode, online, versus]);
+    run.current = freshZg(mode, undefined, versus ? goTime() : 0); letGo(); setShowEnd(false); sfx.pick(); bump();
+  }, [bump, mode, online, versus, letGo]);
   const start = () => { const r = run.current; if (!r.startAt) r.startAt = r.goAt || performance.now(); };
   const waiting = useCallback(() => versus && performance.now() < run.current.goAt, [versus]);
   // Every change you make is a move (see shared/zerog.js), timed from GO (or your first move): kept for the
@@ -5346,7 +5354,12 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
     return () => offs.forEach((f) => f());
   }, [online, mode, bump, finish]);
 
+  // Keys. A held key's action is remembered by the physical key that started it (e.code), so its release
+  // always ends it, even if the key's name changed in between (Shift, Num Lock, a numpad arrow). And every
+  // time a release could have been missed (the window or tab loses focus, a popup takes the keys, this
+  // screen starts or ends), everything held is let go.
   useEffect(() => {
+    letGo();
     if (opts) return undefined;
     const typing = (e) => e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA");
     const down = (e) => {
@@ -5354,15 +5367,25 @@ function ZeroGGame({ onExit, mode = "sprint", onRequeue }) {
       const a = zgActionFor(e.key);
       if (!a) return;
       e.preventDefault();
+      if (e.code) heldKeys.current.set(e.code, a);
       if (!e.repeat) press(a);
     };
-    const up = (e) => { const a = zgActionFor(e.key); if (a) release(a); };
-    const blur = () => { const h = hold.current; h.left = h.right = h.soft = false; h.dir = 0; };
+    const up = (e) => {
+      const a = (e.code && heldKeys.current.get(e.code)) || zgActionFor(e.key);
+      if (e.code) heldKeys.current.delete(e.code);
+      if (a) release(a);
+    };
+    const hidden = () => { if (document.hidden) letGo(); };
     window.addEventListener("keydown", down);
-    window.addEventListener("keyup", up);
-    window.addEventListener("blur", blur);
-    return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); window.removeEventListener("blur", blur); };
-  }, [press, release, opts]);
+    window.addEventListener("keyup", up, true); // capture: nothing else on the page can swallow a release
+    window.addEventListener("blur", letGo);
+    document.addEventListener("visibilitychange", hidden);
+    return () => {
+      window.removeEventListener("keydown", down); window.removeEventListener("keyup", up, true);
+      window.removeEventListener("blur", letGo); document.removeEventListener("visibilitychange", hidden);
+      letGo();
+    };
+  }, [press, release, opts, letGo]);
   // For the playtest bot (and anyone curious): the run, read-only.
   useEffect(() => { window.__zg = run; window.__zgSfx = sfx; window.__setMinor = setZgMinor; return () => { if (window.__zg === run) { delete window.__zg; delete window.__zgSfx; } }; }, []);
 
